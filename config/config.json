@@ -1,0 +1,219 @@
+{
+    "$schema": "CreamPuffRobot configuration schema",
+    "axes": {
+        "motor_0": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "limitMax": 182.0,
+            "limitMin": -180.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[1] 轴1 (大臂 J1)",
+            "portId": 0,
+            "sortOrder": 0,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "controlCard"
+            }
+        },
+        "motor_1": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "limitMax": 200.0,
+            "limitMin": 0.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[3] 轴3 (Z轴)",
+            "portId": 1,
+            "sortOrder": 2,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "controlCard"
+            }
+        },
+        "motor_2": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "limitMax": 100.0,
+            "limitMin": 0.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[5] 轴5 (夹爪)",
+            "portId": 2,
+            "sortOrder": 4,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "servoBus"
+            }
+        },
+        "motor_3": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "limitMax": 100.0,
+            "limitMin": 0.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[6] 轴6 (挤出)",
+            "portId": 3,
+            "sortOrder": 5,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "controlCard"
+            }
+        },
+        "servo_1": {
+            "direction": 0,
+            "hardwareType": 1,
+            "homeOffset": 0.0,
+            "limitMax": 90.0,
+            "limitMin": -90.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[2] 轴2 (小臂 J2)",
+            "portId": 1,
+            "sortOrder": 1,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "controlCard"
+            }
+        },
+        "servo_2": {
+            "direction": 0,
+            "hardwareType": 1,
+            "homeOffset": 0.0,
+            "limitMax": 180.0,
+            "limitMin": -180.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[4] 轴4 (翻转 R)",
+            "portId": 2,
+            "sortOrder": 3,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500,
+                "mode": "servoBus"
+            }
+        }
+    },
+    "communication": {
+        "camera": {
+            "sn": "336L"
+        },
+        "motionCard": {
+            "ip": "192.168.1.100",
+            "port": "60000"
+        },
+        "servo": {
+            "baudRate": "115200",
+            "port": "COM3"
+        }
+    },
+    "kinematics": {
+        "axisParams": [
+            {
+                "limitMax": 180,
+                "limitMin": -180,
+                "name": "J1",
+                "pulsesPerUnit": 0.012
+            },
+            {
+                "limitMax": 90,
+                "limitMin": -90,
+                "name": "J2",
+                "pulsesPerUnit": 0.008
+            },
+            {
+                "limitMax": 200,
+                "limitMin": 0,
+                "name": "Z",
+                "pulsesPerUnit": 0.025
+            }
+        ],
+        "links": {
+            "l1": 286.0,
+            "l2": 216.0,
+            "z0": 45.0
+        }
+    },
+    "simulation": {
+        "algorithmType": "SimAlgo",
+        "cameraType": "SimCamera",
+        "enabled": true,
+        "motionCardType": "SimCard",
+        "servoType": "SimServo"
+    },
+    "tcpCalibration": {
+        "handEyeMatrix": [
+            1,
+            0,
+            0,
+            12.3,
+            0,
+            1,
+            0,
+            -5.7,
+            0,
+            0,
+            1,
+            38.1,
+            0,
+            0,
+            0,
+            1
+        ],
+        "toolOffsetX": 12.5,
+        "toolOffsetY": -3.2,
+        "toolOffsetZ": 45.0
+    },
+    "version": "1.0.0",
+    "vision": {
+        "confidenceThreshold": 0.85,
+        "depthZMax": 135.0,
+        "depthZMin": 11.0
+    }
+}

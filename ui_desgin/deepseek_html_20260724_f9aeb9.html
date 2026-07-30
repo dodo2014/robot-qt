@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes">
+    <title>机器人控制系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Roboto, system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background: #1a1e24;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 16px;
+        }
+
+        .main-window {
+            width: 1480px;
+            max-width: 100%;
+            height: 980px;
+            max-height: 98vh;
+            background: #23272e;
+            border-radius: 18px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #3b414b;
+        }
+
+        /* ===== 全局顶部状态栏 (TopBar) ===== */
+        .top-bar {
+            height: 62px;
+            min-height: 62px;
+            background: #1a2028;
+            border-bottom: 1px solid #343b45;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            flex-shrink: 0;
+        }
+
+        .top-bar .left-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .top-bar .system-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #d6e6ff;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .top-bar .system-title .version {
+            font-weight: 400;
+            color: #7c9fc0;
+            font-size: 14px;
+            margin-left: 6px;
+        }
+
+        .top-bar .center-section {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-shrink: 0;
+        }
+
+        .mode-toggle-global {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #b8cce3;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .mode-toggle-global .toggle-track {
+            position: relative;
+            width: 56px;
+            height: 28px;
+            background: #2a3542;
+            border-radius: 18px;
+            cursor: pointer;
+            transition: background 0.25s;
+            border: 1px solid #4a5a6e;
+            flex-shrink: 0;
+        }
+
+        .mode-toggle-global .toggle-track.active {
+            background: #1f7f4a;
+            border-color: #2f9f5a;
+        }
+
+        .mode-toggle-global .toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 22px;
+            height: 22px;
+            background: #b8cce3;
+            border-radius: 50%;
+            transition: left 0.25s, background 0.25s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        }
+
+        .mode-toggle-global .toggle-track.active .toggle-thumb {
+            left: 30px;
+            background: #8fdfaf;
+        }
+
+        .mode-toggle-global .toggle-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #8da3bb;
+            min-width: 32px;
+        }
+
+        .mode-toggle-global .toggle-label.active-label {
+            color: #7ed67e;
+        }
+
+        .top-bar .right-section {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex: 1;
+            justify-content: flex-end;
+        }
+
+        .top-bar .status-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #b0b9c7;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .top-bar .status-item .led {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px rgba(255,255,255,0.25);
+        }
+
+        .top-bar .status-item .led.green { background: #3bff7b; box-shadow: 0 0 12px #3bff7b88; }
+        .top-bar .status-item .led.red { background: #ff3b3b; box-shadow: 0 0 12px #ff3b3b88; }
+
+        .top-bar .status-item .permission-badge {
+            background: #2f6f9f;
+            color: white;
+            padding: 2px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .top-bar .clock {
+            color: #b8cce3;
+            font-size: 15px;
+            font-weight: 500;
+            font-family: 'Consolas', monospace;
+            letter-spacing: 0.5px;
+            min-width: 80px;
+            text-align: right;
+        }
+
+        /* ===== 主体：导航栏 + 内容区 ===== */
+        .main-body {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .nav-side {
+            width: 200px;
+            background: #1b1f26;
+            padding: 20px 8px 12px 8px;
+            border-right: 1px solid #2f3640;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .nav-items {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+        }
+
+        .nav-item {
+            padding: 14px 16px;
+            border-radius: 10px;
+            color: #a5b1c2;
+            font-weight: 500;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.15s;
+            background: transparent;
+            border: none;
+            text-align: left;
+        }
+
+        .nav-item:hover { background: #2b313b; color: #d3deed; }
+        .nav-item.active { background: #2f6f9f; color: white; box-shadow: 0 4px 8px #1f3b55; }
+
+        .nav-footer {
+            margin-top: auto;
+            border-top: 1px solid #2f3640;
+            padding-top: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #556;
+            font-size: 12px;
+        }
+
+        .stack-content {
+            flex: 1;
+            background: #262c34;
+            padding: 14px 18px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .page {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .page.active { display: flex; }
+
+        /* 通用控件样式 */
+        .btn {
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 15px;
+            padding: 10px 18px;
+            cursor: pointer;
+            transition: 0.15s;
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 70px;
+        }
+
+        .btn-green { background: #1f9d4a; }
+        .btn-green:hover { background: #28b85a; }
+        .btn-yellow { background: #c78f1a; color: #1a1e24; }
+        .btn-yellow:hover { background: #e0a520; }
+        .btn-red { background: #b13a3a; }
+        .btn-red:hover { background: #d14444; }
+        .btn-gray { background: #4a5566; }
+        .btn-gray:hover { background: #5f6c80; }
+        .btn-blue { background: #2f6f9f; }
+        .btn-blue:hover { background: #3a84b8; }
+        .btn-orange { background: #c07a2f; }
+        .btn-orange:hover { background: #d48f3a; }
+        .btn-sm { font-size: 13px; padding: 6px 14px; min-width: 50px; }
+        .btn-xs { font-size: 12px; padding: 4px 10px; min-width: 40px; }
+        .btn-emergency { background: #cc2222; }
+        .btn-emergency:hover { background: #ee3333; }
+
+        input, select {
+            background: #111a22;
+            border: 1px solid #3f4e5e;
+            color: #dbe6f0;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        input[type="number"] { width: 55px; }
+        .label { color: #b8cce3; font-size: 13px; font-weight: 500; }
+
+        /* ===== 页面1 自动运行 ===== */
+        .auto-layout { display: flex; gap: 16px; flex: 1; }
+        .auto-left { flex: 6; display: flex; flex-direction: column; gap: 10px; }
+        .camera-box {
+            background: #0b0d0f;
+            border-radius: 12px;
+            flex: 1;
+            border: 1px solid #3a424e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            min-height: 100px;
+        }
+        .camera-box .cross {
+            position: absolute;
+            color: #1eff7a;
+            font-size: 40px;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .camera-box .placeholder { color: #556; font-size: 16px; }
+        .auto-right { flex: 4; display: flex; flex-direction: column; gap: 10px; }
+        .lcd-row { display: flex; gap: 16px; }
+        .lcd-item {
+            flex: 1;
+            background: #0d1219;
+            border-radius: 10px;
+            padding: 10px;
+            text-align: center;
+        }
+        .lcd-item .lbl { color: #7c8a9e; font-size: 13px; }
+        .lcd-item .val {
+            font-size: 32px;
+            font-weight: 700;
+            color: #cde2ff;
+            font-family: 'Digital-7', monospace;
+        }
+        .status-big { font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; }
+
+        .coord-panel {
+            background: #0d141c;
+            border-radius: 10px;
+            padding: 8px 16px;
+            border: 1px solid #2f7fb5;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            font-weight: 600;
+            font-size: 18px;
+            color: #b7d6ff;
+        }
+        .coord-panel span { font-weight: 400; color: #7c9fc0; margin-right: 4px; }
+        .coord-panel .val { color: #7ed6ff; font-weight: 700; }
+
+        .log-box {
+            background: #12161c;
+            border-radius: 10px;
+            padding: 8px 12px;
+            border: 1px solid #3a424e;
+            color: #b8c5d6;
+            font-size: 13px;
+            font-family: monospace;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 60px;
+        }
+        .log-box .info { color: #8fcbff; }
+        .log-box .warn { color: #f7c948; }
+        .log-box .error { color: #ff5e6b; }
+
+        .btn-row-auto {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .btn-row-auto .btn {
+            flex: 1;
+            min-width: 70px;
+            padding: 14px 12px;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        .btn-row-auto .btn-emergency { flex: 1.2; font-size: 18px; }
+
+        /* ===== 页面2 手动控制 ===== */
+        .teach-top {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+            background: #1b222b;
+            padding: 10px 16px;
+            border-radius: 12px;
+        }
+
+        .teach-top .coord-panel {
+            margin-left: auto;
+            font-size: 16px;
+            padding: 6px 14px;
+            gap: 14px;
+        }
+
+        .teach-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #1a2129;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #33404d;
+        }
+
+        .teach-table th {
+            background: #242e3a;
+            color: #9bb3cf;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 500;
+            font-size: 14px;
+            border-bottom: 1px solid #33404d;
+        }
+
+        .teach-table td {
+            padding: 10px 12px;
+            color: #c8d6e5;
+            font-size: 14px;
+            border-bottom: 1px solid #2a3542;
+            vertical-align: middle;
+        }
+
+        .teach-table tr:last-child td { border-bottom: none; }
+
+        .teach-table .axis-label {
+            font-weight: 600;
+            color: #a5c1e0;
+            min-width: 80px;
+            display: inline-block;
+            font-size: 15px;
+        }
+
+        .teach-table .icon-motor { color: #6a9fc0; margin-right: 6px; font-size: 18px; }
+        .teach-table .icon-servo { color: #c0a06a; margin-right: 6px; font-size: 18px; }
+
+        .teach-table input[type="number"] {
+            width: 56px;
+            padding: 5px 6px;
+            font-size: 14px;
+        }
+
+        .teach-table .coord-val {
+            background: #0d141c;
+            padding: 4px 14px;
+            border-radius: 6px;
+            min-width: 65px;
+            display: inline-block;
+            text-align: center;
+            font-weight: 700;
+            color: #cde2ff;
+            font-size: 15px;
+        }
+
+        .btn-jog {
+            background: #2f3845;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 18px;
+            min-width: 50px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-jog:active { background: #4a5a6e; transform: scale(0.92); }
+
+        .btn-jog-gripper {
+            background: #3f6f8f;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 18px;
+            min-width: 50px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-jog-gripper:active { background: #4a7f9f; transform: scale(0.92); }
+
+        .btn-jog-extrude {
+            background: #7f5f3f;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 18px;
+            min-width: 50px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-jog-extrude:active { background: #9f7f4f; transform: scale(0.92); }
+
+        .btn-go {
+            background: #2f6f8f;
+            border: none;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-go:active { background: #3a84a8; transform: scale(0.94); }
+
+        .btn-go-extrude {
+            background: #b57f2f;
+            border: none;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-go-extrude:active { background: #cc9a3a; transform: scale(0.94); }
+
+        .btn-stop-axis {
+            background: #8f3f3f;
+            border: none;
+            color: white;
+            padding: 6px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: 0.1s;
+            white-space: nowrap;
+        }
+        .btn-stop-axis:active { background: #aa4f4f; transform: scale(0.94); }
+
+        .teach-bottom {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            margin-top: 4px;
+            padding: 8px 4px;
+        }
+
+        .text-muted { color: #7c8a9e; font-size: 13px; }
+
+        /* ===== 页面3 工艺与流程 ===== */
+        .process-top { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; background: #1b222b; padding: 8px 16px; border-radius: 12px; }
+        .process-split { display: flex; gap: 16px; flex: 1; }
+        .process-left { flex: 2; background: #1b222b; border-radius: 12px; padding: 10px; border: 1px solid #384550; display: flex; flex-direction: column; }
+        .process-left .action-list { background: #121a22; border-radius: 8px; padding: 8px; flex: 1; color: #c0d6ec; font-family: monospace; font-size: 14px; line-height: 1.8; }
+        .process-right { flex: 3; background: #1b222b; border-radius: 12px; padding: 10px; border: 1px solid #384550; display: flex; flex-direction: column; }
+        .point-table {
+            background: #192029;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #2f3d4d;
+            flex: 1;
+        }
+        .point-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .point-table th { background: #242e3a; color: #b0c7df; padding: 6px 6px; text-align: left; }
+        .point-table td { padding: 4px 6px; color: #cddef0; border-top: 1px solid #2b3542; }
+        .process-right .btn-row { margin-top: 6px; }
+
+        /* ===== 页面4 配置 ===== */
+        .config-tabs {
+            background: #1d252f;
+            border-radius: 14px;
+            padding: 12px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .tab-headers {
+            display: flex;
+            gap: 4px;
+            border-bottom: 1px solid #384652;
+            padding-bottom: 4px;
+            flex-wrap: wrap;
+        }
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: #8da3bb;
+            padding: 6px 16px;
+            font-weight: 500;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+        }
+        .tab-btn.active { background: #2c3a48; color: white; }
+        .tab-pane { display: none; flex-direction: column; gap: 12px; padding-top: 12px; }
+        .tab-pane.active { display: flex; }
+        .config-row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+        .config-row label { color: #b8cce3; min-width: 90px; font-size: 13px; }
+
+        /* 运动学参数 - 轴标签颜色修复为白色 */
+        .axis-label-white {
+            color: #ffffff !important;
+            font-weight: 600;
+        }
+
+        .flex-1 { flex: 1; }
+        .gap-2 { gap: 6px; }
+    </style>
+</head>
+<body>
+<div class="main-window">
+    <!-- ===== 全局顶部状态栏 (TopBar) ===== -->
+    <div class="top-bar">
+        <div class="left-section">
+            <span class="system-title">机器人控制系统 <span class="version">V1.0</span></span>
+        </div>
+        <div class="center-section">
+            <div class="mode-toggle-global">
+                <span class="toggle-label" id="globalModeLabelLeft">手动</span>
+                <div class="toggle-track" id="globalModeToggle">
+                    <div class="toggle-thumb"></div>
+                </div>
+                <span class="toggle-label" id="globalModeLabelRight">自动</span>
+            </div>
+        </div>
+        <div class="right-section">
+            <div class="status-item"><span class="permission-badge">操作员</span></div>
+            <div class="status-item"><span class="led green"></span> 心跳</div>
+            <div class="status-item"><span class="led red"></span> 急停</div>
+            <div class="clock" id="topClock">14:28:36</div>
+        </div>
+    </div>
+
+    <!-- ===== 主体：导航栏 + 内容区 ===== -->
+    <div class="main-body">
+        <div class="nav-side">
+            <div class="nav-items">
+                <div class="nav-item active" data-page="page1">🌟 自动运行</div>
+                <div class="nav-item" data-page="page2">🛠️ 手动控制</div>
+                <div class="nav-item" data-page="page3">📝 工艺与流程</div>
+                <div class="nav-item" data-page="page4">⚙️ 设备与配置</div>
+            </div>
+            <div class="nav-footer"><span style="color:#4a5a6e;">— 系统就绪 —</span></div>
+        </div>
+
+        <!-- Stacked 内容 -->
+        <div class="stack-content">
+            <!-- ===== 页面1：自动运行 ===== -->
+            <div id="page1" class="page active">
+                <div class="auto-layout">
+                    <div class="auto-left">
+                        <div class="camera-box"><span class="cross">✛</span><span class="placeholder">RGB 相机画面 (3D)</span></div>
+                        <div class="camera-box"><span class="cross">✛</span><span class="placeholder">识别结果叠加图</span></div>
+                    </div>
+                    <div class="auto-right">
+                        <div class="lcd-row">
+                            <div class="lcd-item"><div class="lbl">当前节拍 CT</div><div class="val">2.4s</div></div>
+                            <div class="lcd-item"><div class="lbl">今日产量</div><div class="val">1,286</div></div>
+                        </div>
+                        <div class="status-big">▶ 运行中</div>
+                        <div class="coord-panel">
+                            <span>X: <span class="val">145.23</span> mm</span>
+                            <span>Y: <span class="val">87.46</span> mm</span>
+                            <span>Z: <span class="val">32.81</span> mm</span>
+                            <span>R: <span class="val">12.50</span>°</span>
+                        </div>
+                        <div class="log-box">
+                            <div><span class="info">[10:23:15] 视觉定位完成</span></div>
+                            <div><span class="warn">[10:23:20] 灌装压力稳定</span></div>
+                            <div><span class="error">[10:22:50] 料盘到位超时</span></div>
+                            <div><span class="info">[10:23:40] 抓取放置成功</span></div>
+                        </div>
+                        <div class="btn-row-auto">
+                            <button class="btn btn-green">▶ 启动</button>
+                            <button class="btn btn-yellow" style="color:#1a1e24;">↺ 复位</button>
+                            <button class="btn btn-red">⏹ 停止</button>
+                            <button class="btn btn-blue">⟳ 初始化</button>
+                            <button class="btn btn-emergency">⛔ 急停</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== 页面2：手动控制 ===== -->
+            <div id="page2" class="page">
+                <div class="teach-top">
+                    <button class="btn btn-green btn-sm">全局轴使能</button>
+                    <button class="btn btn-red btn-sm">全局断使能</button>
+                    <div class="coord-panel" style="font-size:15px; padding:4px 14px; margin-left:auto;">
+                        <span>X: <span class="val">145.23</span></span>
+                        <span>Y: <span class="val">87.46</span></span>
+                        <span>Z: <span class="val">32.81</span></span>
+                        <span>R: <span class="val">12.50°</span></span>
+                    </div>
+                </div>
+
+                <table class="teach-table">
+                    <thead>
+                        <tr>
+                            <th style="width:90px;">轴</th>
+                            <th style="width:40px;">类型</th>
+                            <th style="width:70px;">速度</th>
+                            <th style="width:70px;">加速度</th>
+                            <th style="width:70px;">减速度</th>
+                            <th style="width:80px;">点动</th>
+                            <th style="width:90px;">当前位置</th>
+                            <th style="width:80px;">点动</th>
+                            <th style="width:80px;">目标位置</th>
+                            <th style="width:70px;">移动</th>
+                            <th style="width:60px;">停止</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="axis-label">轴1(J1)</span></td>
+                            <td><span class="icon-motor">⚙</span></td>
+                            <td><input type="number" value="100"></td>
+                            <td><input type="number" value="50"></td>
+                            <td><input type="number" value="50"></td>
+                            <td><button class="btn-jog">−</button></td>
+                            <td><span class="coord-val">12.5°</span></td>
+                            <td><button class="btn-jog">+</button></td>
+                            <td><input type="number" value="30.0" style="width:60px;"></td>
+                            <td><button class="btn-go">Go</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                        <tr>
+                            <td><span class="axis-label">轴2(J2)</span></td>
+                            <td><span class="icon-servo">🔧</span></td>
+                            <td><input type="number" value="80"></td>
+                            <td><span style="color:#556;">—</span></td>
+                            <td><span style="color:#556;">—</span></td>
+                            <td><button class="btn-jog">−</button></td>
+                            <td><span class="coord-val">-8.2°</span></td>
+                            <td><button class="btn-jog">+</button></td>
+                            <td><input type="number" value="0.0" style="width:60px;"></td>
+                            <td><button class="btn-go">Go</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                        <tr>
+                            <td><span class="axis-label">轴3(Z)</span></td>
+                            <td><span class="icon-motor">⚙</span></td>
+                            <td><input type="number" value="120"></td>
+                            <td><input type="number" value="60"></td>
+                            <td><input type="number" value="60"></td>
+                            <td><button class="btn-jog">−</button></td>
+                            <td><span class="coord-val">32.8 mm</span></td>
+                            <td><button class="btn-jog">+</button></td>
+                            <td><input type="number" value="25.0" style="width:60px;"></td>
+                            <td><button class="btn-go">Go</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                        <tr>
+                            <td><span class="axis-label">轴4(R)</span></td>
+                            <td><span class="icon-servo">🔧</span></td>
+                            <td><input type="number" value="90"></td>
+                            <td><span style="color:#556;">—</span></td>
+                            <td><span style="color:#556;">—</span></td>
+                            <td><button class="btn-jog">−</button></td>
+                            <td><span class="coord-val">15.0°</span></td>
+                            <td><button class="btn-jog">+</button></td>
+                            <td><input type="number" value="10.0" style="width:60px;"></td>
+                            <td><button class="btn-go">Go</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                        <tr>
+                            <td><span class="axis-label">轴5(夹爪)</span></td>
+                            <td><span class="icon-motor">⚙</span></td>
+                            <td><input type="number" value="50"></td>
+                            <td><input type="number" value="30"></td>
+                            <td><input type="number" value="30"></td>
+                            <td><button class="btn-jog-gripper">− 松开</button></td>
+                            <td><span class="coord-val">0.0 mm</span></td>
+                            <td><button class="btn-jog-gripper">+ 夹紧</button></td>
+                            <td><input type="number" value="5.0" style="width:60px;"></td>
+                            <td><button class="btn-go">Go</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                        <tr>
+                            <td><span class="axis-label">轴6(挤出)</span></td>
+                            <td><span class="icon-motor">⚙</span></td>
+                            <td><input type="number" value="60"></td>
+                            <td><input type="number" value="40"></td>
+                            <td><input type="number" value="40"></td>
+                            <td><button class="btn-jog-extrude">− 回抽</button></td>
+                            <td><span class="coord-val">0.0 mm</span></td>
+                            <td><button class="btn-jog-extrude">+ 挤出</button></td>
+                            <td><input type="number" value="3.5" style="width:60px;"></td>
+                            <td><button class="btn-go-extrude">Go 定量挤出</button></td>
+                            <td><button class="btn-stop-axis">停止</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="teach-bottom">
+                    <span class="text-muted">提示：按住 +/- 按钮持续运动，松开停止</span>
+                </div>
+            </div>
+
+            <!-- ===== 页面3：工艺与流程 ===== -->
+            <div id="page3" class="page">
+                <div class="process-top">
+                    <button class="btn btn-blue btn-sm">新增方案</button>
+                    <span class="label">当前方案:</span>
+                    <input value="方案_A_2026" style="width:150px;">
+                    <select style="width:130px;"><option>方案_A</option><option>方案_B</option></select>
+                    <button class="btn btn-sm" style="background:#3f6f8f;">确认切换</button>
+                    <button class="btn btn-sm" style="background:#8f7f3f;">单步执行</button>
+                </div>
+                <div class="process-split">
+                    <div class="process-left">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span class="label">动作列表</span></div>
+                        <div class="action-list">
+                            [1] 移动到：安全上方点<br>
+                            [2] 打开夹爪<br>
+                            [3] 等待视觉结果<br>
+                            [4] 直线插补：插入灌装口<br>
+                            [5] 挤出奶油<br>
+                            [6] 关闭夹爪<br>
+                            [7] 移动到放置点
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:6px;">
+                            <button class="btn btn-sm" style="background:#3a6f8f;">新建动作</button>
+                            <button class="btn btn-sm" style="background:#8f4f4f;">删除动作</button>
+                        </div>
+                    </div>
+                    <div class="process-right">
+                        <div><span class="label">当前动作: 直线插补：插入灌装口</span></div>
+                        <div class="point-table">
+                            <table>
+                                <thead><tr><th>点名称</th><th>X</th><th>Y</th><th>Z</th><th>R</th><th>姿态</th></tr></thead>
+                                <tbody>
+                                    <tr><td>fill_start</td><td>85.0</td><td>92.0</td><td>22.0</td><td>2.0</td><td><select><option>法兰</option><option>工具</option></select></td></tr>
+                                    <tr><td>fill_end</td><td>85.0</td><td>92.0</td><td>10.0</td><td>2.0</td><td><select><option>法兰</option><option>工具</option></select></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="btn-row">
+                            <button class="btn btn-sm" style="background:#2f6f8f;">添加点位</button>
+                            <button class="btn btn-sm" style="background:#8f4f4f;">删除选中点</button>
+                            <button class="btn btn-sm" style="background:#4f4f6f;">上移</button>
+                            <button class="btn btn-sm" style="background:#4f4f6f;">下移</button>
+                            <button class="btn btn-sm" style="background:#7f7f3f;">读取当前坐标(示教)</button>
+                            <button class="btn btn-sm" style="background:#2f7f5f;">保存动作</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===== 页面4：设备与配置 ===== -->
+            <div id="page4" class="page">
+                <div class="config-tabs">
+                    <div class="tab-headers">
+                        <button class="tab-btn active" data-tab="tab1">通信与连接</button>
+                        <button class="tab-btn" data-tab="tab2">运动学参数</button>
+                        <button class="tab-btn" data-tab="tab3">视觉与工艺参数</button>
+                        <button class="tab-btn" data-tab="tab4">TCP与标定</button>
+                    </div>
+                    <div class="flex-1">
+                        <div id="tab1" class="tab-pane active">
+                            <div class="config-row"><label>网口 IP</label><input value="192.168.1.100" style="width:130px;"> <label>端口</label><input value="502" style="width:60px;"> <button class="btn btn-sm btn-blue">连接</button> <span class="led green"></span></div>
+                            <div class="config-row"><label>舵机 COM</label><select><option>COM3</option><option>COM4</option></select> <label>波特率</label><select><option>115200</option><option>9600</option></select> <button class="btn btn-sm btn-blue">打开串口</button></div>
+                            <div class="config-row"><label>奥比中光相机</label><input value="SN-2023-0801" style="width:140px;"> <button class="btn btn-sm btn-blue">初始化</button></div>
+                        </div>
+                        <!-- ===== 运动学参数 Tab (轴标签颜色修复) ===== -->
+                        <div id="tab2" class="tab-pane">
+                            <div class="config-row"><label>L1 (大臂)</label><input value="285" style="width:70px;"> <label>L2 (小臂)</label><input value="215" style="width:70px;"> <label>Z0 基准</label><input value="45" style="width:70px;"></div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;background:#141c26;padding:8px;border-radius:8px;">
+                                <span style="color:#9bb3cf;">轴</span>
+                                <span style="color:#9bb3cf;">脉冲当量</span>
+                                <span style="color:#9bb3cf;">软限位Min</span>
+                                <span style="color:#9bb3cf;">软限位Max</span>
+                                <!-- 轴标签改为白色 -->
+                                <span class="axis-label-white">J1</span>
+                                <input value="0.012" style="width:60px;">
+                                <input value="-180" style="width:60px;">
+                                <input value="180" style="width:60px;">
+
+                                <span class="axis-label-white">J2</span>
+                                <input value="0.008" style="width:60px;">
+                                <input value="-90" style="width:60px;">
+                                <input value="90" style="width:60px;">
+
+                                <span class="axis-label-white">Z</span>
+                                <input value="0.025" style="width:60px;">
+                                <input value="0" style="width:60px;">
+                                <input value="200" style="width:60px;">
+                            </div>
+                        </div>
+                        <div id="tab3" class="tab-pane">
+                            <div class="config-row"><label>识别置信度阈值</label><input value="0.85" style="width:70px;"></div>
+                            <div class="config-row"><label>深度过滤 Z min</label><input value="10" style="width:70px;"> <label>Z max</label><input value="120" style="width:70px;"></div>
+                        </div>
+                        <div id="tab4" class="tab-pane">
+                            <div class="config-row"><label>工具 XYZ 偏移</label> X <input value="12.5" style="width:60px;"> Y <input value="-3.2" style="width:60px;"> Z <input value="45.0" style="width:60px;"></div>
+                            <div class="config-row"><button class="btn btn-sm" style="background:#7f5f3f;">执行九点标定</button> <span style="color:#7f9fc0;">外参矩阵 (4x4)</span></div>
+                            <div style="background:#0d141c;padding:8px;border-radius:8px;color:#799bbf;font-family:monospace;font-size:13px;">
+                                [ 0.998 -0.012  0.045  12.3 ]<br>
+                                [ 0.011  0.999 -0.023  -5.7 ]<br>
+                                [ -0.045 0.022  0.998  38.1 ]<br>
+                                [ 0.000  0.000  0.000  1.000 ]
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // ===== 顶部时钟更新 =====
+        function updateClock() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2, '0');
+            const m = String(now.getMinutes()).padStart(2, '0');
+            const s = String(now.getSeconds()).padStart(2, '0');
+            document.getElementById('topClock').textContent = h + ':' + m + ':' + s;
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        // ===== 导航切换 =====
+        const navItems = document.querySelectorAll('.nav-item');
+        const pages = {
+            page1: document.getElementById('page1'),
+            page2: document.getElementById('page2'),
+            page3: document.getElementById('page3'),
+            page4: document.getElementById('page4')
+        };
+
+        navItems.forEach(item => {
+            item.addEventListener('click', function() {
+                const pageId = this.dataset.page;
+                navItems.forEach(n => n.classList.remove('active'));
+                this.classList.add('active');
+                Object.keys(pages).forEach(key => {
+                    pages[key].classList.remove('active');
+                });
+                if (pages[pageId]) pages[pageId].classList.add('active');
+            });
+        });
+
+        // ===== 配置页 Tab 切换 =====
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const panes = {
+            tab1: document.getElementById('tab1'),
+            tab2: document.getElementById('tab2'),
+            tab3: document.getElementById('tab3'),
+            tab4: document.getElementById('tab4')
+        };
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const tabId = this.dataset.tab;
+                tabBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                Object.keys(panes).forEach(key => {
+                    panes[key].classList.remove('active');
+                });
+                if (panes[tabId]) panes[tabId].classList.add('active');
+            });
+        });
+
+        // ===== 全局模式切换 (顶部状态栏) =====
+        const globalToggle = document.getElementById('globalModeToggle');
+        const globalLabelLeft = document.getElementById('globalModeLabelLeft');
+        const globalLabelRight = document.getElementById('globalModeLabelRight');
+        let isGlobalAuto = false;
+
+        globalToggle.addEventListener('click', function(e) {
+            e.stopPropagation();
+            isGlobalAuto = !isGlobalAuto;
+            this.classList.toggle('active', isGlobalAuto);
+            globalLabelLeft.classList.toggle('active-label', !isGlobalAuto);
+            globalLabelRight.classList.toggle('active-label', isGlobalAuto);
+            console.log('[全局] 模式切换为:', isGlobalAuto ? '自动' : '手动');
+        });
+
+        // ===== 按钮点击反馈 =====
+        document.querySelectorAll('.btn, .btn-jog, .btn-jog-gripper, .btn-jog-extrude, .btn-go, .btn-go-extrude, .btn-stop-axis, .nav-item, .tab-btn').forEach(el => {
+            el.addEventListener('click', function(e) {
+                if (!this.classList.contains('nav-item') && !this.classList.contains('tab-btn')) {
+                    const orig = this.style.transform;
+                    this.style.transform = 'scale(0.94)';
+                    setTimeout(() => this.style.transform = orig || '', 120);
+                }
+            });
+        });
+    })();
+</script>
+</body>
+</html>

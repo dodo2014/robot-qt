@@ -1,0 +1,34 @@
+# Build
+build/
+out/
+cmake-build-*/
+*.exe
+*.lib
+*.dll
+*.pdb
+*.obj
+*.exp
+*.ilk
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj.*
+CMakeSettings.json
+
+# Logs
+logs/
+*.log
+
+# vcpkg (submodule, not the build artifacts)
+vcpkg/buildtrees/
+vcpkg/downloads/
+vcpkg/installed/
+vcpkg/packages/
+
+# Config override
+config/config.local.json
