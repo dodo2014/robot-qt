@@ -1,4 +1,4 @@
-#include "ConfigManager.h"
+﻿#include "ConfigManager.h"
 
 #include <QFile>
 #include <spdlog/spdlog.h>
@@ -41,19 +41,19 @@ bool ConfigManager::load(const QString& filePath)
     filePath_ = filePath;
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        spdlog::info("[Config] Cannot open: {}", filePath.toStdString());
+        SPDLOG_INFO("[Config] Cannot open: {}", filePath.toStdString());
         return false;
     }
     try {
         root_ = nlohmann::json::parse(file.readAll().toStdString());
         if (!root_.is_object()) {
-            spdlog::info("[Config] Root is not an object, resetting");
+            SPDLOG_INFO("[Config] Root is not an object, resetting");
             root_ = nlohmann::json::object();
         }
-        spdlog::info("[Config] Loaded: {}", filePath.toStdString());
+        SPDLOG_INFO("[Config] Loaded: {}", filePath.toStdString());
         return true;
     } catch (const std::exception& e) {
-        spdlog::info("[Config] Parse error: {}", e.what());
+        SPDLOG_INFO("[Config] Parse error: {}", e.what());
         root_ = nlohmann::json::object();
         return false;
     }
@@ -62,22 +62,22 @@ bool ConfigManager::load(const QString& filePath)
 bool ConfigManager::save()
 {
     if (filePath_.isEmpty()) {
-        spdlog::info("[Config] No file path, cannot save");
+        SPDLOG_INFO("[Config] No file path, cannot save");
         return false;
     }
     QFile file(filePath_);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        spdlog::info("[Config] Cannot write: {}", filePath_.toStdString());
+        SPDLOG_INFO("[Config] Cannot write: {}", filePath_.toStdString());
         return false;
     }
     try {
         auto str = root_.dump(4);
         file.write(str.data(), static_cast<qint64>(str.size()));
         file.close();
-        spdlog::info("[Config] Saved: {}", filePath_.toStdString());
+        SPDLOG_INFO("[Config] Saved: {}", filePath_.toStdString());
         return true;
     } catch (const std::exception& e) {
-        spdlog::info("[Config] Save error: {}", e.what());
+        SPDLOG_INFO("[Config] Save error: {}", e.what());
         return false;
     }
 }
@@ -108,7 +108,7 @@ nlohmann::json& ConfigManager::get(const std::string& path)
                 j = &(*j)[ki.name];
             }
         } catch (const std::exception& e) {
-            spdlog::info("[Config] get() error at token '{}': {}", token, e.what());
+            SPDLOG_INFO("[Config] get() error at token '{}': {}", token, e.what());
             return root_;
         }
     }
@@ -118,14 +118,14 @@ nlohmann::json& ConfigManager::get(const std::string& path)
 void ConfigManager::set(const std::string& path, nlohmann::json value)
 {
     if (path.empty()) {
-        spdlog::info("[Config] Ignored set() with empty path");
+        SPDLOG_INFO("[Config] Ignored set() with empty path");
         return;
     }
     try {
         get(path) = std::move(value);
         scheduleSave();
     } catch (const std::exception& e) {
-        spdlog::info("[Config] set() error at '{}': {}", path, e.what());
+        SPDLOG_INFO("[Config] set() error at '{}': {}", path, e.what());
     }
 }
 

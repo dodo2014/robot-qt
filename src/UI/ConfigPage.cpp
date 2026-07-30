@@ -84,7 +84,7 @@ static void ensureConfigLoaded()
         }
     }
     qWarning() << "[ConfigPage] No config.json found in any candidate path";
-    spdlog::info("[ConfigPage] No config.json found in any candidate path");
+    SPDLOG_INFO("[ConfigPage] No config.json found in any candidate path");
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +201,7 @@ void ConfigPage::OnTabClicked(int index)
     if (index >= 0 && index < tabStack_->count())
     {
         tabStack_->setCurrentIndex(index);
-        spdlog::info("[Config] Tab switched to {}", index);
+        SPDLOG_INFO("[Config] Tab switched to {}", index);
     }
 }
 
@@ -577,7 +577,7 @@ QWidget* ConfigPage::CreateTab4TCP()
         calibBtn->setStyleSheet("QPushButton { background: #7f5f3f; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 600; font-size: 13px; color: white; } QPushButton:hover { background: #9f7f4f; }");
         calibBtn->setCursor(Qt::PointingHandCursor);
         QObject::connect(calibBtn, &QPushButton::clicked, this, []() {
-                spdlog::info("[Calibration] 九点标定按钮 pressed (stub)");
+                SPDLOG_INFO("[Calibration] 九点标定按钮 pressed (stub)");
         });
 
         auto* matrixLabel = new QLabel(QStringLiteral("外参矩阵 (4x4)"));
@@ -902,11 +902,11 @@ QWidget* ConfigPage::CreateElecMapTab()
                      maxAngleEdit](const QString& key) {
         try {
             if (key.isEmpty()) {
-                spdlog::info("[ElecMap] loadAxis: empty key");
+                SPDLOG_INFO("[ElecMap] loadAxis: empty key");
                 return;
             }
             std::string p = "axes." + key.toStdString();
-            spdlog::info("[ElecMap] loadAxis key {}", key.toStdString());
+            SPDLOG_INFO("[ElecMap] loadAxis key {}", key.toStdString());
 
             auto& cfg = ConfigManager::instance();
             auto name = cfg.getValue<std::string>(p + ".name", "?");
@@ -957,11 +957,11 @@ QWidget* ConfigPage::CreateElecMapTab()
 
             transStack_->setCurrentIndex(hwType);
 
-            spdlog::info("[ElecMap] loadAxis key {} done", key.toStdString());
+            SPDLOG_INFO("[ElecMap] loadAxis key {} done", key.toStdString());
         } catch (const std::exception& e) {
-            spdlog::info("[ElecMap] loadAxis exception: {}", e.what());
+            SPDLOG_INFO("[ElecMap] loadAxis exception: {}", e.what());
         } catch (...) {
-            spdlog::info("[ElecMap] loadAxis unknown exception");
+            SPDLOG_INFO("[ElecMap] loadAxis unknown exception");
         }
     };
 

@@ -1,63 +1,113 @@
 #include "ProcessPage.h"
+#include "ProcessManager.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QDialogButtonBox>
+#include <QMessageBox>
 #include <QDebug>
-#include <QStyleFactory>
-#include <QListView>
+
+#include <spdlog/spdlog.h>
 
 ProcessPage::ProcessPage(QWidget* parent)
     : QWidget(parent)
 {
     SetupUI();
+    ProcessManager::instance().load();
+    if (!ProcessManager::instance().schemes().isEmpty()) {
+        m_currentSchemeIdx = 0;
+        m_schemeNameEdit->setText(ProcessManager::instance().schemes()[0].schemeName);
+        RefreshSchemeCombo();
+        RefreshActionList();
+    }
 }
 
 void ProcessPage::SetupUI()
 {
     setStyleSheet("background: #262c34;");
 
+    auto makeBtnStyle = [](const QString& bg, const QString& hover) {
+        return QStringLiteral("QPushButton { background: %1; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 600; font-size: 14px; color: white; } QPushButton:hover { background: %2; }").arg(bg, hover);
+    };
+
+    auto makeFormPage = [](QWidget* parent) -> QFormLayout* {
+        auto* f = new QFormLayout(parent);
+        f->setVerticalSpacing(10);
+        f->setHorizontalSpacing(18);
+        f->setContentsMargins(14, 18, 14, 8);
+        f->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        f->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        return f;
+    };
+
+    auto makeLabel = [](const QString& text) -> QLabel* {
+        auto* l = new QLabel(text);
+        l->setMinimumSize(100, 28);
+        l->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+        l->setStyleSheet("color: #b8cce3; background: transparent; border: none; font-size: 13px;");
+        return l;
+    };
+
+    auto makeFieldEdit = []() -> QLineEdit* {
+        auto* e = new QLineEdit();
+        e->setFixedHeight(30);
+        e->setStyleSheet("QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; font-size: 13px; padding: 4px 8px; }");
+        return e;
+    };
+
+    auto saveBtnStyle = makeBtnStyle("#2f7f5f", "#3f9f7f");
+
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(14, 14, 14, 14);
     mainLayout->setSpacing(12);
 
-    // ==== Top bar ====
-    auto* processTop = new QWidget();
-    processTop->setStyleSheet("background: #1b222b; padding: 8px 16px; border-radius: 12px;");
-    auto* topLayout = new QHBoxLayout(processTop);
+    // Top bar
+    auto* topBar = new QWidget();
+    topBar->setStyleSheet("background: #1b222b; border-radius: 12px;");
+    topBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* topLayout = new QHBoxLayout(topBar);
     topLayout->setContentsMargins(16, 8, 16, 8);
     topLayout->setSpacing(14);
-
-    auto makeBtnStyle = [](const QString& bg, const QString& hover) {
-        return QStringLiteral("QPushButton { background: %1; border: none; border-radius: 8px; padding: 8px 16px; font-weight: 600; font-size: 14px; color: white; } QPushButton:hover { background: %2; }").arg(bg, hover);
-    };
 
     auto* newSchemeBtn = new QPushButton(QStringLiteral("新增方案"));
     newSchemeBtn->setStyleSheet(makeBtnStyle("#2f6f9f", "#3a84b8"));
     newSchemeBtn->setCursor(Qt::PointingHandCursor);
     connect(newSchemeBtn, &QPushButton::clicked, this, &ProcessPage::OnNewScheme);
 
-    auto* currentLabel = new QLabel(QStringLiteral("当前方案:"));
-    currentLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+    auto* label = new QLabel(QStringLiteral("当前方案:"));
+    label->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
 
-    auto* schemeInput = new QLineEdit(QStringLiteral("方案_A_2026"));
-    schemeInput->setFixedWidth(150);
-    schemeInput->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px; font-size: 13px;");
+    m_schemeNameEdit = new QLineEdit();
+    m_schemeNameEdit->setFixedWidth(150);
+    m_schemeNameEdit->setFixedHeight(30);
+    m_schemeNameEdit->setStyleSheet("QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px; font-size: 13px; }");
 
-    auto* schemeCombo = new QComboBox();
-    schemeCombo->addItems({ QStringLiteral("方案_A"), QStringLiteral("方案_B") });
-    schemeCombo->setFixedWidth(130);
-    // No per-widget stylesheet — use global QComboBox style from MainWindow
+    m_schemeCombo = new QComboBox();
+    m_schemeCombo->setFixedWidth(140);
+    m_schemeCombo->setFixedHeight(30);
+    m_schemeCombo->setStyleSheet(R"(
+        QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+        QComboBox::drop-down { width: 20px; border: none; }
+        QComboBox:hover { border: 1px solid #4f7faf; }
+        QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }
+    )");
 
     auto* confirmBtn = new QPushButton(QStringLiteral("确认切换"));
     confirmBtn->setStyleSheet(makeBtnStyle("#2f6f9f", "#3a84b8"));
     confirmBtn->setCursor(Qt::PointingHandCursor);
     connect(confirmBtn, &QPushButton::clicked, this, &ProcessPage::OnConfirmSwitch);
+
+    auto* deleteSchemeBtn = new QPushButton(QStringLiteral("删除方案"));
+    deleteSchemeBtn->setStyleSheet(makeBtnStyle("#8f4f4f", "#aa5f5f"));
+    deleteSchemeBtn->setCursor(Qt::PointingHandCursor);
+    connect(deleteSchemeBtn, &QPushButton::clicked, this, &ProcessPage::OnDeleteScheme);
 
     auto* stepBtn = new QPushButton(QStringLiteral("单步执行"));
     stepBtn->setStyleSheet(makeBtnStyle("#8f7f3f", "#9f8f4f"));
@@ -65,23 +115,24 @@ void ProcessPage::SetupUI()
     connect(stepBtn, &QPushButton::clicked, this, &ProcessPage::OnStepExecute);
 
     topLayout->addWidget(newSchemeBtn);
-    topLayout->addWidget(currentLabel);
-    topLayout->addWidget(schemeInput);
-    topLayout->addWidget(schemeCombo);
+    topLayout->addWidget(label);
+    topLayout->addWidget(m_schemeNameEdit);
+    topLayout->addWidget(m_schemeCombo);
+    topLayout->addWidget(deleteSchemeBtn);
     topLayout->addWidget(confirmBtn);
     topLayout->addWidget(stepBtn);
     topLayout->addStretch();
 
-    mainLayout->addWidget(processTop);
+    mainLayout->addWidget(topBar);
 
-    // ==== Split: left (action list) + right (point table) ====
+    // Split
     auto* splitWidget = new QWidget();
     splitWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     auto* splitLayout = new QHBoxLayout(splitWidget);
     splitLayout->setContentsMargins(0, 0, 0, 0);
     splitLayout->setSpacing(16);
 
-    // Left: action list
+    // Left
     auto* leftPanel = new QWidget();
     leftPanel->setStyleSheet("background: #1b222b; border-radius: 12px; border: 1px solid #384550;");
     leftPanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
@@ -92,29 +143,25 @@ void ProcessPage::SetupUI()
     auto* actionHeader = new QLabel(QStringLiteral("动作列表"));
     actionHeader->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
 
-    auto* actionList = new QWidget();
-    actionList->setStyleSheet("background: #121a22; border-radius: 8px; padding: 8px;");
-    auto* actionLayout = new QVBoxLayout(actionList);
-    actionLayout->setContentsMargins(0, 0, 0, 0);
-    actionLayout->setSpacing(4);
-
-    QStringList actions = {
-        QStringLiteral("[1] 移动到：安全上方点"),
-        QStringLiteral("[2] 打开夹爪"),
-        QStringLiteral("[3] 等待视觉结果"),
-        QStringLiteral("[4] 直线插补：插入灌装口"),
-        QStringLiteral("[5] 挤出奶油"),
-        QStringLiteral("[6] 关闭夹爪"),
-        QStringLiteral("[7] 移动到放置点"),
-    };
-
-    for (const auto& action : actions)
-    {
-        auto* lbl = new QLabel(action);
-        lbl->setStyleSheet("color: #c0d6ec; font-family: 'Consolas', monospace; font-size: 14px; background: transparent; border: none; padding: 2px 0;");
-        actionLayout->addWidget(lbl);
-    }
-    actionLayout->addStretch();
+    m_actionList = new QListWidget();
+    m_actionList->setStyleSheet(R"(
+        QListWidget { background: #121a22; border: none; border-radius: 8px; padding: 4px; outline: none; }
+        QListWidget::item { min-height: 32px; padding: 4px 10px; color: #b8cce3; border-radius: 4px; font-size: 13px; }
+        QListWidget::item:selected { background: #2f6f9f; color: white; }
+        QListWidget::item:hover:!selected { background: #1e2a36; }
+        QScrollBar:vertical { width: 28px; background: #1a2430; border: none; margin: 0; }
+        QScrollBar::handle:vertical { background: #ffffff; min-height: 50px; border-radius: 8px; margin: 2px 4px; }
+        QScrollBar::handle:vertical:hover { background: #e0e8f0; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; border: none; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #1a2430; }
+    )");
+    connect(m_actionList, &QListWidget::currentRowChanged, this, [this](int row) {
+        if (row >= 0 && m_currentSchemeIdx >= 0 &&
+            m_currentSchemeIdx < ProcessManager::instance().schemes().size()) {
+            m_currentActionIdx = row;
+            RefreshActionDetail(row);
+        }
+    });
 
     auto* actionBtnRow = new QHBoxLayout();
     actionBtnRow->setSpacing(8);
@@ -124,20 +171,28 @@ void ProcessPage::SetupUI()
     newActionBtn->setCursor(Qt::PointingHandCursor);
     connect(newActionBtn, &QPushButton::clicked, this, &ProcessPage::OnNewAction);
 
+    auto* editActionBtn = new QPushButton(QStringLiteral("编辑动作"));
+    editActionBtn->setStyleSheet(makeBtnStyle("#4f5f6f", "#5f6f7f"));
+    editActionBtn->setCursor(Qt::PointingHandCursor);
+    connect(editActionBtn, &QPushButton::clicked, this, &ProcessPage::OnEditAction);
+
     auto* deleteActionBtn = new QPushButton(QStringLiteral("删除动作"));
     deleteActionBtn->setStyleSheet(makeBtnStyle("#8f4f4f", "#aa5f5f"));
     deleteActionBtn->setCursor(Qt::PointingHandCursor);
     connect(deleteActionBtn, &QPushButton::clicked, this, &ProcessPage::OnDeleteAction);
 
     actionBtnRow->addWidget(newActionBtn);
+    actionBtnRow->addWidget(editActionBtn);
     actionBtnRow->addWidget(deleteActionBtn);
     actionBtnRow->addStretch();
 
     leftLayout->addWidget(actionHeader);
-    leftLayout->addWidget(actionList, 1);
+    leftLayout->addWidget(m_actionList, 1);
     leftLayout->addLayout(actionBtnRow);
 
-    // Right: point table
+    splitLayout->addWidget(leftPanel, 3);
+
+    // Right stack
     auto* rightPanel = new QWidget();
     rightPanel->setStyleSheet("background: #1b222b; border-radius: 12px; border: 1px solid #384550;");
     rightPanel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
@@ -145,32 +200,248 @@ void ProcessPage::SetupUI()
     rightLayout->setContentsMargins(10, 10, 10, 10);
     rightLayout->setSpacing(8);
 
-    auto* currentActionLabel = new QLabel(QStringLiteral("当前动作: 直线插补：插入灌装口"));
-    currentActionLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+    m_currentActionLabel = new QLabel(QStringLiteral("当前动作: (无)"));
+    m_currentActionLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
 
-    auto* pointTable = new QTableWidget(2, 6);
-    pointTable->setHorizontalHeaderLabels({
+    m_detailStack = new QStackedWidget();
+    m_detailStack->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    m_detailStack->setStyleSheet("background: transparent;");
+
+    // Page 0: placeholder
+    auto* placeholderPage = new QWidget();
+    auto* placeholderLayout = new QVBoxLayout(placeholderPage);
+    auto* placeholderLabel = new QLabel(QStringLiteral("请先选择或创建一个动作"));
+    placeholderLabel->setAlignment(Qt::AlignCenter);
+    placeholderLabel->setStyleSheet("color: #5a7a8a; font-size: 15px; background: transparent; border: none;");
+    placeholderLayout->addWidget(placeholderLabel);
+    m_detailStack->addWidget(placeholderPage);
+
+    // Page 1: Move
+    auto* movePage = new QWidget();
+    auto* moveLayout = new QVBoxLayout(movePage);
+    moveLayout->setContentsMargins(0, 0, 0, 0);
+    moveLayout->setSpacing(8);
+
+    m_pointTable = new QTableWidget(0, 6);
+    m_pointTable->setHorizontalHeaderLabels({
         QStringLiteral("点名称"), QStringLiteral("X"), QStringLiteral("Y"),
         QStringLiteral("Z"), QStringLiteral("R"), QStringLiteral("姿态")
     });
-    pointTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    pointTable->setSelectionMode(QAbstractItemView::SingleSelection);
-    pointTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
-    pointTable->verticalHeader()->setVisible(false);
+    m_pointTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_pointTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_pointTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    m_pointTable->verticalHeader()->setVisible(false);
     for (int c = 0; c < 6; ++c)
-        pointTable->horizontalHeader()->setSectionResizeMode(c, QHeaderView::Stretch);
-    pointTable->setStyleSheet(R"(
+        m_pointTable->horizontalHeader()->setSectionResizeMode(c, QHeaderView::Stretch);
+    m_pointTable->setStyleSheet(R"(
         QTableWidget { background: #192029; border: 1px solid #2f3d4d; border-radius: 8px; }
         QTableWidget::item { padding: 4px 6px; color: #cddef0; border-top: 1px solid #2b3542; }
+        QTableWidget::item:selected { background: #2f6f9f; color: #ffffff; }
+        QTableWidget::item:selected:active { background: #2f6f9f; color: #ffffff; }
+        QTableWidget QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; selection-background-color: #2f6f9f; }
         QHeaderView::section { background: #242e3a; color: #b0c7df; padding: 6px; border: none; }
     )");
+    moveLayout->addWidget(m_pointTable, 1);
 
-    QStringList poseItems = { QStringLiteral("elbow_up"), QStringLiteral("elbow_down") };
+    auto* pointBtnRow = new QHBoxLayout();
+    pointBtnRow->setSpacing(8);
 
-    auto makeTableCombo = [](const QStringList& items, int idx) -> QComboBox* {
+    struct PointBtn { QString text; QString bg; QString hover; void (ProcessPage::*slot)(); };
+    QVector<PointBtn> pointBtns = {
+        { QStringLiteral("添加点位"),     "#2f6f8f", "#3a84a8", &ProcessPage::OnAddPoint },
+        { QStringLiteral("删除选中点"),   "#8f4f4f", "#aa5f5f", &ProcessPage::OnDeletePoint },
+        { QStringLiteral("上移"),         "#4f4f6f", "#5f5f8f", &ProcessPage::OnMoveUp },
+        { QStringLiteral("下移"),         "#4f4f6f", "#5f5f8f", &ProcessPage::OnMoveDown },
+        { QStringLiteral("读取当前坐标(示教)"), "#7f7f3f", "#9f9f4f", &ProcessPage::OnTeachRead },
+    };
+    for (const auto& pb : pointBtns) {
+        auto* btn = new QPushButton(pb.text);
+        btn->setStyleSheet(makeBtnStyle(pb.bg, pb.hover));
+        btn->setCursor(Qt::PointingHandCursor);
+        connect(btn, &QPushButton::clicked, this, pb.slot);
+        pointBtnRow->addWidget(btn);
+    }
+    pointBtnRow->addStretch();
+
+    auto* moveSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    moveSaveBtn->setStyleSheet(saveBtnStyle);
+    moveSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(moveSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    pointBtnRow->addWidget(moveSaveBtn);
+    moveLayout->addLayout(pointBtnRow);
+    m_detailStack->addWidget(movePage);
+
+    // Page 2: Vision
+    auto* visionPage = new QWidget();
+    auto* vf = makeFormPage(visionPage);
+    m_visionTypeCombo = new QComboBox();
+    m_visionTypeCombo->addItems({ QStringLiteral("CCD"), QStringLiteral("深度"), QStringLiteral("激光") });
+    m_visionTypeCombo->setFixedHeight(30);
+    m_visionTypeCombo->setStyleSheet(R"(
+        QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+        QComboBox::drop-down { width: 20px; border: none; }
+        QComboBox:hover { border: 1px solid #4f7faf; }
+        QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }
+    )");
+    vf->addRow(makeLabel(QStringLiteral("识别类型")), m_visionTypeCombo);
+    m_exposureEdit = makeFieldEdit();
+    vf->addRow(makeLabel(QStringLiteral("曝光时间")), m_exposureEdit);
+    m_templateEdit = makeFieldEdit();
+    vf->addRow(makeLabel(QStringLiteral("匹配模板")), m_templateEdit);
+    m_thresholdEdit = makeFieldEdit();
+    vf->addRow(makeLabel(QStringLiteral("置信度阈值")), m_thresholdEdit);
+    auto* visionSaveLayout = new QHBoxLayout();
+    visionSaveLayout->addStretch();
+    auto* visionSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    visionSaveBtn->setStyleSheet(saveBtnStyle);
+    visionSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(visionSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    visionSaveLayout->addWidget(visionSaveBtn);
+    vf->addRow(visionSaveLayout);
+    m_detailStack->addWidget(visionPage);
+
+    // Page 3: Extrude
+    auto* extrudePage = new QWidget();
+    auto* ef = makeFormPage(extrudePage);
+    m_extrudeAmountEdit = makeFieldEdit();
+    ef->addRow(makeLabel(QStringLiteral("挤出量")), m_extrudeAmountEdit);
+    m_extrudeSpeedEdit = makeFieldEdit();
+    ef->addRow(makeLabel(QStringLiteral("挤出速度")), m_extrudeSpeedEdit);
+    m_suckBackAmountEdit = makeFieldEdit();
+    ef->addRow(makeLabel(QStringLiteral("回抽量")), m_suckBackAmountEdit);
+    m_suckBackSpeedEdit = makeFieldEdit();
+    ef->addRow(makeLabel(QStringLiteral("回抽速度")), m_suckBackSpeedEdit);
+    auto* extrudeSaveLayout = new QHBoxLayout();
+    extrudeSaveLayout->addStretch();
+    auto* extrudeSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    extrudeSaveBtn->setStyleSheet(saveBtnStyle);
+    extrudeSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(extrudeSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    extrudeSaveLayout->addWidget(extrudeSaveBtn);
+    ef->addRow(extrudeSaveLayout);
+    m_detailStack->addWidget(extrudePage);
+
+    // Page 4: Delay
+    auto* delayPage = new QWidget();
+    auto* df = makeFormPage(delayPage);
+    m_delaySpin = new QSpinBox();
+    m_delaySpin->setRange(0, 999999);
+    m_delaySpin->setFixedHeight(30);
+    m_delaySpin->setFixedWidth(120);
+    m_delaySpin->setSuffix(QStringLiteral(" ms"));
+    m_delaySpin->setStyleSheet("QSpinBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; font-size: 13px; padding: 4px 8px; }");
+    df->addRow(makeLabel(QStringLiteral("延时时间")), m_delaySpin);
+    auto* delaySaveLayout = new QHBoxLayout();
+    delaySaveLayout->addStretch();
+    auto* delaySaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    delaySaveBtn->setStyleSheet(saveBtnStyle);
+    delaySaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(delaySaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    delaySaveLayout->addWidget(delaySaveBtn);
+    df->addRow(delaySaveLayout);
+    m_detailStack->addWidget(delayPage);
+
+    // Page 5: Gripper
+    auto* gripperPage = new QWidget();
+    auto* gf = makeFormPage(gripperPage);
+    m_gripperCombo = new QComboBox();
+    m_gripperCombo->addItems({ QStringLiteral("闭合"), QStringLiteral("张开") });
+    m_gripperCombo->setFixedHeight(30);
+    m_gripperCombo->setStyleSheet(R"(
+        QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+        QComboBox::drop-down { width: 20px; border: none; }
+        QComboBox:hover { border: 1px solid #4f7faf; }
+        QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }
+    )");
+    gf->addRow(makeLabel(QStringLiteral("夹爪动作")), m_gripperCombo);
+    auto* gripperSaveLayout = new QHBoxLayout();
+    gripperSaveLayout->addStretch();
+    auto* gripperSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    gripperSaveBtn->setStyleSheet(saveBtnStyle);
+    gripperSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(gripperSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    gripperSaveLayout->addWidget(gripperSaveBtn);
+    gf->addRow(gripperSaveLayout);
+    m_detailStack->addWidget(gripperPage);
+
+    m_detailStack->setCurrentIndex(0);
+
+    rightLayout->addWidget(m_currentActionLabel);
+    rightLayout->addWidget(m_detailStack, 1);
+
+    splitLayout->addWidget(rightPanel, 7);
+    mainLayout->addWidget(splitWidget, 1);
+}
+
+void ProcessPage::RefreshSchemeCombo()
+{
+    m_schemeCombo->blockSignals(true);
+    m_schemeCombo->clear();
+    const auto& s = ProcessManager::instance().schemes();
+    for (const auto& scheme : s)
+        m_schemeCombo->addItem(scheme.schemeName);
+    if (m_currentSchemeIdx >= 0 && m_currentSchemeIdx < s.size())
+        m_schemeCombo->setCurrentIndex(m_currentSchemeIdx);
+    m_schemeCombo->blockSignals(false);
+}
+
+void ProcessPage::RefreshActionList()
+{
+    m_actionList->blockSignals(true);
+    m_actionList->clear();
+
+    if (m_currentSchemeIdx >= 0 && m_currentSchemeIdx < ProcessManager::instance().schemes().size()) {
+        const auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
+        for (int i = 0; i < actions.size(); ++i) {
+            const auto& a = actions[i];
+            QString text = QStringLiteral("[%1] (%2) %3")
+                               .arg(i + 1).arg(ProcessManager::actionTypeName(a.type)).arg(a.name);
+            m_actionList->addItem(text);
+        }
+    }
+
+    if (m_currentActionIdx >= 0 && m_currentActionIdx < m_actionList->count())
+        m_actionList->setCurrentRow(m_currentActionIdx);
+    else if (m_actionList->count() > 0)
+        m_actionList->setCurrentRow(0);
+    else
+        m_currentActionIdx = -1;
+
+    m_actionList->blockSignals(false);
+
+    int row = m_actionList->currentRow();
+    if (row >= 0) {
+        m_currentActionIdx = row;
+        RefreshActionDetail(row);
+    } else {
+        m_currentActionIdx = -1;
+        m_detailStack->setCurrentIndex(0);
+        m_currentActionLabel->setText(QStringLiteral("当前动作: (无)"));
+    }
+}
+
+void ProcessPage::RefreshActionDetail(int idx)
+{
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx < 0 || m_currentSchemeIdx >= schemes.size() ||
+        idx < 0 || idx >= schemes[m_currentSchemeIdx].actions.size())
+    {
+        m_currentActionLabel->setText(QStringLiteral("当前动作: (无)"));
+        m_detailStack->setCurrentIndex(0);
+        return;
+    }
+
+    const auto& action = schemes[m_currentSchemeIdx].actions[idx];
+    m_currentActionLabel->setText(QStringLiteral("当前动作: [%1] %2").arg(idx + 1).arg(action.name));
+    m_currentActionIdx = idx;
+
+    int stackIdx = static_cast<int>(action.type) + 1;
+    m_detailStack->setCurrentIndex(stackIdx);
+
+    auto makePoseCombo = [](const QString& text) -> QComboBox* {
         auto* c = new QComboBox();
-        c->addItems(items);
-        c->setCurrentIndex(idx);
+        c->addItems({ QStringLiteral("elbow_up"), QStringLiteral("elbow_down") });
+        c->setCurrentText(text);
         c->setFixedHeight(24);
         c->setStyleSheet(R"(
             QComboBox { background: #192029; border: 1px solid #3f4e5e; border-radius: 4px;
@@ -188,64 +459,362 @@ void ProcessPage::SetupUI()
         return c;
     };
 
-    struct RowData { QString name; QString x, y, z, r; int pose; };
-    QVector<RowData> rows = {
-        { QStringLiteral("fill_start"), QStringLiteral("85.0"), QStringLiteral("92.0"), QStringLiteral("22.0"), QStringLiteral("2.0"), 0 },
-        { QStringLiteral("fill_end"),   QStringLiteral("85.0"), QStringLiteral("92.0"), QStringLiteral("10.0"), QStringLiteral("2.0"), 1 },
-    };
-
-    for (int r = 0; r < rows.size(); ++r) {
-        const auto& d = rows[r];
-        pointTable->setItem(r, 0, new QTableWidgetItem(d.name));
-        pointTable->setItem(r, 1, new QTableWidgetItem(d.x));
-        pointTable->setItem(r, 2, new QTableWidgetItem(d.y));
-        pointTable->setItem(r, 3, new QTableWidgetItem(d.z));
-        pointTable->setItem(r, 4, new QTableWidgetItem(d.r));
-        pointTable->setCellWidget(r, 5, makeTableCombo(poseItems, d.pose));
-        pointTable->setRowHeight(r, 40);
+    switch (action.type) {
+    case ActionType::Move:
+        while (m_pointTable->rowCount() > 0)
+            m_pointTable->removeRow(0);
+        for (int r = 0; r < action.points.size(); ++r) {
+            const auto& pt = action.points[r];
+            m_pointTable->insertRow(r);
+            m_pointTable->setItem(r, 0, new QTableWidgetItem(pt.name));
+            m_pointTable->setItem(r, 1, new QTableWidgetItem(QString::number(pt.x, 'f', 2)));
+            m_pointTable->setItem(r, 2, new QTableWidgetItem(QString::number(pt.y, 'f', 2)));
+            m_pointTable->setItem(r, 3, new QTableWidgetItem(QString::number(pt.z, 'f', 2)));
+            m_pointTable->setItem(r, 4, new QTableWidgetItem(QString::number(pt.r, 'f', 2)));
+            m_pointTable->setCellWidget(r, 5, makePoseCombo(pt.posture));
+            m_pointTable->setRowHeight(r, 40);
+        }
+        break;
+    case ActionType::Vision:
+        m_visionTypeCombo->setCurrentText(action.visionType);
+        m_exposureEdit->setText(QString::number(action.exposure));
+        m_templateEdit->setText(action.templateName);
+        m_thresholdEdit->setText(QString::number(action.threshold));
+        break;
+    case ActionType::Extrude:
+        m_extrudeAmountEdit->setText(QString::number(action.extrudeAmount));
+        m_extrudeSpeedEdit->setText(QString::number(action.extrudeSpeed));
+        m_suckBackAmountEdit->setText(QString::number(action.suckBackAmount));
+        m_suckBackSpeedEdit->setText(QString::number(action.suckBackSpeed));
+        break;
+    case ActionType::Delay:
+        m_delaySpin->setValue(action.delayMs);
+        break;
+    case ActionType::Gripper:
+        m_gripperCombo->setCurrentIndex(action.isGripperOpen ? 1 : 0);
+        break;
     }
-
-    auto* pointBtnRow = new QHBoxLayout();
-    pointBtnRow->setSpacing(8);
-
-    struct PointBtn { QString text; QString bg; QString hover; void (ProcessPage::*slot)(); };
-    QVector<PointBtn> pointBtns = {
-        { QStringLiteral("添加点位"),     "#2f6f8f", "#3a84a8", &ProcessPage::OnAddPoint },
-        { QStringLiteral("删除选中点"),   "#8f4f4f", "#aa5f5f", &ProcessPage::OnDeletePoint },
-        { QStringLiteral("上移"),         "#4f4f6f", "#5f5f8f", &ProcessPage::OnMoveUp },
-        { QStringLiteral("下移"),         "#4f4f6f", "#5f5f8f", &ProcessPage::OnMoveDown },
-        { QStringLiteral("读取当前坐标(示教)"), "#7f7f3f", "#9f9f4f", &ProcessPage::OnTeachRead },
-        { QStringLiteral("保存动作"),     "#2f7f5f", "#3f9f7f", &ProcessPage::OnSaveAction },
-    };
-
-    for (const auto& pb : pointBtns)
-    {
-        auto* btn = new QPushButton(pb.text);
-        btn->setStyleSheet(makeBtnStyle(pb.bg, pb.hover));
-        btn->setCursor(Qt::PointingHandCursor);
-        connect(btn, &QPushButton::clicked, this, pb.slot);
-        pointBtnRow->addWidget(btn);
-    }
-    pointBtnRow->addStretch();
-
-    rightLayout->addWidget(currentActionLabel);
-    rightLayout->addWidget(pointTable, 1);
-    rightLayout->addLayout(pointBtnRow);
-
-    splitLayout->addWidget(leftPanel, 3);
-    splitLayout->addWidget(rightPanel, 7);
-
-    mainLayout->addWidget(splitWidget, 1);
 }
 
-void ProcessPage::OnNewScheme()    { qDebug() << "按钮被点击: 新增方案"; }
-void ProcessPage::OnConfirmSwitch(){ qDebug() << "按钮被点击: 确认切换"; }
-void ProcessPage::OnStepExecute()  { qDebug() << "按钮被点击: 单步执行"; }
-void ProcessPage::OnNewAction()    { qDebug() << "按钮被点击: 新建动作"; }
-void ProcessPage::OnDeleteAction() { qDebug() << "按钮被点击: 删除动作"; }
-void ProcessPage::OnAddPoint()     { qDebug() << "按钮被点击: 添加点位"; }
-void ProcessPage::OnDeletePoint()  { qDebug() << "按钮被点击: 删除选中点"; }
-void ProcessPage::OnMoveUp()       { qDebug() << "按钮被点击: 上移"; }
-void ProcessPage::OnMoveDown()     { qDebug() << "按钮被点击: 下移"; }
-void ProcessPage::OnTeachRead()    { qDebug() << "按钮被点击: 读取当前坐标(示教)"; }
-void ProcessPage::OnSaveAction()   { qDebug() << "按钮被点击: 保存动作"; }
+void ProcessPage::OnNewScheme()
+{
+    auto& schemes = ProcessManager::instance().schemes();
+    QString name = ProcessManager::generateUniqueSchemeName(schemes);
+    SchemeData sd;
+    sd.schemeName = name;
+    schemes.push_back(sd);
+    m_currentSchemeIdx = schemes.size() - 1;
+    RefreshSchemeCombo();
+    RefreshActionList();
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnDeleteScheme()
+{
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx < 0 || schemes.isEmpty()) return;
+
+    auto reply = QMessageBox::question(this,
+        QStringLiteral("删除方案"),
+        QStringLiteral("确定要删除方案 \"%1\" 吗？\n此操作不可撤销。").arg(schemes[m_currentSchemeIdx].schemeName),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    if (reply != QMessageBox::Yes) return;
+
+    auto& s = ProcessManager::instance().schemes();
+    s.removeAt(m_currentSchemeIdx);
+
+    if (s.isEmpty()) {
+        m_currentSchemeIdx = -1;
+        m_currentActionIdx = -1;
+        m_schemeNameEdit->clear();
+    } else {
+        m_currentSchemeIdx = 0;
+        m_currentActionIdx = -1;
+    }
+    RefreshSchemeCombo();
+    RefreshActionList();
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnConfirmSwitch()
+{
+    int idx = m_schemeCombo->currentIndex();
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (idx < 0 || idx >= schemes.size()) return;
+    if (idx == m_currentSchemeIdx) return;
+
+    if (m_currentSchemeIdx >= 0) {
+        auto reply = QMessageBox::question(this,
+            QStringLiteral("确认切换"),
+            QStringLiteral("确定从 \"%1\" 切换到 \"%2\" 吗？")
+                .arg(schemes[m_currentSchemeIdx].schemeName).arg(schemes[idx].schemeName),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes) return;
+    }
+
+    m_currentSchemeIdx = idx;
+    m_currentActionIdx = -1;
+    m_schemeNameEdit->setText(schemes[idx].schemeName);
+    RefreshActionList();
+}
+
+void ProcessPage::OnStepExecute()
+{
+    if (m_currentSchemeIdx < 0) return;
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentActionIdx < 0) {
+        if (!schemes[m_currentSchemeIdx].actions.isEmpty())
+            m_currentActionIdx = 0;
+        else
+            return;
+    }
+    SPDLOG_INFO("[Process] Step execute: scheme={}, action={}",
+        schemes[m_currentSchemeIdx].schemeName.toStdString(),
+        schemes[m_currentSchemeIdx].actions[m_currentActionIdx].name.toStdString());
+}
+
+void ProcessPage::OnNewAction()
+{
+    if (m_currentSchemeIdx < 0) {
+        QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先新增或选择一个方案"));
+        return;
+    }
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("新建动作"));
+    dlg.setStyleSheet("background: #1b222b; color: #dbe6f0;");
+    auto* form = new QFormLayout(&dlg);
+    form->setSpacing(12);
+    form->setContentsMargins(20, 20, 20, 20);
+
+    auto* nameEdit = new QLineEdit();
+    nameEdit->setPlaceholderText(QStringLiteral("输入动作名称"));
+    nameEdit->setStyleSheet("QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; }");
+    form->addRow(QStringLiteral("名称:"), nameEdit);
+
+    auto* typeCombo = new QComboBox();
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪") });
+    typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
+    form->addRow(QStringLiteral("类型:"), typeCombo);
+
+    auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    btnBox->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
+    btnBox->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    btnBox->setStyleSheet("QPushButton { background: #2f6f9f; border: none; border-radius: 6px; padding: 6px 16px; color: white; font-weight: 600; } QPushButton:hover { background: #3a84b8; }");
+    connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(btnBox);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (nameEdit->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("动作名称不能为空"));
+        return;
+    }
+
+    auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
+    ActionData a;
+    a.name = nameEdit->text().trimmed();
+    a.type = static_cast<ActionType>(typeCombo->currentIndex());
+    int insertPos = (m_currentActionIdx >= 0) ? m_currentActionIdx + 1 : actions.size();
+    actions.insert(insertPos, a);
+    m_currentActionIdx = insertPos;
+    RefreshActionList();
+    RefreshActionDetail(m_currentActionIdx);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnEditAction()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) {
+        QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先选择一个动作"));
+        return;
+    }
+
+    auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("编辑动作"));
+    dlg.setStyleSheet("background: #1b222b; color: #dbe6f0;");
+    auto* form = new QFormLayout(&dlg);
+    form->setSpacing(12);
+    form->setContentsMargins(20, 20, 20, 20);
+
+    auto* nameEdit = new QLineEdit(action.name);
+    nameEdit->setStyleSheet("QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; }");
+    form->addRow(QStringLiteral("名称:"), nameEdit);
+
+    auto* typeCombo = new QComboBox();
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪") });
+    typeCombo->setCurrentIndex(static_cast<int>(action.type));
+    typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
+    form->addRow(QStringLiteral("类型:"), typeCombo);
+
+    auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    btnBox->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
+    btnBox->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    btnBox->setStyleSheet("QPushButton { background: #2f6f9f; border: none; border-radius: 6px; padding: 6px 16px; color: white; font-weight: 600; } QPushButton:hover { background: #3a84b8; }");
+    connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(btnBox);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (nameEdit->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("动作名称不能为空"));
+        return;
+    }
+
+    action.name = nameEdit->text().trimmed();
+    ActionType newType = static_cast<ActionType>(typeCombo->currentIndex());
+    if (newType != action.type) {
+        action.type = newType;
+        action.points.clear();
+        action.visionType.clear(); action.exposure = 0; action.templateName.clear(); action.threshold = 0;
+        action.extrudeAmount = 0; action.extrudeSpeed = 0; action.suckBackAmount = 0; action.suckBackSpeed = 0;
+        action.delayMs = 0;
+        action.isGripperOpen = false;
+    }
+    RefreshActionList();
+    RefreshActionDetail(m_currentActionIdx);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnDeleteAction()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
+    if (m_currentActionIdx >= actions.size()) return;
+
+    auto reply = QMessageBox::question(this,
+        QStringLiteral("删除动作"),
+        QStringLiteral("确定要删除动作 \"%1\" 吗？\n此操作不可撤销。").arg(actions[m_currentActionIdx].name),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) return;
+
+    actions.removeAt(m_currentActionIdx);
+    if (actions.isEmpty())
+        m_currentActionIdx = -1;
+    else if (m_currentActionIdx >= actions.size())
+        m_currentActionIdx = actions.size() - 1;
+    RefreshActionList();
+    if (m_currentActionIdx >= 0)
+        RefreshActionDetail(m_currentActionIdx);
+    else {
+        m_detailStack->setCurrentIndex(0);
+        m_currentActionLabel->setText(QStringLiteral("当前动作: (无)"));
+    }
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnAddPoint()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+    if (action.type != ActionType::Move) return;
+    PointData pt;
+    pt.name = QStringLiteral("point_%1").arg(action.points.size() + 1);
+    pt.posture = QStringLiteral("elbow_up");
+    action.points.push_back(pt);
+    RefreshActionDetail(m_currentActionIdx);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnDeletePoint()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+    if (action.type != ActionType::Move) return;
+    int row = m_pointTable->currentRow();
+    if (row < 0 || row >= action.points.size()) return;
+    action.points.removeAt(row);
+    RefreshActionDetail(m_currentActionIdx);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnMoveUp()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& pts = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx].points;
+    int row = m_pointTable->currentRow();
+    if (row <= 0) return;
+    pts.swapItemsAt(row, row - 1);
+    RefreshActionDetail(m_currentActionIdx);
+    m_pointTable->selectRow(row - 1);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnMoveDown()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& pts = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx].points;
+    int row = m_pointTable->currentRow();
+    if (row < 0 || row >= pts.size() - 1) return;
+    pts.swapItemsAt(row, row + 1);
+    RefreshActionDetail(m_currentActionIdx);
+    m_pointTable->selectRow(row + 1);
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnTeachRead()
+{
+    SPDLOG_INFO("[Process] Teach read - stub");
+}
+
+void ProcessPage::OnSaveAction()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) {
+        QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先选择一个动作"));
+        return;
+    }
+
+    auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+
+    switch (action.type) {
+    case ActionType::Move: {
+        QVector<PointData> pts;
+        for (int r = 0; r < m_pointTable->rowCount(); ++r) {
+            auto* item0 = m_pointTable->item(r, 0);
+            auto* item1 = m_pointTable->item(r, 1);
+            auto* item2 = m_pointTable->item(r, 2);
+            auto* item3 = m_pointTable->item(r, 3);
+            auto* item4 = m_pointTable->item(r, 4);
+            if (!item0 || !item1 || !item2 || !item3 || !item4) continue;
+            PointData pt;
+            pt.name = item0->text();
+            pt.x = item1->text().toDouble();
+            pt.y = item2->text().toDouble();
+            pt.z = item3->text().toDouble();
+            pt.r = item4->text().toDouble();
+            auto* combo = qobject_cast<QComboBox*>(m_pointTable->cellWidget(r, 5));
+            pt.posture = combo ? combo->currentText() : QStringLiteral("elbow_up");
+            pts.push_back(pt);
+        }
+        action.points = pts;
+        break;
+    }
+    case ActionType::Vision:
+        action.visionType = m_visionTypeCombo->currentText();
+        action.exposure = m_exposureEdit->text().toDouble();
+        action.templateName = m_templateEdit->text();
+        action.threshold = m_thresholdEdit->text().toDouble();
+        break;
+    case ActionType::Extrude:
+        action.extrudeAmount = m_extrudeAmountEdit->text().toDouble();
+        action.extrudeSpeed = m_extrudeSpeedEdit->text().toDouble();
+        action.suckBackAmount = m_suckBackAmountEdit->text().toDouble();
+        action.suckBackSpeed = m_suckBackSpeedEdit->text().toDouble();
+        break;
+    case ActionType::Delay:
+        action.delayMs = m_delaySpin->value();
+        break;
+    case ActionType::Gripper:
+        action.isGripperOpen = (m_gripperCombo->currentIndex() == 1);
+        break;
+    }
+
+    RefreshActionList();
+    ProcessManager::instance().save();
+    QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("保存成功"));
+    SPDLOG_INFO("[Process] Saved action: {} ({})", action.name.toStdString(),
+        ProcessManager::actionTypeName(action.type).toStdString());
+}

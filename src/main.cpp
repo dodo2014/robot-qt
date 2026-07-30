@@ -1,4 +1,4 @@
-#include <QApplication>
+﻿#include <QApplication>
 #include <QDir>
 #include <QStyleFactory>
 
@@ -14,7 +14,7 @@ int main(int argc, char* argv[])
     app.setApplicationVersion("1.0.0");
     app.setStyle(QStyleFactory::create("Fusion"));
 
-    // spdlog — daily file logger
+    // spdlog 鈥?daily file logger
     {
         const auto logDir = QString::fromUtf8(PROJECT_SOURCE_DIR) + QStringLiteral("/log");
         QDir().mkpath(logDir);
@@ -25,7 +25,7 @@ int main(int argc, char* argv[])
 
         auto dailySink = std::make_shared<spdlog::sinks::daily_file_sink_mt>(
             logPath.toStdString(), rotationHour, rotationMinute, false, 30);
-        dailySink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
+        dailySink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%@] %v");
 
         auto logger = std::make_shared<spdlog::logger>("main", dailySink);
         logger->set_level(spdlog::level::debug);
@@ -33,7 +33,7 @@ int main(int argc, char* argv[])
         spdlog::flush_on(spdlog::level::debug);
         spdlog::flush_every(std::chrono::seconds(1));
 
-        spdlog::info("[Main] Log initialized: {}", logPath.toStdString());
+        SPDLOG_INFO("[Main] Log initialized: {}", logPath.toStdString());
     }
 
     MainWindow mainWindow;

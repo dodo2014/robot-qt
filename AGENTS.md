@@ -19,7 +19,8 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
 ## Architecture
 
 ```
-CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 4 subdirs
+CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
+├─ src/Config/  — Configuration management (ConfigManager, ProcessManager)
 ├─ src/HAL/     — Hardware Abstraction Layer (interfaces + SimCard)
 ├─ src/Core/    — Kinematics, CoordTransform, Trajectory
 ├─ src/Logic/   — PickCycleController (state machine)
@@ -44,7 +45,7 @@ Layering (link direction): `UI → Logic → Core → HAL`
 - `config/config.json` — runtime config (copied to output dir at build). Full schema documented in `doc/config.md`.
   - `axes` is a JSON **object** (not array). Key = `motor_{portId}` (hardwareType=0) or `servo_{portId}` (hardwareType=1). Each entry has a `sortOrder` field for UI display ordering.
 
-### ConfigManager (src/UI/ConfigManager.h/.cpp)
+### ConfigManager (src/Config/ConfigManager.h/.cpp)
 
 - Singleton via `ConfigManager::instance()`
 - Loads from `config.json` at startup (search order: `PROJECT_SOURCE_DIR/config/config.json` → app dir)
@@ -53,11 +54,26 @@ Layering (link direction): `UI → Logic → Core → HAL`
 - Template `getValue<T>(path, default)` for reads; `set(path, value)` for writes; `markDirty()` to trigger deferred save after direct root() manipulation
 - `SIMULATION_MODE` compile option (ON by default)
 
+### ProcessManager (src/Config/ProcessManager.h/.cpp)
+
+- Singleton via `ProcessManager::instance()`
+- Manages process/program data: `QVector<SchemeData>` (schemes → actions → points)
+- Model structs: `ActionType` enum (Move/Vision/Extrude/Delay/Gripper), `PointData`, `ActionData`, `SchemeData`
+- `load()` — reads from `PROJECT_SOURCE_DIR/config/process.json`; auto-generates default test scheme if file missing
+- `save()` — serializes `m_schemes` to `process.json` with 4-space indent
+- `actionTypeName()` — returns display name ("移动"/"识别"/"挤压"/"延时"/"夹爪")
+- `generateUniqueSchemeName()` — generates `方案_XXX` with random suffix, dedup against existing schemes
+
 ## UI Pages
 
 1. **AutoRunPage** — 自动运行: camera views, LCD display, coord panel, log, 5 control buttons
 2. **ManualControlPage** — 手动控制: enable/disable, 6-axis JOG table
-3. **ProcessPage** — 工艺与流程: scheme management, action list, point table
+3. **ProcessPage** — 工艺与流程: scheme management, action list (QListWidget), detail stack (QStackedWidget × 5 action types). Data stored in `process.json` via `ProcessManager`. 动作与方案的新增/编辑/删除/保存完整闭环，实时同步 JSON。
+   - 移动动作: 点位 QTableWidget (点名称/X/Y/Z/R/姿态) + 添加/删除/上移/下移/示教按钮
+   - 识别动作: 识别类型/曝光时间/匹配模板/置信度阈值
+   - 挤压动作: 挤出量/挤出速度/回抽量/回抽速度
+   - 延时动作: 延时时间 ms
+   - 夹爪动作: 闭合/张开 选择
 4. **ConfigPage** — 设备与配置: 5 tabs (通信与连接/运动学参数/视觉与工艺参数/TCP与标定/电控与映射)
    - **电控与映射** tab: 左侧轴列表按 `sortOrder` 升序排列。每个轴存储在 `axes` 对象中，key 为 `{motor|servo}_{portId}`。修改 `hardwareType` 或 `portId` 时自动校验同类型端口不重复（重复则弹窗回退），并自动重命名 JSON key。
 
@@ -77,4 +93,4 @@ Layering (link direction): `UI → Logic → Core → HAL`
 
 ## Current Phase
 
-Pure UI shell (zero business logic). Buttons create `qDebug()` stubs. State machine + data wiring is next.
+ProcessPage 已完成完整的数据建模、UI 双向绑定和 JSON 文件持久化。其余页面 (AutoRunPage, ManualControlPage, ConfigPage) 为纯 UI shell，按钮为 `qDebug()` 桩。状态机 + 硬件接线为下一阶段。
