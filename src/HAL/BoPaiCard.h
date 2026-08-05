@@ -4,13 +4,22 @@
 #include "HALFactory.h"
 
 #include <unordered_map>
+#include <memory>
 #include <mutex>
+#include <string>
 
-class SimCard : public IMotionCard
+// ============================================================
+// 博派运动控制卡 (Bopai) — IMotionCard 实现
+// 协议见 3rdparty/bopai/include/MultiCardCPP.h (MultiCard 类)
+// 轴号按 0 基内部使用，调用 SDK 时 +1（卡上轴号 1 基）。
+// 所有位置/速度为脉冲单位（与 IMotionCard 契约一致），
+// 换算参数由 HardwareManager 经 SetAxisConfig 喂入，不自读配置。
+// ============================================================
+class BoPaiCard : public IMotionCard
 {
 public:
-    SimCard();
-    ~SimCard() override;
+    BoPaiCard();
+    ~BoPaiCard() override;
 
     bool Connect(const std::string& ip, int port) override;
     void Disconnect() override;
@@ -43,36 +52,16 @@ public:
 
     std::string GetLastError() const override;
 
-    // 仿真专用：按 dt 秒积分点动运动（由 HardwareManager 轮询时调用）
-    void Step(double dtSeconds);
-
 private:
-    bool connected_ = false;
-    std::string lastError_;
-    std::mutex mutex_;
+    void RefreshStatus();
+    double PulsePerUnit(int axisId) const;
+    AxisConfig* Cfg(int axisId);
+    const AxisConfig* Cfg(int axisId) const;
 
-    struct SimAxis
-    {
-        double position    = 0.0;
-        double velocity    = 0.0;
-        double targetPos   = 0.0;
-        double speed       = 100.0;
-        double accel       = 200.0;
-        double decel       = 200.0;
-        bool   enabled     = false;
-        bool   alarm       = false;
-        bool   homeDone    = false;
-        bool   running     = false;
-        bool   limitPositive = false;
-        bool   limitNegative = false;
-        double jogSpeed    = 0.0;
-        int    jogDir      = 1;
-        AxisConfig cfg;
-    };
+    class Impl;
+    std::unique_ptr<Impl> impl_;
 
-    std::unordered_map<int, SimAxis> axes_;
-    std::unordered_map<int, bool>    diStates_;
-    std::unordered_map<int, bool>    doStates_;
-
-    SimAxis& GetOrCreateAxis(int axisId);
+    mutable std::mutex mutex_;
+    std::unordered_map<int, AxisConfig> configs_;
+    std::unordered_map<int, MotorStatus> lastStatus_;
 };

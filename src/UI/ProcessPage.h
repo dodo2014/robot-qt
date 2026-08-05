@@ -31,6 +31,9 @@ private slots:
     void OnMoveDown();
     void OnTeachRead();
     void OnSaveAction();
+    void OnSchemeNameEdited();
+    void OnMoveActionUp();
+    void OnMoveActionDown();
 
 private:
     void SetupUI();
@@ -48,6 +51,9 @@ private:
 
     QStackedWidget* m_detailStack = nullptr;
     QLabel* m_currentActionLabel = nullptr;
+
+    QWidget* m_speedPercentRow = nullptr;
+    QSpinBox* m_speedPercentSpin = nullptr;
 
     QTableWidget* m_pointTable = nullptr;
 

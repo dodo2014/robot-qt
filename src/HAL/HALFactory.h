@@ -74,3 +74,55 @@ using PuffAlgorithmFactory = HardwareFactory<IPuffAlgorithm>;
         }; \
         static ClassName##_Registrar s_##ClassName##_Reg; \
     }
+
+#define REGISTER_AXIS_SERVO(TypeName, ClassName) \
+    namespace { \
+        struct ClassName##_Registrar { \
+            ClassName##_Registrar() { \
+                AxisServoFactory::Instance().Register(TypeName, \
+                    []() -> std::unique_ptr<IAxisServo> { \
+                        return std::make_unique<ClassName>(); \
+                    }); \
+            } \
+        }; \
+        static ClassName##_Registrar s_##ClassName##_Reg; \
+    }
+
+#define REGISTER_END_EFFECTOR(TypeName, ClassName) \
+    namespace { \
+        struct ClassName##_Registrar { \
+            ClassName##_Registrar() { \
+                EndEffectorFactory::Instance().Register(TypeName, \
+                    []() -> std::unique_ptr<IEndEffector> { \
+                        return std::make_unique<ClassName>(); \
+                    }); \
+            } \
+        }; \
+        static ClassName##_Registrar s_##ClassName##_Reg; \
+    }
+
+#define REGISTER_CAMERA(TypeName, ClassName) \
+    namespace { \
+        struct ClassName##_Registrar { \
+            ClassName##_Registrar() { \
+                CameraFactory::Instance().Register(TypeName, \
+                    []() -> std::unique_ptr<ICamera> { \
+                        return std::make_unique<ClassName>(); \
+                    }); \
+            } \
+        }; \
+        static ClassName##_Registrar s_##ClassName##_Reg; \
+    }
+
+#define REGISTER_PUFF_ALGORITHM(TypeName, ClassName) \
+    namespace { \
+        struct ClassName##_Registrar { \
+            ClassName##_Registrar() { \
+                PuffAlgorithmFactory::Instance().Register(TypeName, \
+                    []() -> std::unique_ptr<IPuffAlgorithm> { \
+                        return std::make_unique<ClassName>(); \
+                    }); \
+            } \
+        }; \
+        static ClassName##_Registrar s_##ClassName##_Reg; \
+    }

@@ -13,8 +13,51 @@
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QDebug>
+#include <QPainter>
+#include <QPixmap>
+#include <QIcon>
 
 #include <spdlog/spdlog.h>
+
+namespace {
+
+QIcon makeActionIcon(int kind)
+{
+    QPixmap pm(20, 20);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(QColor("#ffffff"), 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    switch (kind) {
+    case 0: // plus
+        p.drawLine(QPointF(10, 3.5), QPointF(10, 16.5));
+        p.drawLine(QPointF(3.5, 10), QPointF(16.5, 10));
+        break;
+    case 1: // minus
+        p.drawLine(QPointF(3.5, 10), QPointF(16.5, 10));
+        break;
+    case 2: // pen
+        p.drawLine(QPointF(5, 15), QPointF(13, 7));
+        p.drawLine(QPointF(13, 7), QPointF(16.5, 3.5));
+        p.drawLine(QPointF(13, 7), QPointF(8.5, 8.5));
+        break;
+    case 3: // up arrow
+        p.drawLine(QPointF(10, 16), QPointF(10, 4));
+        p.drawLine(QPointF(4, 9), QPointF(10, 3));
+        p.drawLine(QPointF(10, 3), QPointF(16, 9));
+        break;
+    case 4: // down arrow
+        p.drawLine(QPointF(10, 4), QPointF(10, 16));
+        p.drawLine(QPointF(4, 11), QPointF(10, 17));
+        p.drawLine(QPointF(10, 17), QPointF(16, 11));
+        break;
+    }
+    p.end();
+    return QIcon(pm);
+}
+
+} // namespace
 
 ProcessPage::ProcessPage(QWidget* parent)
     : QWidget(parent)
@@ -88,6 +131,7 @@ void ProcessPage::SetupUI()
     m_schemeNameEdit->setFixedWidth(150);
     m_schemeNameEdit->setFixedHeight(30);
     m_schemeNameEdit->setStyleSheet("QLineEdit { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px; font-size: 13px; }");
+    connect(m_schemeNameEdit, &QLineEdit::editingFinished, this, &ProcessPage::OnSchemeNameEdited);
 
     m_schemeCombo = new QComboBox();
     m_schemeCombo->setFixedWidth(140);
@@ -166,24 +210,56 @@ void ProcessPage::SetupUI()
     auto* actionBtnRow = new QHBoxLayout();
     actionBtnRow->setSpacing(8);
 
-    auto* newActionBtn = new QPushButton(QStringLiteral("新建动作"));
+    auto* newActionBtn = new QPushButton();
+    newActionBtn->setIcon(makeActionIcon(0));
+    newActionBtn->setIconSize(QSize(18, 18));
+    newActionBtn->setToolTip(QStringLiteral("新建动作"));
     newActionBtn->setStyleSheet(makeBtnStyle("#3a6f8f", "#4a7f9f"));
     newActionBtn->setCursor(Qt::PointingHandCursor);
+    newActionBtn->setFixedSize(40, 32);
     connect(newActionBtn, &QPushButton::clicked, this, &ProcessPage::OnNewAction);
 
-    auto* editActionBtn = new QPushButton(QStringLiteral("编辑动作"));
+    auto* editActionBtn = new QPushButton();
+    editActionBtn->setIcon(makeActionIcon(2));
+    editActionBtn->setIconSize(QSize(18, 18));
+    editActionBtn->setToolTip(QStringLiteral("编辑动作"));
     editActionBtn->setStyleSheet(makeBtnStyle("#4f5f6f", "#5f6f7f"));
     editActionBtn->setCursor(Qt::PointingHandCursor);
+    editActionBtn->setFixedSize(40, 32);
     connect(editActionBtn, &QPushButton::clicked, this, &ProcessPage::OnEditAction);
 
-    auto* deleteActionBtn = new QPushButton(QStringLiteral("删除动作"));
+    auto* deleteActionBtn = new QPushButton();
+    deleteActionBtn->setIcon(makeActionIcon(1));
+    deleteActionBtn->setIconSize(QSize(18, 18));
+    deleteActionBtn->setToolTip(QStringLiteral("删除动作"));
     deleteActionBtn->setStyleSheet(makeBtnStyle("#8f4f4f", "#aa5f5f"));
     deleteActionBtn->setCursor(Qt::PointingHandCursor);
+    deleteActionBtn->setFixedSize(40, 32);
     connect(deleteActionBtn, &QPushButton::clicked, this, &ProcessPage::OnDeleteAction);
+
+    auto* upActionBtn = new QPushButton();
+    upActionBtn->setIcon(makeActionIcon(3));
+    upActionBtn->setIconSize(QSize(18, 18));
+    upActionBtn->setToolTip(QStringLiteral("上移"));
+    upActionBtn->setStyleSheet(makeBtnStyle("#4f6f5f", "#5f8f6f"));
+    upActionBtn->setCursor(Qt::PointingHandCursor);
+    upActionBtn->setFixedSize(40, 32);
+    connect(upActionBtn, &QPushButton::clicked, this, &ProcessPage::OnMoveActionUp);
+
+    auto* downActionBtn = new QPushButton();
+    downActionBtn->setIcon(makeActionIcon(4));
+    downActionBtn->setIconSize(QSize(18, 18));
+    downActionBtn->setToolTip(QStringLiteral("下移"));
+    downActionBtn->setStyleSheet(makeBtnStyle("#4f6f5f", "#5f8f6f"));
+    downActionBtn->setCursor(Qt::PointingHandCursor);
+    downActionBtn->setFixedSize(40, 32);
+    connect(downActionBtn, &QPushButton::clicked, this, &ProcessPage::OnMoveActionDown);
 
     actionBtnRow->addWidget(newActionBtn);
     actionBtnRow->addWidget(editActionBtn);
     actionBtnRow->addWidget(deleteActionBtn);
+    actionBtnRow->addWidget(upActionBtn);
+    actionBtnRow->addWidget(downActionBtn);
     actionBtnRow->addStretch();
 
     leftLayout->addWidget(actionHeader);
@@ -201,7 +277,7 @@ void ProcessPage::SetupUI()
     rightLayout->setSpacing(8);
 
     m_currentActionLabel = new QLabel(QStringLiteral("当前动作: (无)"));
-    m_currentActionLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+    m_currentActionLabel->setStyleSheet("color: #b8cce3; font-size: 15px; font-weight: 500; background: transparent; border: none;");
 
     m_detailStack = new QStackedWidget();
     m_detailStack->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
@@ -367,6 +443,35 @@ void ProcessPage::SetupUI()
     m_detailStack->setCurrentIndex(0);
 
     rightLayout->addWidget(m_currentActionLabel);
+
+    // 动作运行速度百分比（仅移动/挤压/夹爪动作显示）
+    m_speedPercentRow = new QWidget();
+    m_speedPercentRow->setFixedHeight(40);
+    auto* speedRowLayout = new QHBoxLayout(m_speedPercentRow);
+    speedRowLayout->setContentsMargins(8, 0, 0, 0);
+    speedRowLayout->setSpacing(10);
+
+    auto* speedLabel = new QLabel(QStringLiteral("动作运行速度:"));
+    speedLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+
+    m_speedPercentSpin = new QSpinBox();
+    m_speedPercentSpin->setRange(1, 100);
+    m_speedPercentSpin->setValue(100);
+    m_speedPercentSpin->setSuffix(QStringLiteral(" %"));
+    m_speedPercentSpin->setFixedHeight(30);
+    m_speedPercentSpin->setFixedWidth(110);
+    m_speedPercentSpin->setStyleSheet("QSpinBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; font-size: 13px; padding: 4px 8px; }");
+
+    auto* speedHint = new QLabel(QStringLiteral("(1-100)"));
+    speedHint->setStyleSheet("color: #6a7a8a; font-size: 12px; background: transparent; border: none;");
+
+    speedRowLayout->addWidget(speedLabel);
+    speedRowLayout->addWidget(m_speedPercentSpin);
+    speedRowLayout->addWidget(speedHint);
+    speedRowLayout->addStretch();
+    m_speedPercentRow->setVisible(false);
+
+    rightLayout->addWidget(m_speedPercentRow);
     rightLayout->addWidget(m_detailStack, 1);
 
     splitLayout->addWidget(rightPanel, 7);
@@ -437,6 +542,13 @@ void ProcessPage::RefreshActionDetail(int idx)
 
     int stackIdx = static_cast<int>(action.type) + 1;
     m_detailStack->setCurrentIndex(stackIdx);
+
+    bool hasSpeedPercent = (action.type == ActionType::Move ||
+                            action.type == ActionType::Extrude ||
+                            action.type == ActionType::Gripper);
+    m_speedPercentRow->setVisible(hasSpeedPercent);
+    if (hasSpeedPercent)
+        m_speedPercentSpin->setValue(action.speedPercent);
 
     auto makePoseCombo = [](const QString& text) -> QComboBox* {
         auto* c = new QComboBox();
@@ -606,6 +718,9 @@ void ProcessPage::OnNewAction()
     connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     form->addRow(btnBox);
 
+    dlg.adjustSize();
+    dlg.setMinimumSize(dlg.sizeHint());
+
     if (dlg.exec() != QDialog::Accepted) return;
     if (nameEdit->text().trimmed().isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("动作名称不能为空"));
@@ -657,6 +772,9 @@ void ProcessPage::OnEditAction()
     connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     form->addRow(btnBox);
+
+    dlg.adjustSize();
+    dlg.setMinimumSize(dlg.sizeHint());
 
     if (dlg.exec() != QDialog::Accepted) return;
     if (nameEdit->text().trimmed().isEmpty()) {
@@ -726,6 +844,13 @@ void ProcessPage::OnDeletePoint()
     if (action.type != ActionType::Move) return;
     int row = m_pointTable->currentRow();
     if (row < 0 || row >= action.points.size()) return;
+
+    auto reply = QMessageBox::question(this,
+        QStringLiteral("删除点位"),
+        QStringLiteral("确定要删除点位 \"%1\" 吗？\n此操作不可撤销。").arg(action.points[row].name),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) return;
+
     action.points.removeAt(row);
     RefreshActionDetail(m_currentActionIdx);
     ProcessManager::instance().save();
@@ -755,6 +880,28 @@ void ProcessPage::OnMoveDown()
     ProcessManager::instance().save();
 }
 
+void ProcessPage::OnMoveActionUp()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
+    if (m_currentActionIdx <= 0) return;
+    actions.swapItemsAt(m_currentActionIdx, m_currentActionIdx - 1);
+    --m_currentActionIdx;
+    RefreshActionList();
+    ProcessManager::instance().save();
+}
+
+void ProcessPage::OnMoveActionDown()
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
+    if (m_currentActionIdx < 0 || m_currentActionIdx >= actions.size() - 1) return;
+    actions.swapItemsAt(m_currentActionIdx, m_currentActionIdx + 1);
+    ++m_currentActionIdx;
+    RefreshActionList();
+    ProcessManager::instance().save();
+}
+
 void ProcessPage::OnTeachRead()
 {
     SPDLOG_INFO("[Process] Teach read - stub");
@@ -768,6 +915,9 @@ void ProcessPage::OnSaveAction()
     }
 
     auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+
+    if (m_speedPercentSpin)
+        action.speedPercent = m_speedPercentSpin->value();
 
     switch (action.type) {
     case ActionType::Move: {
@@ -817,4 +967,23 @@ void ProcessPage::OnSaveAction()
     QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("保存成功"));
     SPDLOG_INFO("[Process] Saved action: {} ({})", action.name.toStdString(),
         ProcessManager::actionTypeName(action.type).toStdString());
+}
+
+void ProcessPage::OnSchemeNameEdited()
+{
+    if (m_currentSchemeIdx < 0) return;
+    auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx >= schemes.size()) return;
+
+    QString newName = m_schemeNameEdit->text().trimmed();
+    if (newName.isEmpty()) {
+        m_schemeNameEdit->setText(schemes[m_currentSchemeIdx].schemeName);
+        return;
+    }
+    if (newName == schemes[m_currentSchemeIdx].schemeName) return;
+
+    schemes[m_currentSchemeIdx].schemeName = newName;
+    RefreshSchemeCombo();
+    ProcessManager::instance().save();
+    SPDLOG_INFO("[Process] Scheme renamed: {}", newName.toStdString());
 }

@@ -122,10 +122,10 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 # ============================================================
 # 构建后事件：自动复制闭源 SDK DLL 到输出目录
-# 源目录: 3rdparty/BoPai_Motion/bin/*.dll
+# 源目录: 3rdparty/<brand>/bin/*.dll
 # 目标: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_BUILD_TYPE}/
 # ============================================================
-set(BOPAI_DLL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/BoPai_Motion/bin")
+set(BOPAI_DLL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/bopai/bin")
 file(GLOB BOPAI_DLLS "${BOPAI_DLL_DIR}/*.dll")
 if(BOPAI_DLLS)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -143,7 +143,7 @@ set(QT6_BIN_DIR "D:/Qt/6.11.1/msvc2022_64/bin")
 if(EXISTS "${QT6_BIN_DIR}/windeployqt.exe")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND "${QT6_BIN_DIR}/windeployqt.exe"
-            --no-compiler-runtime --no-system-d3d-compiler --no-opengl-sw
+            --compiler-runtime --no-system-d3d-compiler --no-opengl-sw
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
         COMMENT "[POST_BUILD] Deploying Qt6 DLLs via windeployqt..."
     )
@@ -156,3 +156,29 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config.json"
     COMMENT "[POST_BUILD] Copying config.json to output directory..."
 )
+
+# 复制工艺方案文件 (process.json)
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/process.json"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/process.json"
+    COMMENT "[POST_BUILD] Copying process.json to output directory..."
+)
+
+# 复制 OpenCV 运行时 DLL（vcpkg 不会自动把 opencv*.dll 放进 exe 目录）
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(OPENCV_VCPKG_BIN "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/debug/bin")
+else()
+    set(OPENCV_VCPKG_BIN "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin")
+endif()
+file(GLOB OPENCV_RUNTIME_DLLS "${OPENCV_VCPKG_BIN}/opencv*.dll")
+if(OPENCV_RUNTIME_DLLS)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${OPENCV_RUNTIME_DLLS}
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        COMMENT "[POST_BUILD] Copying OpenCV runtime DLLs to output directory..."
+    )
+else()
+    message(WARNING "[POST_BUILD] No OpenCV DLLs found in ${OPENCV_VCPKG_BIN} — skipping OpenCV copy")
+endif()

@@ -24,11 +24,8 @@ CMakeSettings.json
 logs/
 *.log
 
-# vcpkg (submodule, not the build artifacts)
-vcpkg/buildtrees/
-vcpkg/downloads/
-vcpkg/installed/
-vcpkg/packages/
+# vcpkg (ignore the whole directory)
+vcpkg/
 
 # Config override
 config/config.local.json

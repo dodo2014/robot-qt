@@ -5,6 +5,8 @@
 #include "ConfigPage.h"
 #include "ToggleSwitch.h"
 
+#include "HAL/HardwareManager.h"
+
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -19,6 +21,9 @@ MainWindow::MainWindow(QWidget* parent)
     setMinimumSize(1200, 700);
     ApplyGlobalStyle();
     SetupUI();
+
+    // 初始化硬件（仿真/真实卡自动按 config 组装）
+    HardwareManager::instance().Initialize();
 
     clockTimer_ = new QTimer(this);
     connect(clockTimer_, &QTimer::timeout, this, &MainWindow::UpdateClock);

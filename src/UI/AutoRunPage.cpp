@@ -209,7 +209,7 @@ void AutoRunPage::SetupUI()
         { QStringLiteral("\xE2\x86\xBA 复位"),   QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"), QStringLiteral("color: #1a1e24;") },
         { QStringLiteral("\xE2\x8F\xB9 停止"),   QStringLiteral("#b13a3a"), QStringLiteral("#d14444"), QString() },
         { QStringLiteral("\xE2\x9F\xB3 初始化"), QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"), QString() },
-        { QStringLiteral("\xE2\x9B\x94 急停"),   QStringLiteral("#cc2222"), QStringLiteral("#ee3333"), QStringLiteral("font-size: 18px;") },
+        { QStringLiteral("\xE2\x9B\x94 急停"),   QStringLiteral("#cc2222"), QStringLiteral("#ee3333"), QString() },
     };
 
     for (const auto& b : btns)
@@ -217,13 +217,15 @@ void AutoRunPage::SetupUI()
         auto* btn = new QPushButton(b.text);
         QString style = QStringLiteral(
             "QPushButton {"
-            "  background: %1; border: none; border-radius: 10px;"
-            "  font-weight: 700; font-size: 16px; padding: 14px 12px; min-width: 70px; color: white; %2"
+            "  background: %1; border: none; border-radius: 8px;"
+            "  font-weight: 700; font-size: 13px; padding: 0 4px; min-width: 0; color: white; %2"
             "}"
             "QPushButton:hover { background: %3; }"
         ).arg(b.bg, b.extra, b.hover);
         btn->setStyleSheet(style);
         btn->setCursor(Qt::PointingHandCursor);
+        btn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        btn->setFixedHeight(46);
 
         if (b.text.contains("启动"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartClicked);
         else if (b.text.contains("复位"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnResetClicked);
@@ -231,7 +233,7 @@ void AutoRunPage::SetupUI()
         else if (b.text.contains("初始化")) connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked);
         else                                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnEmergencyClicked);
 
-        btnLayout->addWidget(btn);
+        btnLayout->addWidget(btn, 1);  // 等宽分配，最小化时不互相挤压
     }
 
     rightLayout->addWidget(btnRow);

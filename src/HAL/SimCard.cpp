@@ -82,6 +82,7 @@ bool SimCard::StopAxis(int axisId)
     std::lock_guard<std::mutex> lock(mutex_);
     auto& axis = GetOrCreateAxis(axisId);
     axis.velocity = 0.0;
+    axis.running  = false;
     spdlog::info("[SimCard] Axis {} stopped", axisId);
     return true;
 }
@@ -114,9 +115,11 @@ bool SimCard::MoveAbs(int axisId, double position, double speed)
     auto& axis = GetOrCreateAxis(axisId);
     double oldPos = axis.position;
     axis.position = position;
-    axis.velocity = (speed > 0) ? speed : axis.speed;
+    // 仿真中 MoveAbs 瞬时完成，不保持运行状态
+    axis.velocity = 0.0;
+    axis.running  = false;
     spdlog::info("[SimCard] Axis {} MoveAbs: {:.2f} → {:.2f} (speed={:.1f})",
-                 axisId, oldPos, position, axis.velocity);
+                 axisId, oldPos, position, speed);
     return true;
 }
 
@@ -126,9 +129,10 @@ bool SimCard::MoveRel(int axisId, double distance, double speed)
     auto& axis = GetOrCreateAxis(axisId);
     double oldPos = axis.position;
     axis.position += distance;
-    axis.velocity = (speed > 0) ? speed : axis.speed;
+    axis.velocity = 0.0;
+    axis.running  = false;
     spdlog::info("[SimCard] Axis {} MoveRel: {:.2f} → {:.2f} (dist={:.2f}, speed={:.1f})",
-                 axisId, oldPos, axis.position, distance, axis.velocity);
+                 axisId, oldPos, axis.position, distance, speed);
     return true;
 }
 
@@ -146,6 +150,53 @@ bool SimCard::MoveLinear(const std::vector<double>& targetPositions, double spee
         oss << "Axis" << i << ": " << oldPos << " → " << targetPositions[i];
     }
     spdlog::info("[SimCard] MoveLinear — {}", oss.str());
+    return true;
+}
+
+bool SimCard::MoveJog(int axisId, double speedPulsesPerSec, double accel, int direction)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& axis = GetOrCreateAxis(axisId);
+    axis.jogSpeed = speedPulsesPerSec;
+    axis.jogDir   = direction;
+    axis.velocity = speedPulsesPerSec * direction;
+    axis.running  = true;
+    spdlog::info("[SimCard] Axis {} MoveJog: speed={:.1f} pps, dir={:+d}",
+                 axisId, speedPulsesPerSec, direction);
+    return true;
+}
+
+bool SimCard::StopJog(int axisId)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& axis = GetOrCreateAxis(axisId);
+    axis.jogSpeed = 0.0;
+    axis.velocity = 0.0;
+    axis.running  = false;
+    spdlog::info("[SimCard] Axis {} StopJog", axisId);
+    return true;
+}
+
+void SimCard::Step(double dtSeconds)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [id, axis] : axes_)
+    {
+        if (axis.running && axis.jogSpeed != 0.0)
+            axis.position += axis.velocity * dtSeconds;
+    }
+}
+
+bool SimCard::SetAxisConfig(int axisId, const AxisConfig& cfg)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& axis = GetOrCreateAxis(axisId);
+    axis.cfg = cfg;
+    axis.speed = cfg.maxSpeed;
+    axis.accel = cfg.maxAccel;
+    axis.decel = cfg.maxDecel;
+    spdlog::info("[SimCard] Axis {} config set: ppr={}, microSteps={}, lead={}, type={}",
+                 axisId, cfg.pulsesPerRev, cfg.microSteps, cfg.lead, cfg.hardwareType);
     return true;
 }
 
@@ -179,13 +230,16 @@ MotorStatus SimCard::GetAxisStatus(int axisId)
     std::lock_guard<std::mutex> lock(mutex_);
     auto& axis = GetOrCreateAxis(axisId);
     MotorStatus status;
-    status.axisId   = axisId;
-    status.position = axis.position;
-    status.velocity = axis.velocity;
-    status.current  = 0.0;
-    status.enabled  = axis.enabled;
-    status.alarm    = axis.alarm;
-    status.homeDone = axis.homeDone;
+    status.axisId        = axisId;
+    status.position      = axis.position;
+    status.velocity      = axis.velocity;
+    status.current       = 0.0;
+    status.enabled       = axis.enabled;
+    status.alarm         = axis.alarm;
+    status.homeDone      = axis.homeDone;
+    status.running       = axis.running;
+    status.limitPositive = axis.limitPositive;
+    status.limitNegative = axis.limitNegative;
     return status;
 }
 
@@ -196,13 +250,16 @@ std::vector<MotorStatus> SimCard::GetAllStatus()
     for (const auto& [id, axis] : axes_)
     {
         MotorStatus s;
-        s.axisId   = id;
-        s.position = axis.position;
-        s.velocity = axis.velocity;
-        s.current  = 0.0;
-        s.enabled  = axis.enabled;
-        s.alarm    = axis.alarm;
-        s.homeDone = axis.homeDone;
+        s.axisId        = id;
+        s.position      = axis.position;
+        s.velocity      = axis.velocity;
+        s.current       = 0.0;
+        s.enabled       = axis.enabled;
+        s.alarm         = axis.alarm;
+        s.homeDone      = axis.homeDone;
+        s.running       = axis.running;
+        s.limitPositive = axis.limitPositive;
+        s.limitNegative = axis.limitNegative;
         statuses.push_back(s);
     }
     return statuses;

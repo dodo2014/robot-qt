@@ -640,32 +640,18 @@ QWidget* ConfigPage::CreateElecMapTab()
         QListWidget::item:hover:!selected { background: #1e2a36; }
     )");
 
-    // Helper: generate axis key from hardware type + port id
-    auto makeAxisKey = [](int hwType, int portId) -> QString {
-        return (hwType == 0 ? QStringLiteral("motor_") : QStringLiteral("servo_"))
-            + QString::number(portId);
-    };
-
-    // Helper: check if a (hwType, portId) pair already exists elsewhere
-    auto hasDuplicate = [this](int hwType, int portId, const QString& excludeKey) -> bool {
-        QString newKey = (hwType == 0 ? QStringLiteral("motor_") : QStringLiteral("servo_"))
-                         + QString::number(portId);
-        for (int i = 0; i < axisList_->count(); ++i) {
-            QString key = axisList_->item(i)->data(Qt::UserRole).toString();
+    // Helper: check if a (hardwareType, portId) pair already exists on another axis
+    auto hasDuplicate = [](int hwType, int portId, const std::string& excludeKey) -> bool {
+        auto& cfg = ConfigManager::instance();
+        if (!cfg.root().contains("axes") || !cfg.root()["axes"].is_object()) return false;
+        for (const auto& [key, val] : cfg.root()["axes"].items()) {
             if (key == excludeKey) continue;
-            if (key == newKey) return true;
+            if (!val.is_object()) continue;
+            int otherType = val.value("hardwareType", -1);
+            int otherPort = val.value("portId", -1);
+            if (otherType == hwType && otherPort == portId) return true;
         }
         return false;
-    };
-
-    // Helper: update item text in axis list
-    auto refreshAxisItemText = [this](const QString& key, const QString& name) {
-        for (int i = 0; i < axisList_->count(); ++i) {
-            if (axisList_->item(i)->data(Qt::UserRole).toString() == key) {
-                axisList_->item(i)->setText(name);
-                return;
-            }
-        }
     };
 
     // Load axes from config object, sorted by sortOrder
@@ -842,12 +828,14 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     auto* maxSpeedSpin = makeDoubleSpin(0.0, 10000.0);
     auto* maxAccelSpin = makeDoubleSpin(0.0, 100000.0);
+    auto* jogSpeedSpin = makeDoubleSpin(0.0, 10000.0);
     auto* limitMinSpin = makeDoubleSpin(-100000.0, 0.0);
     auto* limitMaxSpin = makeDoubleSpin(0.0, 100000.0);
     auto* homeSpin = makeDoubleSpin(-100000.0, 100000.0);
 
     g2g->addRow(makeLabel(QStringLiteral("最大速度 (Max Speed)")),   maxSpeedSpin);
     g2g->addRow(makeLabel(QStringLiteral("最大加速度 (Max Accel)")), maxAccelSpin);
+    g2g->addRow(makeLabel(QStringLiteral("点动速度 (Jog Speed)")),   jogSpeedSpin);
     g2g->addRow(makeLabel(QStringLiteral("软限位 Min (Limit Min)")), limitMinSpin);
     g2g->addRow(makeLabel(QStringLiteral("软限位 Max (Limit Max)")), limitMaxSpin);
     g2g->addRow(makeLabel(QStringLiteral("原点偏移 (Home Pos)")),    homeSpin);
@@ -897,9 +885,9 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     // ── Function to load axis data by key ───────────────────
     auto loadAxis = [this, hwTypeCombo, portSpin, dirCombo, maxSpeedSpin, maxAccelSpin,
-                     limitMinSpin, limitMaxSpin, homeSpin, encoderEdit, microStepEdit,
-                     gearEdit, leadEdit, minPulseEdit, maxPulseEdit, minAngleEdit,
-                     maxAngleEdit](const QString& key) {
+                     jogSpeedSpin, limitMinSpin, limitMaxSpin, homeSpin, encoderEdit,
+                     microStepEdit, gearEdit, leadEdit, minPulseEdit, maxPulseEdit,
+                     minAngleEdit, maxAngleEdit](const QString& key) {
         try {
             if (key.isEmpty()) {
                 SPDLOG_INFO("[ElecMap] loadAxis: empty key");
@@ -932,6 +920,10 @@ QWidget* ConfigPage::CreateElecMapTab()
             maxAccelSpin->blockSignals(true);
             maxAccelSpin->setValue(cfg.getValue<double>(p + ".maxAccel", 500.0));
             maxAccelSpin->blockSignals(false);
+
+            jogSpeedSpin->blockSignals(true);
+            jogSpeedSpin->setValue(cfg.getValue<double>(p + ".jogSpeed", 100.0));
+            jogSpeedSpin->blockSignals(false);
 
             limitMinSpin->blockSignals(true);
             limitMinSpin->setValue(cfg.getValue<double>(p + ".limitMin", -180.0));
@@ -984,14 +976,14 @@ QWidget* ConfigPage::CreateElecMapTab()
     };
 
     connect(hwTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-        [this, portSpin, hasDuplicate, makeAxisKey, refreshAxisItemText, hwTypeCombo](int idx) {
+        [this, portSpin, hasDuplicate, hwTypeCombo](int idx) {
         auto* item = axisList_->currentItem();
         if (!item) return;
-        QString oldKey = item->data(Qt::UserRole).toString();
+        QString key = item->data(Qt::UserRole).toString();
         int port = portSpin->value();
-        if (hasDuplicate(idx, port, oldKey)) {
+        if (hasDuplicate(idx, port, key.toStdString())) {
             auto& cfg = ConfigManager::instance();
-            std::string p = "axes." + oldKey.toStdString();
+            std::string p = "axes." + key.toStdString();
             int prevHwType = cfg.getValue<int>(p + ".hardwareType", 0);
             hwTypeCombo->blockSignals(true);
             hwTypeCombo->setCurrentIndex(prevHwType);
@@ -1001,27 +993,19 @@ QWidget* ConfigPage::CreateElecMapTab()
                 QStringLiteral("同类型硬件端口 %1 已被占用，请选择其他端口。").arg(port));
             return;
         }
-        QString newKey = makeAxisKey(idx, port);
-        ConfigManager::instance().set("axes." + oldKey.toStdString() + ".hardwareType", idx);
-        if (newKey != oldKey) {
-            auto& j = ConfigManager::instance().root()["axes"];
-            j[newKey.toStdString()] = j[oldKey.toStdString()];
-            j.erase(oldKey.toStdString());
-            item->setData(Qt::UserRole, newKey);
-            ConfigManager::instance().markDirty();
-        }
+        ConfigManager::instance().set("axes." + key.toStdString() + ".hardwareType", idx);
         transStack_->setCurrentIndex(idx);
     });
 
     connect(portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-        [this, hwTypeCombo, hasDuplicate, makeAxisKey, portSpin](int v) {
+        [this, hwTypeCombo, hasDuplicate, portSpin](int v) {
         auto* item = axisList_->currentItem();
         if (!item) return;
-        QString oldKey = item->data(Qt::UserRole).toString();
+        QString key = item->data(Qt::UserRole).toString();
         int hwType = hwTypeCombo->currentIndex();
-        if (hasDuplicate(hwType, v, oldKey)) {
+        if (hasDuplicate(hwType, v, key.toStdString())) {
             auto& cfg = ConfigManager::instance();
-            std::string p = "axes." + oldKey.toStdString();
+            std::string p = "axes." + key.toStdString();
             int prevPort = cfg.getValue<int>(p + ".portId", 1);
             portSpin->blockSignals(true);
             portSpin->setValue(prevPort);
@@ -1031,15 +1015,7 @@ QWidget* ConfigPage::CreateElecMapTab()
                 QStringLiteral("同类型硬件端口 %1 已被占用，请选择其他端口。").arg(v));
             return;
         }
-        QString newKey = makeAxisKey(hwType, v);
-        ConfigManager::instance().set("axes." + oldKey.toStdString() + ".portId", v);
-        if (newKey != oldKey) {
-            auto& j = ConfigManager::instance().root()["axes"];
-            j[newKey.toStdString()] = j[oldKey.toStdString()];
-            j.erase(oldKey.toStdString());
-            item->setData(Qt::UserRole, newKey);
-            ConfigManager::instance().markDirty();
-        }
+        ConfigManager::instance().set("axes." + key.toStdString() + ".portId", v);
     });
 
     connect(dirCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, pathFor](int idx) {
@@ -1054,6 +1030,11 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     connect(maxAccelSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
         auto p = pathFor("maxAccel");
+        if (!p.empty()) ConfigManager::instance().set(p, v);
+    });
+
+    connect(jogSpeedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
+        auto p = pathFor("jogSpeed");
         if (!p.empty()) ConfigManager::instance().set(p, v);
     });
 

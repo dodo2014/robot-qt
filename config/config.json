@@ -1,79 +1,11 @@
 {
     "$schema": "CreamPuffRobot configuration schema",
     "axes": {
-        "motor_0": {
+        "Axis_Extruder": {
             "direction": 0,
             "hardwareType": 0,
             "homeOffset": 0.0,
-            "limitMax": 182.0,
-            "limitMin": -180.0,
-            "maxAccel": 500.0,
-            "maxSpeed": 150.0,
-            "name": "[1] 轴1 (大臂 J1)",
-            "portId": 0,
-            "sortOrder": 0,
-            "transmission": {
-                "encoderResolution": 131072,
-                "gearRatio": 50,
-                "lead": 20.0,
-                "maxAngle": 180,
-                "maxPulse": 2500,
-                "microSteps": 512,
-                "minAngle": 0,
-                "minPulse": 500,
-                "mode": "controlCard"
-            }
-        },
-        "motor_1": {
-            "direction": 0,
-            "hardwareType": 0,
-            "homeOffset": 0.0,
-            "limitMax": 200.0,
-            "limitMin": 0.0,
-            "maxAccel": 500.0,
-            "maxSpeed": 150.0,
-            "name": "[3] 轴3 (Z轴)",
-            "portId": 1,
-            "sortOrder": 2,
-            "transmission": {
-                "encoderResolution": 131072,
-                "gearRatio": 50,
-                "lead": 20.0,
-                "maxAngle": 180,
-                "maxPulse": 2500,
-                "microSteps": 512,
-                "minAngle": 0,
-                "minPulse": 500,
-                "mode": "controlCard"
-            }
-        },
-        "motor_2": {
-            "direction": 0,
-            "hardwareType": 0,
-            "homeOffset": 0.0,
-            "limitMax": 100.0,
-            "limitMin": 0.0,
-            "maxAccel": 500.0,
-            "maxSpeed": 150.0,
-            "name": "[5] 轴5 (夹爪)",
-            "portId": 2,
-            "sortOrder": 4,
-            "transmission": {
-                "encoderResolution": 131072,
-                "gearRatio": 50,
-                "lead": 20.0,
-                "maxAngle": 180,
-                "maxPulse": 2500,
-                "microSteps": 512,
-                "minAngle": 0,
-                "minPulse": 500,
-                "mode": "servoBus"
-            }
-        },
-        "motor_3": {
-            "direction": 0,
-            "hardwareType": 0,
-            "homeOffset": 0.0,
+            "jogSpeed": 160.0,
             "limitMax": 100.0,
             "limitMin": 0.0,
             "maxAccel": 500.0,
@@ -89,14 +21,60 @@
                 "maxPulse": 2500,
                 "microSteps": 512,
                 "minAngle": 0,
-                "minPulse": 500,
-                "mode": "controlCard"
+                "minPulse": 500
             }
         },
-        "servo_1": {
+        "Axis_Gripper": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "jogSpeed": 155.0,
+            "limitMax": 100.0,
+            "limitMin": 0.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[5] 轴5 (夹爪)",
+            "portId": 2,
+            "sortOrder": 4,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500
+            }
+        },
+        "Axis_J1": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "jogSpeed": 16.0,
+            "limitMax": 182.0,
+            "limitMin": -180.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 155.0,
+            "name": "[1] 轴1 (大臂 J1)",
+            "portId": 0,
+            "sortOrder": 0,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500
+            }
+        },
+        "Axis_J2": {
             "direction": 0,
             "hardwareType": 1,
             "homeOffset": 0.0,
+            "jogSpeed": 25.0,
             "limitMax": 90.0,
             "limitMin": -90.0,
             "maxAccel": 500.0,
@@ -112,14 +90,14 @@
                 "maxPulse": 2500,
                 "microSteps": 512,
                 "minAngle": 0,
-                "minPulse": 500,
-                "mode": "controlCard"
+                "minPulse": 500
             }
         },
-        "servo_2": {
+        "Axis_R": {
             "direction": 0,
             "hardwareType": 1,
             "homeOffset": 0.0,
+            "jogSpeed": 100.0,
             "limitMax": 180.0,
             "limitMin": -180.0,
             "maxAccel": 500.0,
@@ -135,8 +113,30 @@
                 "maxPulse": 2500,
                 "microSteps": 512,
                 "minAngle": 0,
-                "minPulse": 500,
-                "mode": "servoBus"
+                "minPulse": 500
+            }
+        },
+        "Axis_Z": {
+            "direction": 0,
+            "hardwareType": 0,
+            "homeOffset": 0.0,
+            "jogSpeed": 150.0,
+            "limitMax": 200.0,
+            "limitMin": 0.0,
+            "maxAccel": 500.0,
+            "maxSpeed": 150.0,
+            "name": "[3] 轴3 (Z轴)",
+            "portId": 1,
+            "sortOrder": 2,
+            "transmission": {
+                "encoderResolution": 131072,
+                "gearRatio": 50,
+                "lead": 20.0,
+                "maxAngle": 180,
+                "maxPulse": 2500,
+                "microSteps": 512,
+                "minAngle": 0,
+                "minPulse": 500
             }
         }
     },
@@ -151,7 +151,23 @@
         "servo": {
             "baudRate": "115200",
             "port": "COM3"
-        }
+        },
+        "servos": [
+            {
+                "id": 1,
+                "maxAngle": 180.0,
+                "minAngle": 0.0,
+                "name": "J2",
+                "speed": 50.0
+            },
+            {
+                "id": 2,
+                "maxAngle": 180.0,
+                "minAngle": 0.0,
+                "name": "R",
+                "speed": 50.0
+            }
+        ]
     },
     "kinematics": {
         "axisParams": [

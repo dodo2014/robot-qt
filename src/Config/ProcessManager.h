@@ -14,6 +14,7 @@ struct PointData {
 struct ActionData {
     QString name;
     ActionType type = ActionType::Move;
+    int speedPercent = 100;
     QVector<PointData> points;
     QString visionType;
     double exposure = 0.0;

@@ -1,0 +1,380 @@
+{
+    "schemes": [
+        {
+            "actions": [
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "移动到：安全上方点",
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 2.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_1",
+                            "posture": "elbow_down"
+                        },
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_2",
+                            "posture": "elbow_up"
+                        },
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_3",
+                            "posture": "elbow_up"
+                        }
+                    ],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": true,
+                    "name": "打开夹爪",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 4,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 30.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "等待视觉结果",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "template_a",
+                    "threshold": 0.85,
+                    "type": 1,
+                    "visionType": "CCD"
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "直线插补：插入灌装口",
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 2.0,
+                                "x": 85.0,
+                                "y": 92.0,
+                                "z": 22.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "fill_start",
+                            "posture": "elbow_up"
+                        },
+                        {
+                            "coord": {
+                                "r": 2.0,
+                                "x": 85.0,
+                                "y": 92.0,
+                                "z": 10.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "fill_end",
+                            "posture": "elbow_down"
+                        }
+                    ],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 5.0,
+                    "extrudeSpeed": 2.0,
+                    "isGripperOpen": false,
+                    "name": "挤出奶油",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 1.0,
+                    "suckBackSpeed": 3.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 2,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": true,
+                    "name": "关闭夹爪",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 4,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "放到料盘",
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 150.0,
+                                "y": 0.0,
+                                "z": 30.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "place",
+                            "posture": "elbow_up"
+                        }
+                    ],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": ""
+                }
+            ],
+            "schemeName": "方案_1"
+        },
+        {
+            "actions": [
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "回原点",
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_1",
+                            "posture": "elbow_up"
+                        },
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 2.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_2",
+                            "posture": "elbow_up"
+                        }
+                    ],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 25,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "等待相机稳定",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 3,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "等待",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 3,
+                    "visionType": ""
+                }
+            ],
+            "schemeName": "方案_2"
+        },
+        {
+            "actions": [
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "isGripperOpen": false,
+                    "name": "初始化",
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 4.0,
+                                "x": 1.0,
+                                "y": 2.0,
+                                "z": 3.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_1",
+                            "posture": "elbow_down"
+                        },
+                        {
+                            "coord": {
+                                "r": 0.0,
+                                "x": 0.0,
+                                "y": 0.0,
+                                "z": 0.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_3",
+                            "posture": "elbow_up"
+                        },
+                        {
+                            "coord": {
+                                "r": 7.0,
+                                "x": 3.0,
+                                "y": 5.0,
+                                "z": 6.0
+                            },
+                            "joints": {
+                                "j1": 0.0,
+                                "j2": 0.0,
+                                "j3": 0.0,
+                                "j4": 0.0
+                            },
+                            "name": "point_2",
+                            "posture": "elbow_down"
+                        }
+                    ],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": ""
+                }
+            ],
+            "schemeName": "方案_966"
+        },
+        {
+            "actions": [],
+            "schemeName": "方案_186"
+        }
+    ]
+}

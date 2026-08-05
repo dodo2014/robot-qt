@@ -2,6 +2,8 @@
 
 #include <QFile>
 #include <QDir>
+#include <QFileInfo>
+#include <QCoreApplication>
 
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -10,7 +12,11 @@
 
 static QString processJsonPath()
 {
-    return QStringLiteral(PROJECT_SOURCE_DIR "/config/process.json");
+    const QString sourcePath = QStringLiteral(PROJECT_SOURCE_DIR "/config/process.json");
+    const QString appPath = QCoreApplication::applicationDirPath() + QStringLiteral("/process.json");
+    if (!QFileInfo::exists(sourcePath) && QFileInfo::exists(appPath))
+        return appPath;
+    return sourcePath;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +110,7 @@ void ProcessManager::load()
                         ActionData a;
                         a.name = QString::fromStdString(aj.value("name", ""));
                         a.type = static_cast<ActionType>(aj.value("type", 0));
+                        a.speedPercent = aj.value("speedPercent", 100);
                         a.visionType = QString::fromStdString(aj.value("visionType", ""));
                         a.exposure = aj.value("exposure", 0.0);
                         a.templateName = QString::fromStdString(aj.value("templateName", ""));
@@ -119,10 +126,13 @@ void ProcessManager::load()
                             for (const auto& pj : aj["points"]) {
                                 PointData p;
                                 p.name = QString::fromStdString(pj.value("name", ""));
-                                p.x = pj.value("x", 0.0);
-                                p.y = pj.value("y", 0.0);
-                                p.z = pj.value("z", 0.0);
-                                p.r = pj.value("r", 0.0);
+                                if (pj.contains("coord") && pj["coord"].is_object()) {
+                                    const auto& cj = pj["coord"];
+                                    p.x = cj.value("x", 0.0);
+                                    p.y = cj.value("y", 0.0);
+                                    p.z = cj.value("z", 0.0);
+                                    p.r = cj.value("r", 0.0);
+                                }
                                 p.posture = QString::fromStdString(pj.value("posture", "elbow_up"));
                                 a.points.push_back(p);
                             }
@@ -155,6 +165,7 @@ void ProcessManager::save()
             nlohmann::json aj;
             aj["name"] = action.name.toStdString();
             aj["type"] = static_cast<int>(action.type);
+            aj["speedPercent"] = action.speedPercent;
             aj["visionType"] = action.visionType.toStdString();
             aj["exposure"] = action.exposure;
             aj["templateName"] = action.templateName.toStdString();
@@ -170,11 +181,15 @@ void ProcessManager::save()
             for (const auto& pt : action.points) {
                 nlohmann::json pj;
                 pj["name"] = pt.name.toStdString();
-                pj["x"] = pt.x;
-                pj["y"] = pt.y;
-                pj["z"] = pt.z;
-                pj["r"] = pt.r;
                 pj["posture"] = pt.posture.toStdString();
+                pj["coord"]["x"] = pt.x;
+                pj["coord"]["y"] = pt.y;
+                pj["coord"]["z"] = pt.z;
+                pj["coord"]["r"] = pt.r;
+                pj["joints"]["j1"] = 0.0;
+                pj["joints"]["j2"] = 0.0;
+                pj["joints"]["j3"] = 0.0;
+                pj["joints"]["j4"] = 0.0;
                 aj["points"].push_back(pj);
             }
 
