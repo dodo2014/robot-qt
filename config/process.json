@@ -59,7 +59,7 @@
                             "posture": "elbow_up"
                         }
                     ],
-                    "speedPercent": 100,
+                    "speedPercent": 58,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
@@ -140,7 +140,7 @@
                             "posture": "elbow_down"
                         }
                     ],
-                    "speedPercent": 100,
+                    "speedPercent": 48,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
@@ -156,7 +156,7 @@
                     "isGripperOpen": false,
                     "name": "挤出奶油",
                     "points": [],
-                    "speedPercent": 100,
+                    "speedPercent": 20,
                     "suckBackAmount": 1.0,
                     "suckBackSpeed": 3.0,
                     "templateName": "",
@@ -301,80 +301,6 @@
                 }
             ],
             "schemeName": "方案_2"
-        },
-        {
-            "actions": [
-                {
-                    "delayMs": 0,
-                    "exposure": 0.0,
-                    "extrudeAmount": 0.0,
-                    "extrudeSpeed": 0.0,
-                    "isGripperOpen": false,
-                    "name": "初始化",
-                    "points": [
-                        {
-                            "coord": {
-                                "r": 4.0,
-                                "x": 1.0,
-                                "y": 2.0,
-                                "z": 3.0
-                            },
-                            "joints": {
-                                "j1": 0.0,
-                                "j2": 0.0,
-                                "j3": 0.0,
-                                "j4": 0.0
-                            },
-                            "name": "point_1",
-                            "posture": "elbow_down"
-                        },
-                        {
-                            "coord": {
-                                "r": 0.0,
-                                "x": 0.0,
-                                "y": 0.0,
-                                "z": 0.0
-                            },
-                            "joints": {
-                                "j1": 0.0,
-                                "j2": 0.0,
-                                "j3": 0.0,
-                                "j4": 0.0
-                            },
-                            "name": "point_3",
-                            "posture": "elbow_up"
-                        },
-                        {
-                            "coord": {
-                                "r": 7.0,
-                                "x": 3.0,
-                                "y": 5.0,
-                                "z": 6.0
-                            },
-                            "joints": {
-                                "j1": 0.0,
-                                "j2": 0.0,
-                                "j3": 0.0,
-                                "j4": 0.0
-                            },
-                            "name": "point_2",
-                            "posture": "elbow_down"
-                        }
-                    ],
-                    "speedPercent": 100,
-                    "suckBackAmount": 0.0,
-                    "suckBackSpeed": 0.0,
-                    "templateName": "",
-                    "threshold": 0.0,
-                    "type": 0,
-                    "visionType": ""
-                }
-            ],
-            "schemeName": "方案_966"
-        },
-        {
-            "actions": [],
-            "schemeName": "方案_186"
         }
     ]
 }

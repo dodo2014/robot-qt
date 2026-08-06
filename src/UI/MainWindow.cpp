@@ -2,6 +2,7 @@
 #include "AutoRunPage.h"
 #include "ManualControlPage.h"
 #include "ProcessPage.h"
+#include "VisionTestPage.h"
 #include "ConfigPage.h"
 #include "ToggleSwitch.h"
 
@@ -177,11 +178,13 @@ void MainWindow::SetupUI()
     autoRunPage_   = new AutoRunPage();
     manualPage_    = new ManualControlPage();
     processPage_   = new ProcessPage();
+    visionTestPage_ = new VisionTestPage();
     configPage_    = new ConfigPage();
 
     stack_->addWidget(autoRunPage_);
     stack_->addWidget(manualPage_);
     stack_->addWidget(processPage_);
+    stack_->addWidget(visionTestPage_);
     stack_->addWidget(configPage_);
     stack_->setCurrentIndex(0);
 
@@ -336,7 +339,7 @@ QWidget* MainWindow::CreateTopBar()
 QWidget* MainWindow::CreateNavSidebar()
 {
     auto* navWidget = new QWidget();
-    navWidget->setFixedWidth(200);
+    navWidget->setFixedWidth(160);
     navWidget->setStyleSheet("background: #1b1f26; border-right: 1px solid #2f3640;");
 
     auto* navLayout = new QVBoxLayout(navWidget);
@@ -350,8 +353,9 @@ QWidget* MainWindow::CreateNavSidebar()
     QVector<NavInfo> navItems = {
         { QStringLiteral("🌟 自动运行") },
         { QStringLiteral("\xF0\x9F\x9B\xA0\xEF\xB8\x8F 手动控制") },
-        { QStringLiteral("\xF0\x9F\x93\x9D 工艺与流程") },
-        { QStringLiteral("\xE2\x9A\x99\xEF\xB8\x8F 设备与配置") },
+        { QStringLiteral("\xF0\x9F\x93\x9D 工艺流程") },
+        { QStringLiteral("\xF0\x9F\x8E\xA5 视觉检测") },
+        { QStringLiteral("\xE2\x9A\x99\xEF\xB8\x8F 设备配置") },
     };
 
     for (int i = 0; i < navItems.size(); ++i)

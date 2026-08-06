@@ -462,14 +462,41 @@ void ProcessPage::SetupUI()
     m_speedPercentSpin->setFixedWidth(110);
     m_speedPercentSpin->setStyleSheet("QSpinBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; font-size: 13px; padding: 4px 8px; }");
 
+    m_speedPercentSlider = new QSlider(Qt::Horizontal);
+    m_speedPercentSlider->setRange(1, 100);
+    m_speedPercentSlider->setValue(100);
+    m_speedPercentSlider->setFixedHeight(30);
+    m_speedPercentSlider->setFixedWidth(240);
+    m_speedPercentSlider->setStyleSheet(
+        "QSlider { background: transparent; border: none; }"
+        "QSlider:focus { border: none; outline: none; }"
+        "QSlider::groove:horizontal { background: #2a3340; height: 6px; border-radius: 3px; }"
+        "QSlider::sub-page:horizontal { background: #2f7fb5; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: #cfe0f5; width: 16px; margin: -5px 0; border-radius: 8px; }");
+
     auto* speedHint = new QLabel(QStringLiteral("(1-100)"));
     speedHint->setStyleSheet("color: #6a7a8a; font-size: 12px; background: transparent; border: none;");
 
     speedRowLayout->addWidget(speedLabel);
     speedRowLayout->addWidget(m_speedPercentSpin);
+    speedRowLayout->addWidget(m_speedPercentSlider);
     speedRowLayout->addWidget(speedHint);
     speedRowLayout->addStretch();
     m_speedPercentRow->setVisible(false);
+
+    // 输入框 ↔ 滑动条双向同步（各自 blockSignals 防回环）
+    connect(m_speedPercentSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        m_speedPercentSlider->blockSignals(true);
+        m_speedPercentSlider->setValue(v);
+        m_speedPercentSlider->blockSignals(false);
+    });
+    connect(m_speedPercentSlider, &QSlider::valueChanged,
+            this, [this](int v) {
+        m_speedPercentSpin->blockSignals(true);
+        m_speedPercentSpin->setValue(v);
+        m_speedPercentSpin->blockSignals(false);
+    });
 
     rightLayout->addWidget(m_speedPercentRow);
     rightLayout->addWidget(m_detailStack, 1);
@@ -547,8 +574,10 @@ void ProcessPage::RefreshActionDetail(int idx)
                             action.type == ActionType::Extrude ||
                             action.type == ActionType::Gripper);
     m_speedPercentRow->setVisible(hasSpeedPercent);
-    if (hasSpeedPercent)
+    if (hasSpeedPercent) {
         m_speedPercentSpin->setValue(action.speedPercent);
+        m_speedPercentSlider->setValue(action.speedPercent);
+    }
 
     auto makePoseCombo = [](const QString& text) -> QComboBox* {
         auto* c = new QComboBox();

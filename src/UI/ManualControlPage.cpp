@@ -14,6 +14,7 @@
 #include <QScrollBar>
 #include <QMessageBox>
 #include <QDebug>
+#include <QStringList>
 
 ManualControlPage::ManualControlPage(QWidget* parent)
     : QWidget(parent)
@@ -31,10 +32,13 @@ ManualControlPage::ManualControlPage(QWidget* parent)
             this, &ManualControlPage::OnAxisAlarm);
     connect(&HardwareManager::instance(), &HardwareManager::limitTriggered,
             this, &ManualControlPage::OnLimitTriggered);
+    connect(&HardwareManager::instance(), &HardwareManager::softLimitTriggered,
+            this, &ManualControlPage::OnSoftLimit);
 
     const int count = static_cast<int>(LogicalAxis::Count);
     alarmState_.fill(false, count);
     limitState_.fill(false, count);
+    softLimitDir_.fill(0, count);
     enabledState_.fill(false, count);
     runningState_.fill(false, count);
     homeDoneState_.fill(false, count);
@@ -377,7 +381,7 @@ void ManualControlPage::SetupUI()
 
     // ==== Bottom hint ====
     hintLabel_ = new QLabel(QStringLiteral("提示：按住 +/- 按钮持续运动，松开停止"));
-    hintLabel_->setStyleSheet("color: #7c8a9e; font-size: 13px; background: transparent; border: none; padding: 8px 4px;");
+    hintLabel_->setStyleSheet("color: #8fd4ff; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 8px 4px;");
     layout->addWidget(hintLabel_);
 
     layout->addStretch();
@@ -425,9 +429,12 @@ void ManualControlPage::OnJogMinus(int axis)
     double speed = (axis < speedSpins_.size()) ? speedSpins_[axis]->value() : 20.0;
     double maxSpeed = HardwareManager::instance().GetMaxSpeed(static_cast<LogicalAxis>(axis));
     if (maxSpeed > 0.0 && speed > maxSpeed) speed = maxSpeed;
-    HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, -1);
-    runningState_[axis] = true;
-    RefreshStatusDot(axis);
+    if (HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, -1)) {
+        runningState_[axis] = true;
+        if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
+        RefreshStatusDot(axis);
+        RefreshSoftLimitHint();
+    }
     qDebug() << "JOG - 轴" << axis;
     qDebug() << "速度" << speed;
 }
@@ -438,9 +445,12 @@ void ManualControlPage::OnJogPlus(int axis)
     double speed = (axis < speedSpins_.size()) ? speedSpins_[axis]->value() : 20.0;
     double maxSpeed = HardwareManager::instance().GetMaxSpeed(static_cast<LogicalAxis>(axis));
     if (maxSpeed > 0.0 && speed > maxSpeed) speed = maxSpeed;
-    HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, 1);
-    runningState_[axis] = true;
-    RefreshStatusDot(axis);
+    if (HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, 1)) {
+        runningState_[axis] = true;
+        if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
+        RefreshStatusDot(axis);
+        RefreshSoftLimitHint();
+    }
     qDebug() << "JOG + 轴" << axis;
 }
 
@@ -457,7 +467,19 @@ void ManualControlPage::OnGoClicked(int axis)
 {
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
     if (axis < targetSpins_.size()) {
-        HardwareManager::instance().MoveAbs(static_cast<LogicalAxis>(axis), targetSpins_[axis]->value());
+        double target = targetSpins_[axis]->value();
+        // 软限位：目标超出范围直接拒绝（HardwareManager::MoveAbs 也会再拦一道）
+        double lo = HardwareManager::instance().GetLimitMin(static_cast<LogicalAxis>(axis));
+        double hi = HardwareManager::instance().GetLimitMax(static_cast<LogicalAxis>(axis));
+        if (lo < hi && (target < lo - 1e-6 || target > hi + 1e-6)) {
+            SetHint(QStringLiteral("目标位置超出软限位范围（%1 ~ %2）").arg(lo).arg(hi), "#e0a520");
+            return;
+        }
+        if (HardwareManager::instance().MoveAbs(static_cast<LogicalAxis>(axis), target)) {
+            if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
+            RefreshStatusDot(axis);
+            RefreshSoftLimitHint();
+        }
     }
     qDebug() << "Go 轴" << axis;
 }
@@ -542,13 +564,23 @@ void ManualControlPage::OnLimitTriggered(int axis, bool positive, bool negative)
     }
 }
 
+void ManualControlPage::OnSoftLimit(int axis, bool positive)
+{
+    if (axis < 0 || axis >= softLimitDir_.size()) return;
+    softLimitDir_[axis] = positive ? 1 : -1;
+    runningState_[axis]  = false;
+    RefreshStatusDot(axis);
+    RefreshSoftLimitHint();
+}
+
 void ManualControlPage::RefreshStatusDot(int axis)
 {
     if (axis < 0 || axis >= statusDots_.size()) return;
     QString color;
     QString tip;
     if (alarmState_[axis])        { color = "#ff5f5f"; tip = QStringLiteral("报警"); }
-    else if (limitState_[axis])   { color = "#ffb347"; tip = QStringLiteral("限位"); }
+    else if (limitState_[axis] || (axis < softLimitDir_.size() && softLimitDir_[axis] != 0))
+                                  { color = "#ffb347"; tip = QStringLiteral("限位"); }
     else if (runningState_[axis]) { color = "#4fb3ff"; tip = QStringLiteral("运行中"); }
     else if (enabledState_[axis]) { color = "#3bff7b"; tip = QStringLiteral("已使能"); }
     else                          { color = "#5a6a7a"; tip = QStringLiteral("未使能"); }
@@ -560,8 +592,28 @@ void ManualControlPage::SetHint(const QString& text, const QString& color)
 {
     if (!hintLabel_) return;
     if (color.isEmpty())
-        hintLabel_->setStyleSheet("color: #7c8a9e; font-size: 13px; background: transparent; border: none; padding: 8px 4px;");
+        hintLabel_->setStyleSheet("color: #8fd4ff; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 8px 4px;");
     else
         hintLabel_->setStyleSheet(QStringLiteral("color: %1; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 8px 4px;").arg(color));
     hintLabel_->setText(text);
+}
+
+void ManualControlPage::RefreshSoftLimitHint()
+{
+    QStringList parts;
+    for (int i = 0; i < softLimitDir_.size(); ++i) {
+        if (softLimitDir_[i] == 0) continue;
+        bool positive = softLimitDir_[i] > 0;
+        double pos = positive
+            ? HardwareManager::instance().GetLimitMax(static_cast<LogicalAxis>(i))
+            : HardwareManager::instance().GetLimitMin(static_cast<LogicalAxis>(i));
+        parts << QStringLiteral("轴%1 到达软限位（%2位置 %3）")
+                    .arg(i + 1)
+                    .arg(positive ? QStringLiteral("最大") : QStringLiteral("最小"))
+                    .arg(pos);
+    }
+    if (parts.isEmpty())
+        SetHint(QStringLiteral("提示：按住 +/- 按钮持续运动，松开停止"));
+    else
+        SetHint(parts.join(QStringLiteral(" / ")), QStringLiteral("#ffb347"));
 }

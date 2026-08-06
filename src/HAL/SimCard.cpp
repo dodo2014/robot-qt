@@ -21,7 +21,7 @@ SimCard::SimCard()
         axis.alarm     = false;
         axis.homeDone  = false;
     }
-    spdlog::info("[SimCard] Initialized with 4 virtual axes");
+    SPDLOG_INFO("[SimCard] Initialized with 4 virtual axes");
 }
 
 SimCard::~SimCard()
@@ -33,7 +33,7 @@ bool SimCard::Connect(const std::string& ip, int port)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = true;
-    spdlog::info("[SimCard] Connected (simulated) — ip={}, port={}", ip, port);
+    SPDLOG_INFO("[SimCard] Connected (simulated) — ip={}, port={}", ip, port);
     return true;
 }
 
@@ -41,7 +41,7 @@ void SimCard::Disconnect()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
-    spdlog::info("[SimCard] Disconnected");
+    SPDLOG_INFO("[SimCard] Disconnected");
 }
 
 bool SimCard::IsConnected() const
@@ -54,7 +54,7 @@ bool SimCard::EnableAxis(int axisId)
     std::lock_guard<std::mutex> lock(mutex_);
     auto& axis = GetOrCreateAxis(axisId);
     axis.enabled = true;
-    spdlog::info("[SimCard] Axis {} enabled", axisId);
+    SPDLOG_INFO("[SimCard] Axis {} enabled", axisId);
     return true;
 }
 
@@ -63,7 +63,7 @@ bool SimCard::DisableAxis(int axisId)
     std::lock_guard<std::mutex> lock(mutex_);
     auto& axis = GetOrCreateAxis(axisId);
     axis.enabled = false;
-    spdlog::info("[SimCard] Axis {} disabled", axisId);
+    SPDLOG_INFO("[SimCard] Axis {} disabled", axisId);
     return true;
 }
 
@@ -73,7 +73,7 @@ bool SimCard::HomeAxis(int axisId)
     auto& axis = GetOrCreateAxis(axisId);
     axis.position = 0.0;
     axis.homeDone = true;
-    spdlog::info("[SimCard] Axis {} homed → position=0.0", axisId);
+    SPDLOG_INFO("[SimCard] Axis {} homed → position=0.0", axisId);
     return true;
 }
 
@@ -83,7 +83,7 @@ bool SimCard::StopAxis(int axisId)
     auto& axis = GetOrCreateAxis(axisId);
     axis.velocity = 0.0;
     axis.running  = false;
-    spdlog::info("[SimCard] Axis {} stopped", axisId);
+    SPDLOG_INFO("[SimCard] Axis {} stopped", axisId);
     return true;
 }
 
@@ -94,7 +94,7 @@ bool SimCard::StopAll()
     {
         axis.velocity = 0.0;
     }
-    spdlog::info("[SimCard] All axes stopped");
+    SPDLOG_INFO("[SimCard] All axes stopped");
     return true;
 }
 
@@ -105,7 +105,7 @@ bool SimCard::EmergencyStop()
     {
         axis.velocity = 0.0;
     }
-    spdlog::critical("[SimCard] EMERGENCY STOP — all axes halted immediately");
+    SPDLOG_CRITICAL("[SimCard] EMERGENCY STOP — all axes halted immediately");
     return true;
 }
 
@@ -118,7 +118,7 @@ bool SimCard::MoveAbs(int axisId, double position, double speed)
     // 仿真中 MoveAbs 瞬时完成，不保持运行状态
     axis.velocity = 0.0;
     axis.running  = false;
-    spdlog::info("[SimCard] Axis {} MoveAbs: {:.2f} → {:.2f} (speed={:.1f})",
+    SPDLOG_INFO("[SimCard] Axis {} MoveAbs: {:.2f} → {:.2f} (speed={:.1f})",
                  axisId, oldPos, position, speed);
     return true;
 }
@@ -131,7 +131,7 @@ bool SimCard::MoveRel(int axisId, double distance, double speed)
     axis.position += distance;
     axis.velocity = 0.0;
     axis.running  = false;
-    spdlog::info("[SimCard] Axis {} MoveRel: {:.2f} → {:.2f} (dist={:.2f}, speed={:.1f})",
+    SPDLOG_INFO("[SimCard] Axis {} MoveRel: {:.2f} → {:.2f} (dist={:.2f}, speed={:.1f})",
                  axisId, oldPos, axis.position, distance, speed);
     return true;
 }
@@ -149,7 +149,7 @@ bool SimCard::MoveLinear(const std::vector<double>& targetPositions, double spee
         if (i > 0) oss << ", ";
         oss << "Axis" << i << ": " << oldPos << " → " << targetPositions[i];
     }
-    spdlog::info("[SimCard] MoveLinear — {}", oss.str());
+    SPDLOG_INFO("[SimCard] MoveLinear — {}", oss.str());
     return true;
 }
 
@@ -161,7 +161,7 @@ bool SimCard::MoveJog(int axisId, double speedPulsesPerSec, double accel, int di
     axis.jogDir   = direction;
     axis.velocity = speedPulsesPerSec * direction;
     axis.running  = true;
-    spdlog::info("[SimCard] Axis {} MoveJog: speed={:.1f} pps, dir={:+d}",
+    SPDLOG_INFO("[SimCard] Axis {} MoveJog: speed={:.1f} pps, dir={:+d}",
                  axisId, speedPulsesPerSec, direction);
     return true;
 }
@@ -173,7 +173,7 @@ bool SimCard::StopJog(int axisId)
     axis.jogSpeed = 0.0;
     axis.velocity = 0.0;
     axis.running  = false;
-    spdlog::info("[SimCard] Axis {} StopJog", axisId);
+    SPDLOG_INFO("[SimCard] Axis {} StopJog", axisId);
     return true;
 }
 
@@ -184,6 +184,11 @@ void SimCard::Step(double dtSeconds)
     {
         if (axis.running && axis.jogSpeed != 0.0)
             axis.position += axis.velocity * dtSeconds;
+        // 软限位夹紧（limitMinPulse/MaxPulse 已在 SetAxisConfig 换算为脉冲域）
+        if (axis.limitMinPulse < axis.limitMaxPulse) {
+            if (axis.position > axis.limitMaxPulse) axis.position = axis.limitMaxPulse;
+            if (axis.position < axis.limitMinPulse) axis.position = axis.limitMinPulse;
+        }
     }
 }
 
@@ -195,7 +200,19 @@ bool SimCard::SetAxisConfig(int axisId, const AxisConfig& cfg)
     axis.speed = cfg.maxSpeed;
     axis.accel = cfg.maxAccel;
     axis.decel = cfg.maxDecel;
-    spdlog::info("[SimCard] Axis {} config set: ppr={}, microSteps={}, lead={}, type={}",
+    // 把物理单位软限位换算成脉冲域（与 BoPaiCard::PulsePerUnit 同一公式）
+    double pulsesPerRev = (cfg.pulsesPerRev > 0) ? cfg.pulsesPerRev : 1.0;
+    double steps = pulsesPerRev * (cfg.microSteps > 1 ? cfg.microSteps : 1);
+    double denom = (cfg.hardwareType == 0) ? 360.0 : (cfg.lead > 0 ? cfg.lead : 1.0);
+    double ppu = steps / denom;
+    if (cfg.limitMin < cfg.limitMax) {
+        axis.limitMinPulse = cfg.limitMin * ppu;
+        axis.limitMaxPulse = cfg.limitMax * ppu;
+    } else {
+        axis.limitMinPulse = -1.0e30;
+        axis.limitMaxPulse =  1.0e30;
+    }
+    SPDLOG_INFO("[SimCard] Axis {} config set: ppr={}, microSteps={}, lead={}, type={}",
                  axisId, cfg.pulsesPerRev, cfg.microSteps, cfg.lead, cfg.hardwareType);
     return true;
 }
@@ -205,7 +222,7 @@ bool SimCard::SetSpeed(int axisId, double speed)
     std::lock_guard<std::mutex> lock(mutex_);
     auto& axis = GetOrCreateAxis(axisId);
     axis.speed = speed;
-    spdlog::info("[SimCard] Axis {} speed set to {:.1f}", axisId, speed);
+    SPDLOG_INFO("[SimCard] Axis {} speed set to {:.1f}", axisId, speed);
     return true;
 }
 
@@ -215,7 +232,7 @@ bool SimCard::SetAccel(int axisId, double accel, double decel)
     auto& axis = GetOrCreateAxis(axisId);
     axis.accel = accel;
     axis.decel = (decel > 0) ? decel : accel;
-    spdlog::info("[SimCard] Axis {} accel={:.1f} decel={:.1f}", axisId, axis.accel, axis.decel);
+    SPDLOG_INFO("[SimCard] Axis {} accel={:.1f} decel={:.1f}", axisId, axis.accel, axis.decel);
     return true;
 }
 
@@ -269,7 +286,7 @@ bool SimCard::SetDO(int channel, bool state)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     doStates_[channel] = state;
-    spdlog::info("[SimCard] DO[{}] = {}", channel, state ? "ON" : "OFF");
+    SPDLOG_INFO("[SimCard] DO[{}] = {}", channel, state ? "ON" : "OFF");
     return true;
 }
 

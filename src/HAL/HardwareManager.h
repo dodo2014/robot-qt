@@ -14,6 +14,9 @@
 #include "IPuffAlgorithm.h"
 #include "AxisMap.h"
 
+class QThread;
+class CameraCaptureWorker;
+
 // ============================================================
 // 硬件组装管理 (HardwareManager)
 // 单例。职责：
@@ -54,6 +57,11 @@ public:
     double GetMaxSpeed(LogicalAxis axis) const;
     bool   SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec);
 
+    // ---- 软限位（实时读 config，与「电控与映射」编辑保持一致） ----
+    double GetLimitMin(LogicalAxis axis) const;
+    double GetLimitMax(LogicalAxis axis) const;
+    bool   IsWithinSoftLimits(LogicalAxis axis, double pos) const;
+
     // ---- 连接状态 ----
     bool IsMotionCardConnected() const;
     bool IsServoConnected() const;
@@ -67,14 +75,26 @@ public:
     ICamera*       camera()      const { return camera_.get(); }
     IPuffAlgorithm* algorithm()  const { return algorithm_.get(); }
 
+    // ---- 相机流（采集独立线程，帧经 frameReady 信号广播） ----
+    bool CameraOpen(int width, int height, double fps);
+    void CameraClose();
+    bool StartCameraStream(int fps = 30);
+    void StopCameraStream();
+    bool IsCameraStreaming() const;
+
 signals:
     // 高频状态广播 (50ms)，position 已换算为物理单位 (mm/度)
     void stateUpdated(const QVector<MotorStatus>& axes);
     void servoStateUpdated(const QVector<ServoTelemetry>& servos);
     void axisAlarm(int logicalAxis, bool alarm);
     void limitTriggered(int logicalAxis, bool positive, bool negative);
+    // 轴已到达软限位边界（点动撞限被自动停止，或点动启动方向已在边界）。
+    // positive=true 表示撞到 Max，false 表示撞到 Min。
+    void softLimitTriggered(int logicalAxis, bool positive);
     // 连接状态变化（Initialize 之后或重连后发出）
     void connectionChanged();
+    // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
+    void frameReady(const CameraFrame& frame);
 
 private:
     HardwareManager();
@@ -103,6 +123,10 @@ private:
     std::unique_ptr<ICamera>        camera_;
     std::unique_ptr<IPuffAlgorithm> algorithm_;
 
+    QThread*             cameraThread_  = nullptr;
+    CameraCaptureWorker* cameraWorker_  = nullptr;
+    bool                 cameraStreaming_ = false;
+
     // 每个逻辑轴从 config 加载的配置快照（LoadAxisConfigsFromConfig 填充）
     QVector<AxisConfig> axisConfigs_;
 
@@ -110,4 +134,6 @@ private:
     QVector<bool> lastAlarm_;
     QVector<bool> lastLimitPos_;
     QVector<bool> lastLimitNeg_;
+    // 每个逻辑轴的软限位撞限边沿（去重，避免轮询重复发信号）
+    QVector<bool> lastSoftLimitHit_;
 };

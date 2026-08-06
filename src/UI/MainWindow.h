@@ -10,6 +10,7 @@
 class AutoRunPage;
 class ManualControlPage;
 class ProcessPage;
+class VisionTestPage;
 class ConfigPage;
 
 class MainWindow : public QMainWindow
@@ -41,5 +42,6 @@ private:
     AutoRunPage*         autoRunPage_    = nullptr;
     ManualControlPage*   manualPage_     = nullptr;
     ProcessPage*         processPage_    = nullptr;
+    VisionTestPage*      visionTestPage_ = nullptr;
     ConfigPage*          configPage_     = nullptr;
 };

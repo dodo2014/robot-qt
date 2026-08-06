@@ -16,7 +16,7 @@ bool SimServo::Connect(const std::string& port, int baudRate)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = true;
-    spdlog::info("[SimServo] Connected (simulated) — port={}, baud={}", port, baudRate);
+    SPDLOG_INFO("[SimServo] Connected (simulated) — port={}, baud={}", port, baudRate);
     return true;
 }
 
@@ -25,7 +25,7 @@ void SimServo::Disconnect()
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = false;
     torque_    = false;
-    spdlog::info("[SimServo] Disconnected");
+    SPDLOG_INFO("[SimServo] Disconnected");
 }
 
 bool SimServo::IsConnected() const
@@ -38,7 +38,7 @@ bool SimServo::SetServoId(uint8_t id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     servoId_ = id;
-    spdlog::info("[SimServo] Servo id set to {}", id);
+    SPDLOG_INFO("[SimServo] Servo id set to {}", id);
     return true;
 }
 
@@ -52,7 +52,7 @@ bool SimServo::TorqueOn()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     torque_ = true;
-    spdlog::info("[SimServo] Torque ON (id={})", servoId_);
+    SPDLOG_INFO("[SimServo] Torque ON (id={})", servoId_);
     return true;
 }
 
@@ -60,7 +60,7 @@ bool SimServo::TorqueOff()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     torque_ = false;
-    spdlog::info("[SimServo] Torque OFF (id={})", servoId_);
+    SPDLOG_INFO("[SimServo] Torque OFF (id={})", servoId_);
     return true;
 }
 
@@ -69,7 +69,7 @@ bool SimServo::MoveToAngle(double angleDeg, int timeMs)
     std::lock_guard<std::mutex> lock(mutex_);
     double old = angle_;
     angle_ = angleDeg;
-    spdlog::info("[SimServo] (id={}) MoveToAngle: {:.1f}° → {:.1f}° in {}ms",
+    SPDLOG_INFO("[SimServo] (id={}) MoveToAngle: {:.1f}° → {:.1f}° in {}ms",
                  servoId_, old, angle_, timeMs);
     return true;
 }
@@ -80,14 +80,14 @@ bool SimServo::MoveAtSpeed(double angleDeg, double speedDps)
     double old = angle_;
     angle_ = angleDeg;
     if (speedDps > 0) speed_ = speedDps;
-    spdlog::info("[SimServo] (id={}) MoveAtSpeed: {:.1f}° → {:.1f}° @ {:.1f}°/s",
+    SPDLOG_INFO("[SimServo] (id={}) MoveAtSpeed: {:.1f}° → {:.1f}° @ {:.1f}°/s",
                  servoId_, old, angle_, speed_);
     return true;
 }
 
 bool SimServo::Stop()
 {
-    spdlog::info("[SimServo] (id={}) Stop", servoId_);
+    SPDLOG_INFO("[SimServo] (id={}) Stop", servoId_);
     return true;
 }
 
@@ -95,7 +95,7 @@ bool SimServo::SetSpeed(double speedDps)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     speed_ = speedDps;
-    spdlog::info("[SimServo] (id={}) speed set to {:.1f}°/s", servoId_, speed_);
+    SPDLOG_INFO("[SimServo] (id={}) speed set to {:.1f}°/s", servoId_, speed_);
     return true;
 }
 
@@ -128,7 +128,7 @@ bool SimServo::ClearAlarm()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     alarm_ = false;
-    spdlog::info("[SimServo] (id={}) alarm cleared", servoId_);
+    SPDLOG_INFO("[SimServo] (id={}) alarm cleared", servoId_);
     return true;
 }
 

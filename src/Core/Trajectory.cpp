@@ -6,7 +6,7 @@
 
 Trajectory::Trajectory()
 {
-    spdlog::info("[Trajectory] Initialized");
+    SPDLOG_INFO("[Trajectory] Initialized");
 }
 
 std::vector<TrajectoryPoint> Trajectory::PlanLinear(const Pose3D& from, const Pose3D& to,
@@ -19,7 +19,7 @@ std::vector<TrajectoryPoint> Trajectory::PlanLinear(const Pose3D& from, const Po
 
     if (dist < 1e-6)
     {
-        spdlog::warn("[Trajectory] PlanLinear: start and end are the same point");
+        SPDLOG_WARN("[Trajectory] PlanLinear: start and end are the same point");
         return {};
     }
 
@@ -50,7 +50,7 @@ std::vector<TrajectoryPoint> Trajectory::PlanLinear(const Pose3D& from, const Po
         }
     }
 
-    spdlog::info("[Trajectory] PlanLinear: {} points, dist={:.1f}mm, total={:.0f}ms",
+    SPDLOG_INFO("[Trajectory] PlanLinear: {} points, dist={:.1f}mm, total={:.0f}ms",
                  trajectory.size(), dist, totalTimeMs);
     return trajectory;
 }
@@ -85,7 +85,7 @@ std::vector<TrajectoryPoint> Trajectory::PlanPTP(const JointAngles& from, const 
         trajectory.push_back(tp);
     }
 
-    spdlog::info("[Trajectory] PlanPTP: {} points, total={:.0f}ms",
+    SPDLOG_INFO("[Trajectory] PlanPTP: {} points, total={:.0f}ms",
                  trajectory.size(), totalTimeMs);
     return trajectory;
 }
@@ -95,7 +95,7 @@ std::vector<TrajectoryPoint> Trajectory::PlanPath(const std::vector<Pose3D>& way
 {
     if (waypoints.size() < 2)
     {
-        spdlog::warn("[Trajectory] PlanPath: need at least 2 waypoints, got {}", waypoints.size());
+        SPDLOG_WARN("[Trajectory] PlanPath: need at least 2 waypoints, got {}", waypoints.size());
         return {};
     }
 
@@ -113,7 +113,7 @@ std::vector<TrajectoryPoint> Trajectory::PlanPath(const std::vector<Pose3D>& way
         currentTime = fullTrajectory.empty() ? 0.0 : fullTrajectory.back().timeFromStart;
     }
 
-    spdlog::info("[Trajectory] PlanPath: {} segments → {} total points",
+    SPDLOG_INFO("[Trajectory] PlanPath: {} segments → {} total points",
                  waypoints.size() - 1, fullTrajectory.size());
     return fullTrajectory;
 }
@@ -123,20 +123,20 @@ bool Trajectory::Execute(const std::vector<TrajectoryPoint>& trajectory,
 {
     if (trajectory.empty())
     {
-        spdlog::warn("[Trajectory] Execute: empty trajectory");
+        SPDLOG_WARN("[Trajectory] Execute: empty trajectory");
         return false;
     }
 
-    spdlog::info("[Trajectory] Execute: {} points", trajectory.size());
+    SPDLOG_INFO("[Trajectory] Execute: {} points", trajectory.size());
     for (const auto& pt : trajectory)
     {
         if (!callback(pt.joints))
         {
-            spdlog::warn("[Trajectory] Execute: callback returned false — aborting at t={:.0f}ms",
+            SPDLOG_WARN("[Trajectory] Execute: callback returned false — aborting at t={:.0f}ms",
                          pt.timeFromStart);
             return false;
         }
     }
-    spdlog::info("[Trajectory] Execute: completed");
+    SPDLOG_INFO("[Trajectory] Execute: completed");
     return true;
 }

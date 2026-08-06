@@ -7,21 +7,21 @@
 
 Kinematics::Kinematics()
 {
-    spdlog::info("[Kinematics] Initialized with default SCARA params: "
+    SPDLOG_INFO("[Kinematics] Initialized with default SCARA params: "
                  "L1={}, L2={}, L3={}, L4={}", l1_, l2_, l3_, l4_);
 }
 
 void Kinematics::SetLinkLengths(double l1, double l2, double l3, double l4)
 {
     l1_ = l1; l2_ = l2; l3_ = l3; l4_ = l4;
-    spdlog::info("[Kinematics] Link lengths updated: L1={}, L2={}, L3={}, L4={}",
+    SPDLOG_INFO("[Kinematics] Link lengths updated: L1={}, L2={}, L3={}, L4={}",
                  l1_, l2_, l3_, l4_);
 }
 
 void Kinematics::SetDHParams(const std::vector<double>& params)
 {
     dhParams_ = params;
-    spdlog::info("[Kinematics] DH params updated ({} values)", params.size());
+    SPDLOG_INFO("[Kinematics] DH params updated ({} values)", params.size());
 }
 
 JointAngles Kinematics::Forward(const JointAngles& joint) const
@@ -79,7 +79,7 @@ bool Kinematics::Inverse(const Pose3D& target, JointAngles& output,
 
     if (!ok1 && !ok2)
     {
-        spdlog::warn("[Kinematics] IK: No solution found for target ({:.1f}, {:.1f}, {:.1f})",
+        SPDLOG_WARN("[Kinematics] IK: No solution found for target ({:.1f}, {:.1f}, {:.1f})",
                      target.x, target.y, target.z);
         return false;
     }

@@ -30,6 +30,7 @@ private slots:
     void OnConnectionChanged();
     void OnAxisAlarm(int axis, bool alarm);
     void OnLimitTriggered(int axis, bool positive, bool negative);
+    void OnSoftLimit(int axis, bool positive);
 
 private:
     void SetupUI();
@@ -38,6 +39,7 @@ private:
                            const QString& pos, double target, bool isGripper = false, bool isExtrude = false);
     void RefreshStatusDot(int axis);
     void SetHint(const QString& text, const QString& color = QString());
+    void RefreshSoftLimitHint();
 
     QVector<QLabel*> posLabels_;
     QVector<QLabel*> statusDots_;
@@ -48,6 +50,7 @@ private:
 
     QVector<bool> alarmState_;
     QVector<bool> limitState_;
+    QVector<int> softLimitDir_;   // 1=到达最大限位, -1=到达最小限位, 0=正常
     QVector<bool> enabledState_;
     QVector<bool> runningState_;
     QVector<bool> homeDoneState_;

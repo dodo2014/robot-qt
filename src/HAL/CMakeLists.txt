@@ -8,6 +8,11 @@ option(USE_XRSERVO "Build XR serial servo support" ON)
 set(HAL_SOURCES
     SimCard.cpp
     SimServo.cpp
+    SimCamera.cpp
+    SimAlgo.cpp
+    CameraCaptureWorker.cpp
+    FrameSaver.cpp
+    FrameConverter.cpp
     AxisConverter.cpp
     HardwareManager.cpp
 )
@@ -16,6 +21,12 @@ set(HAL_HEADERS
     IMotionCard.h
     SimCard.h
     SimServo.h
+    SimCamera.h
+    SimAlgo.h
+    SimVision.h
+    CameraCaptureWorker.h
+    FrameSaver.h
+    FrameConverter.h
     IAxisServo.h
     IEndEffector.h
     ICamera.h
@@ -52,6 +63,7 @@ target_include_directories(HAL PRIVATE
 
 target_link_libraries(HAL PUBLIC
     Qt6::Core
+    Qt6::Gui
     Config
     spdlog::spdlog
 )

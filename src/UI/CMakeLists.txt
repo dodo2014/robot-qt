@@ -6,6 +6,7 @@ set(UI_SOURCES
     AutoRunPage.cpp
     ManualControlPage.cpp
     ProcessPage.cpp
+    VisionTestPage.cpp
     ConfigPage.cpp
     ToggleSwitch.cpp
 )
@@ -15,6 +16,7 @@ set(UI_HEADERS
     AutoRunPage.h
     ManualControlPage.h
     ProcessPage.h
+    VisionTestPage.h
     ConfigPage.h
     ToggleSwitch.h
 )

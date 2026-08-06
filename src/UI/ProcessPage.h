@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QSlider>
 #include <QLabel>
 
 class ProcessPage : public QWidget
@@ -54,6 +55,7 @@ private:
 
     QWidget* m_speedPercentRow = nullptr;
     QSpinBox* m_speedPercentSpin = nullptr;
+    QSlider* m_speedPercentSlider = nullptr;
 
     QTableWidget* m_pointTable = nullptr;
 

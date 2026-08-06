@@ -5,6 +5,9 @@
 #include "ConfigManager.h"
 #include "SimCard.h"
 #include "SimServo.h"
+#include "SimCamera.h"
+#include "SimAlgo.h"
+#include "CameraCaptureWorker.h"
 #ifdef USE_BOPAI
 #include "BoPaiCard.h"
 #endif
@@ -21,13 +24,15 @@ void ForceLinkHALImpls()
 {
     auto f1 = &SimCard::Step;
     auto f2 = &SimServo::Connect;
+    auto f5 = &SimCamera::CaptureFrame;
+    auto f6 = &SimAlgo::Detect;
 #ifdef USE_BOPAI
     auto f3 = &BoPaiCard::Connect;
 #endif
 #ifdef USE_XRSERVO
     auto f4 = &XRServo::Connect;
 #endif
-    (void)f1; (void)f2;
+    (void)f1; (void)f2; (void)f5; (void)f6;
 #ifdef USE_BOPAI
     (void)f3;
 #endif
@@ -39,6 +44,10 @@ void ForceLinkHALImpls()
     // 注册相同类型会覆盖原条目，因此与静态注册共存时也无副作用。
     AxisServoFactory::Instance().Register("SimServo",
         []() -> std::unique_ptr<IAxisServo> { return std::make_unique<SimServo>(); });
+    CameraFactory::Instance().Register("SimCamera",
+        []() -> std::unique_ptr<ICamera> { return std::make_unique<SimCamera>(); });
+    PuffAlgorithmFactory::Instance().Register("SimAlgo",
+        []() -> std::unique_ptr<IPuffAlgorithm> { return std::make_unique<SimAlgo>(); });
 #ifdef USE_XRSERVO
     AxisServoFactory::Instance().Register("XRServo",
         []() -> std::unique_ptr<IAxisServo> { return std::make_unique<XRServo>(); });
@@ -49,6 +58,7 @@ void ForceLinkHALImpls()
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QThread>
 
 #include <spdlog/spdlog.h>
 #include <vector>
@@ -100,10 +110,21 @@ HardwareManager::HardwareManager()
     jogTimer_ = new QTimer(this);
     jogTimer_->setInterval(50);
     connect(jogTimer_, &QTimer::timeout, this, &HardwareManager::JogTick);
+
+    cameraThread_ = new QThread(this);
+    cameraWorker_ = new CameraCaptureWorker();
+    cameraWorker_->moveToThread(cameraThread_);
+    connect(cameraThread_, &QThread::finished, cameraWorker_, &QObject::deleteLater);
+    connect(cameraWorker_, &CameraCaptureWorker::frameReady, this, &HardwareManager::frameReady);
 }
 
 HardwareManager::~HardwareManager()
 {
+    StopCameraStream();
+    if (cameraThread_ && cameraThread_->isRunning()) {
+        cameraThread_->quit();
+        cameraThread_->wait(2000);
+    }
     pollTimer_->stop();
     if (motionCard_) motionCard_->Disconnect();
     if (servoJ2_) servoJ2_->Disconnect();
@@ -182,9 +203,24 @@ bool HardwareManager::Initialize()
     // ---- 3. 创建末端/相机/算法（可空，延后接入） ----
     std::string algoType = cfg.getValue<std::string>("simulation.algorithmType", "SimAlgo");
     algorithm_ = PuffAlgorithmFactory::Instance().Create(algoType);
+    if (!algorithm_) {
+        SPDLOG_WARN("[HardwareManager] Algorithm type '{}' not registered", algoType);
+    } else {
+        std::string jsonCfg = "{\"confidenceThreshold\":" +
+            std::to_string(cfg.getValue<double>("vision.confidenceThreshold", 0.85)) + "}";
+        algorithm_->LoadConfig(jsonCfg);
+    }
 
     std::string camType = cfg.getValue<std::string>("simulation.cameraType", "SimCamera");
     camera_ = CameraFactory::Instance().Create(camType);
+    if (!camera_) {
+        SPDLOG_WARN("[HardwareManager] Camera type '{}' not registered", camType);
+    } else {
+        int    w   = cfg.getValue<int>("vision.frameWidth", 640);
+        int    h   = cfg.getValue<int>("vision.frameHeight", 480);
+        double fps = cfg.getValue<double>("vision.frameFps", 30.0);
+        CameraOpen(w, h, fps);
+    }
 
     // ---- 4. 每轴换算参数喂给卡与 AxisConverter ----
     LoadAxisConfigsFromConfig();
@@ -204,6 +240,7 @@ bool HardwareManager::Initialize()
     lastAlarm_.fill(false, static_cast<int>(LogicalAxis::Count));
     lastLimitPos_.fill(false, static_cast<int>(LogicalAxis::Count));
     lastLimitNeg_.fill(false, static_cast<int>(LogicalAxis::Count));
+    lastSoftLimitHit_.fill(false, static_cast<int>(LogicalAxis::Count));
     pollTimer_->start();
 
     initialized_ = true;
@@ -234,6 +271,63 @@ QString HardwareManager::ConnectionStatus() const
     return QStringLiteral("运动卡: %1 | 舵机: %2").arg(cardState, servoState);
 }
 
+bool HardwareManager::CameraOpen(int width, int height, double fps)
+{
+    if (!camera_) {
+        SPDLOG_WARN("[HardwareManager] CameraOpen failed: no camera instance");
+        return false;
+    }
+    std::string deviceId = ConfigManager::instance().getValue<std::string>(
+        "simulation.cameraDeviceId", "CAM-SIM-001");
+    bool ok = camera_->Open(deviceId, width, height, fps);
+    if (!ok)
+        SPDLOG_WARN("[HardwareManager] CameraOpen FAILED: {}", camera_->GetLastError());
+    else
+        SPDLOG_INFO("[HardwareManager] Camera opened");
+    return ok;
+}
+
+void HardwareManager::CameraClose()
+{
+    StopCameraStream();
+    if (camera_) camera_->Close();
+}
+
+bool HardwareManager::StartCameraStream(int fps)
+{
+    if (!camera_) {
+        SPDLOG_WARN("[HardwareManager] StartCameraStream failed: no camera instance");
+        return false;
+    }
+    if (!camera_->IsOpened())
+        CameraOpen(0, 0, 0);
+    if (!camera_->StartStream()) {
+        SPDLOG_WARN("[HardwareManager] StartStream FAILED: {}", camera_->GetLastError());
+        return false;
+    }
+    if (!cameraThread_->isRunning()) {
+        cameraWorker_->SetCamera(camera_.get());
+        cameraThread_->start();
+    }
+    QMetaObject::invokeMethod(cameraWorker_, "Start", Qt::QueuedConnection,
+                              Q_ARG(int, fps));
+    cameraStreaming_ = true;
+    return true;
+}
+
+void HardwareManager::StopCameraStream()
+{
+    cameraStreaming_ = false;
+    if (camera_) camera_->StopStream();
+    if (cameraWorker_)
+        QMetaObject::invokeMethod(cameraWorker_, "Stop", Qt::QueuedConnection);
+}
+
+bool HardwareManager::IsCameraStreaming() const
+{
+    return cameraStreaming_;
+}
+
 void HardwareManager::LoadAxisConfigsFromConfig()
 {
     auto& cfg = ConfigManager::instance();
@@ -252,6 +346,9 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         ac.homePos      = cfg.getValue<double>(base + "homeOffset", 0.0);
         ac.limitMin     = cfg.getValue<double>(base + "limitMin", -180.0);
         ac.limitMax     = cfg.getValue<double>(base + "limitMax", 180.0);
+        if (ac.limitMin >= ac.limitMax)
+            SPDLOG_WARN("[HardwareManager] Axis {} soft limits invalid (min {:.1f} >= max {:.1f}), enforcement disabled",
+                        key, ac.limitMin, ac.limitMax);
         ac.inverted     = (cfg.getValue<int>(base + "direction", 0) != 0);
         ac.hardwareType = cfg.getValue<int>(base + "hardwareType", 0);
         ac.pulsesPerRev = cfg.getValue<int>(base + "transmission.encoderResolution", 131072);
@@ -278,6 +375,13 @@ void HardwareManager::LoadAxisConfigsFromConfig()
 // ============================================================
 bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg)
 {
+    // 软限位校验：目标位置超出 [limitMin, limitMax] 直接拒绝
+    if (!IsWithinSoftLimits(axis, mmOrDeg)) {
+        SPDLOG_WARN("[HardwareManager] MoveAbs rejected: axis {} target {:.1f} out of soft limits [{:.1f}, {:.1f}]",
+                    static_cast<int>(axis), mmOrDeg, GetLimitMin(axis), GetLimitMax(axis));
+        return false;
+    }
+
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         long pulse = AxisConverter::Instance().ToPulse(static_cast<int>(axis), mmOrDeg);
@@ -292,6 +396,23 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg)
 
 bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direction)
 {
+    // 软限位校验：启动方向已在边界则拒绝
+    double lo = GetLimitMin(axis);
+    double hi = GetLimitMax(axis);
+    if (lo < hi) {
+        double current = GetPosition(axis);
+        if (direction > 0 && current >= hi - 1e-6) {
+            emit softLimitTriggered(static_cast<int>(axis), true);
+            SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at max soft limit {:.1f}", static_cast<int>(axis), hi);
+            return false;
+        }
+        if (direction < 0 && current <= lo + 1e-6) {
+            emit softLimitTriggered(static_cast<int>(axis), false);
+            SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at min soft limit {:.1f}", static_cast<int>(axis), lo);
+            return false;
+        }
+    }
+
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         double pulseSpeed = AxisConverter::Instance().SpeedToPulse(static_cast<int>(axis), mmOrDegPerSec);
@@ -442,6 +563,30 @@ bool HardwareManager::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)
     return true;
 }
 
+double HardwareManager::GetLimitMin(LogicalAxis axis) const
+{
+    int i = static_cast<int>(axis);
+    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return -180.0;
+    return ConfigManager::instance().getValue<double>(
+        std::string("axes.") + kAxisConfigKeys[i] + ".limitMin", -180.0);
+}
+
+double HardwareManager::GetLimitMax(LogicalAxis axis) const
+{
+    int i = static_cast<int>(axis);
+    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return 180.0;
+    return ConfigManager::instance().getValue<double>(
+        std::string("axes.") + kAxisConfigKeys[i] + ".limitMax", 180.0);
+}
+
+bool HardwareManager::IsWithinSoftLimits(LogicalAxis axis, double pos) const
+{
+    double lo = GetLimitMin(axis);
+    double hi = GetLimitMax(axis);
+    if (lo >= hi) return true; // 配置错误（min>=max）：视为不限制
+    return pos >= lo - 1e-6 && pos <= hi + 1e-6;
+}
+
 // ============================================================
 // 舵机连续点动（50ms 定时器驱动）
 // ============================================================
@@ -452,6 +597,32 @@ void HardwareManager::JogTick()
     IAxisServo* servo = (static_cast<int>(jogAxis_) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
     if (!servo) return;
     double current = servo->ReadAngle();
+
+    // 软限位：下一步越过边界 → 夹紧到边界并停止
+    double lo = GetLimitMin(jogAxis_);
+    double hi = GetLimitMax(jogAxis_);
+    if (lo < hi) {
+        double next = current + jogDir_ * jogStep_;
+        bool hit = (jogDir_ > 0 && next >= hi - 1e-6) || (jogDir_ < 0 && next <= lo + 1e-6);
+        if (hit) {
+            next = (jogDir_ > 0) ? hi : lo;
+            servo->MoveToAngle(next, 0);
+            servo->Stop();
+            jogTimer_->stop();
+            int idx = static_cast<int>(jogAxis_);
+            if (idx >= 0 && idx < lastSoftLimitHit_.size() && !lastSoftLimitHit_[idx]) {
+                lastSoftLimitHit_[idx] = true;
+                emit softLimitTriggered(idx, jogDir_ > 0);
+            }
+            return;
+        }
+    }
+
+    // 移出边界后清除软限位标记，允许再次撞限时重新触发
+    int idx = static_cast<int>(jogAxis_);
+    if (idx >= 0 && idx < lastSoftLimitHit_.size() && lastSoftLimitHit_[idx])
+        lastSoftLimitHit_[idx] = false;
+
     servo->MoveAtSpeed(current + jogDir_ * jogStep_, jogSpeed_);
 }
 
@@ -478,6 +649,24 @@ void HardwareManager::PollTick()
                         st.axisId   = i;  // 映射为逻辑轴索引
                         st.position = AxisConverter::Instance().ToPhysical(i, static_cast<long>(s.position));
                         vec.push_back(st);
+
+                        // 软限位：点动过程中到达边界 → 自动停止（只处理越界/到边界的轴）
+                        // 仅在“正在点动撞入边界”时标记并通知，静止停在边界（如 Z/夹爪/挤出的
+                        // 初始最小位置 0）不触发，避免启动即误报。
+                        double lo = GetLimitMin(static_cast<LogicalAxis>(i));
+                        double hi = GetLimitMax(static_cast<LogicalAxis>(i));
+                        if (lo < hi && (st.position >= hi - 1e-6 || st.position <= lo + 1e-6)) {
+                            bool positive = st.position >= hi;
+                            if (st.running) {
+                                motionCard_->StopJog(binding.index);
+                                if (i < lastSoftLimitHit_.size() && !lastSoftLimitHit_[i]) {
+                                    lastSoftLimitHit_[i] = true;
+                                    emit softLimitTriggered(i, positive);
+                                }
+                            }
+                        } else if (i < lastSoftLimitHit_.size() && lastSoftLimitHit_[i]) {
+                            lastSoftLimitHit_[i] = false;
+                        }
                         break;
                     }
                 }

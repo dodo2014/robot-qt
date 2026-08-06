@@ -5,13 +5,13 @@
 
 CoordTransform::CoordTransform()
 {
-    spdlog::info("[CoordTransform] Initialized");
+    SPDLOG_INFO("[CoordTransform] Initialized");
 }
 
 void CoordTransform::SetCameraIntrinsics(double fx, double fy, double cx, double cy)
 {
     fx_ = fx; fy_ = fy; cx_ = cx; cy_ = cy;
-    spdlog::info("[CoordTransform] Camera intrinsics set: fx={}, fy={}, cx={}, cy={}",
+    SPDLOG_INFO("[CoordTransform] Camera intrinsics set: fx={}, fy={}, cx={}, cy={}",
                  fx, fy, cx, cy);
 }
 
@@ -19,33 +19,33 @@ void CoordTransform::SetHandEyeMatrix(const std::array<double, 16>& matrix)
 {
     handEyeMatrix_ = matrix;
     hasHandEye_ = true;
-    spdlog::info("[CoordTransform] Hand-eye matrix set (4x4)");
+    SPDLOG_INFO("[CoordTransform] Hand-eye matrix set (4x4)");
 }
 
 void CoordTransform::SetCameraOffset(double dx, double dy, double rotationDeg)
 {
     camOffsetX_ = dx; camOffsetY_ = dy; camRotation_ = rotationDeg;
-    spdlog::info("[CoordTransform] Camera offset: dx={}, dy={}, rotation={}°",
+    SPDLOG_INFO("[CoordTransform] Camera offset: dx={}, dy={}, rotation={}°",
                  dx, dy, rotationDeg);
 }
 
 void CoordTransform::SetGripperOffset(double dx, double dy, double zDiff)
 {
     gripOffsetX_ = dx; gripOffsetY_ = dy; gripZDiff_ = zDiff;
-    spdlog::info("[CoordTransform] Gripper offset: dx={}, dy={}, zDiff={}",
+    SPDLOG_INFO("[CoordTransform] Gripper offset: dx={}, dy={}, zDiff={}",
                  dx, dy, zDiff);
 }
 
 void CoordTransform::SetGripperInstallAngle(double angleDeg)
 {
     gripInstallAngle_ = angleDeg;
-    spdlog::info("[CoordTransform] Gripper install angle: {}°", angleDeg);
+    SPDLOG_INFO("[CoordTransform] Gripper install angle: {}°", angleDeg);
 }
 
 void CoordTransform::SetAngleOffset(double offsetDeg)
 {
     angleOffset_ = offsetDeg;
-    spdlog::info("[CoordTransform] Angle offset: {}°", offsetDeg);
+    SPDLOG_INFO("[CoordTransform] Angle offset: {}°", offsetDeg);
 }
 
 Pose3D CoordTransform::PixelToRobot(int u, int v, float depthMm,
@@ -53,7 +53,7 @@ Pose3D CoordTransform::PixelToRobot(int u, int v, float depthMm,
 {
     if (fx_ <= 0 || fy_ <= 0)
     {
-        spdlog::error("[CoordTransform] Camera intrinsics not set");
+        SPDLOG_ERROR("[CoordTransform] Camera intrinsics not set");
         return {};
     }
 

@@ -33,7 +33,7 @@ public:
     {
         if (!motionCard || !servoJ2 || !servoJ3 || !gripper || !camera || !algorithm)
         {
-            spdlog::error("[PickCycle] Hardware not fully set");
+            SPDLOG_ERROR("[PickCycle] Hardware not fully set");
             return false;
         }
         return true;
@@ -42,7 +42,7 @@ public:
     void SetState(PickCycleState newState, const std::string& msg)
     {
         state = newState;
-        spdlog::info("[PickCycle] State → {}: {}", GetStateName(newState), msg);
+        SPDLOG_INFO("[PickCycle] State → {}: {}", GetStateName(newState), msg);
         if (callback)
             callback(newState, msg);
     }
@@ -75,7 +75,7 @@ public:
         current.angles[2] = motionCard->GetPosition(2);
         current.angles[3] = motionCard->GetPosition(3);
 
-        spdlog::info("[PickCycle] Moving from J({:.1f}, {:.1f}, {:.1f}, {:.1f}) → "
+        SPDLOG_INFO("[PickCycle] Moving from J({:.1f}, {:.1f}, {:.1f}, {:.1f}) → "
                      "J({:.1f}, {:.1f}, {:.1f}, {:.1f})",
                      current.angles[0], current.angles[1],
                      current.angles[2], current.angles[3],
@@ -89,14 +89,14 @@ public:
 
         if (!servoJ2->MoveToAngle(target.angles[1], moveTimeMs))
         {
-            spdlog::error("[PickCycle] Servo J2 move failed");
+            SPDLOG_ERROR("[PickCycle] Servo J2 move failed");
             return false;
         }
 
         // Step 3: J3 舵机同时动
         if (!servoJ3->MoveToAngle(target.angles[2], moveTimeMs))
         {
-            spdlog::error("[PickCycle] Servo J3 move failed");
+            SPDLOG_ERROR("[PickCycle] Servo J3 move failed");
             return false;
         }
 
@@ -106,14 +106,14 @@ public:
         // Step 5: J1 (伺服电机) 运动
         if (!motionCard->MoveAbs(0, target.angles[0], speed))
         {
-            spdlog::error("[PickCycle] Motion card J1 move failed");
+            SPDLOG_ERROR("[PickCycle] Motion card J1 move failed");
             return false;
         }
 
         // Step 6: J3 (线性轴)
         if (!motionCard->MoveAbs(2, target.angles[2], speed))
         {
-            spdlog::error("[PickCycle] Motion card J3 (linear) move failed");
+            SPDLOG_ERROR("[PickCycle] Motion card J3 (linear) move failed");
             return false;
         }
 
@@ -138,7 +138,7 @@ public:
             SetState(PickCycleState::Error, "Low confidence detection");
             return false;
         }
-        spdlog::info("[PickCycle] Puff detected at ({:.1f}, {:.1f}, {:.1f}) confidence={:.2f}",
+        SPDLOG_INFO("[PickCycle] Puff detected at ({:.1f}, {:.1f}, {:.1f}) confidence={:.2f}",
                      puff.x, puff.y, puff.z, puff.confidence);
 
         // 计算抓取位姿
@@ -225,7 +225,7 @@ public:
 PickCycleController::PickCycleController()
     : impl_(std::make_unique<Impl>())
 {
-    spdlog::info("[PickCycleController] Created");
+    SPDLOG_INFO("[PickCycleController] Created");
 }
 
 PickCycleController::~PickCycleController() = default;
@@ -239,13 +239,13 @@ void PickCycleController::SetHardware(IMotionCard* motion, IAxisServo* j2, IAxis
     impl_->gripper    = gripper;
     impl_->camera     = camera;
     impl_->algorithm  = algo;
-    spdlog::info("[PickCycleController] Hardware set");
+    SPDLOG_INFO("[PickCycleController] Hardware set");
 }
 
 bool PickCycleController::StartCycle()
 {
     impl_->running = true;
-    spdlog::info("[PickCycleController] Start cycle");
+    SPDLOG_INFO("[PickCycleController] Start cycle");
     return impl_->ExecuteOneCycle();
 }
 
@@ -254,21 +254,21 @@ bool PickCycleController::StopCycle()
     impl_->running = false;
     impl_->paused  = false;
     impl_->SetState(PickCycleState::Idle, "Stopped by user");
-    spdlog::info("[PickCycleController] Stopped");
+    SPDLOG_INFO("[PickCycleController] Stopped");
     return true;
 }
 
 bool PickCycleController::PauseCycle()
 {
     impl_->paused = true;
-    spdlog::info("[PickCycleController] Paused");
+    SPDLOG_INFO("[PickCycleController] Paused");
     return true;
 }
 
 bool PickCycleController::ResumeCycle()
 {
     impl_->paused = false;
-    spdlog::info("[PickCycleController] Resumed");
+    SPDLOG_INFO("[PickCycleController] Resumed");
     return true;
 }
 
@@ -285,7 +285,7 @@ std::string PickCycleController::GetStateName() const
 bool PickCycleController::SetPickPosition(const Pose3D& pos)
 {
     impl_->pickPosition = pos;
-    spdlog::info("[PickCycleController] Pick position set: ({:.1f}, {:.1f}, {:.1f})",
+    SPDLOG_INFO("[PickCycleController] Pick position set: ({:.1f}, {:.1f}, {:.1f})",
                  pos.x, pos.y, pos.z);
     return true;
 }
@@ -293,7 +293,7 @@ bool PickCycleController::SetPickPosition(const Pose3D& pos)
 bool PickCycleController::SetPlacePosition(const Pose3D& pos)
 {
     impl_->placePosition = pos;
-    spdlog::info("[PickCycleController] Place position set: ({:.1f}, {:.1f}, {:.1f})",
+    SPDLOG_INFO("[PickCycleController] Place position set: ({:.1f}, {:.1f}, {:.1f})",
                  pos.x, pos.y, pos.z);
     return true;
 }
@@ -301,7 +301,7 @@ bool PickCycleController::SetPlacePosition(const Pose3D& pos)
 bool PickCycleController::SetSafeHeight(double heightMm)
 {
     impl_->safeHeight = heightMm;
-    spdlog::info("[PickCycleController] Safe height set: {:.1f}mm", heightMm);
+    SPDLOG_INFO("[PickCycleController] Safe height set: {:.1f}mm", heightMm);
     return true;
 }
 

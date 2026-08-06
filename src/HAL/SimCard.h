@@ -68,6 +68,9 @@ private:
         double jogSpeed    = 0.0;
         int    jogDir      = 1;
         AxisConfig cfg;
+        // 软限位换算成脉冲域（SetAxisConfig 计算，避免把脉冲位置和物理单位限位直接比较）
+        double limitMinPulse = -1.0e30;
+        double limitMaxPulse =  1.0e30;
     };
 
     std::unordered_map<int, SimAxis> axes_;

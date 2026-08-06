@@ -128,8 +128,8 @@ tcpCalibration
 | `maxSpeed` | double | 最大速度 |
 | `maxAccel` | double | 最大加速度 |
 | `jogSpeed` | double | 点动 (JOG) 速度 |
-| `limitMin` | double | 软限位最小值 |
-| `limitMax` | double | 软限位最大值 |
+| `limitMin` | double | 软限位最小值。**已强制执行**：`MoveAbs/Go` 目标越界拒绝下发；点动到达边界自动停止；点动启动方向已在边界则拒绝。由 `HardwareManager` 实时读取本配置（`GetLimitMin`/`IsWithinSoftLimits`），在「电控与映射」中修改立即生效 |
+| `limitMax` | double | 软限位最大值。同 `limitMin`，单位与轴一致（旋转轴 °，直线轴 mm）。配置错误（`limitMin >= limitMax`）时视为不限制并打印警告 |
 | `homeOffset` | double | 原点偏移 |
 | `sortOrder` | int | 界面显示排序序号，升序排列 |
 
