@@ -38,6 +38,9 @@ public:
     virtual bool MoveAtSpeed(double angleDeg, double speedDps) = 0;
     virtual bool Stop() = 0;
 
+    // 最近一次运动指令的估计到达时间(ms)，0 表示立即/未知。用于"到位后恢复按钮"等。
+    virtual int GetLastMoveTimeMs() const = 0;
+
     virtual bool SetSpeed(double speedDps) = 0;
 
     virtual double ReadAngle() = 0;

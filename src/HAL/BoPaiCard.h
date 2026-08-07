@@ -22,6 +22,7 @@ public:
     ~BoPaiCard() override;
 
     bool Connect(const std::string& ip, int port) override;
+    bool SetHost(const std::string& pcIp, int pcPort) override;
     void Disconnect() override;
     bool IsConnected() const override;
 

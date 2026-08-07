@@ -245,6 +245,11 @@ QWidget* ConfigPage::CreateTab1Comm()
         bindLineEdit(portEdit, "communication.motionCard.port");
         rl->addWidget(portEdit);
 
+        rl->addWidget(makeLabel(QStringLiteral("本机 IP (PC)")));
+        auto* pcIpEdit = makeEdit(130);
+        bindLineEdit(pcIpEdit, "communication.motionCard.pcIp");
+        rl->addWidget(pcIpEdit);
+
         rl->addStretch();
         layout->addWidget(row);
     }
@@ -856,10 +861,12 @@ QWidget* ConfigPage::CreateElecMapTab()
     auto* pageA = new QWidget();
     auto* pa = makeForm(pageA);
     pa->setContentsMargins(8, 22, 8, 8);
+    auto* axisTypeCombo = makeCombo({ QStringLiteral("旋转 (Rotation)"), QStringLiteral("直线 (Linear)") });
     auto* encoderEdit = makeInput();
     auto* microStepEdit = makeInput();
     auto* gearEdit = makeInput();
     auto* leadEdit = makeInput();
+    pa->addRow(makeLabel(QStringLiteral("轴类型")),                  axisTypeCombo);
     pa->addRow(makeLabel(QStringLiteral("编码器分辨率 (Pulse/Rev)")), encoderEdit);
     pa->addRow(makeLabel(QStringLiteral("细分数 (MicroSteps)")),      microStepEdit);
     pa->addRow(makeLabel(QStringLiteral("减速比 (Gear Ratio)")),      gearEdit);
@@ -885,8 +892,8 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     // ── Function to load axis data by key ───────────────────
     auto loadAxis = [this, hwTypeCombo, portSpin, dirCombo, maxSpeedSpin, maxAccelSpin,
-                     jogSpeedSpin, limitMinSpin, limitMaxSpin, homeSpin, encoderEdit,
-                     microStepEdit, gearEdit, leadEdit, minPulseEdit, maxPulseEdit,
+                     jogSpeedSpin, limitMinSpin, limitMaxSpin, homeSpin, axisTypeCombo,
+                     encoderEdit, microStepEdit, gearEdit, leadEdit, minPulseEdit, maxPulseEdit,
                      minAngleEdit, maxAngleEdit](const QString& key) {
         try {
             if (key.isEmpty()) {
@@ -938,10 +945,14 @@ QWidget* ConfigPage::CreateElecMapTab()
             homeSpin->blockSignals(false);
 
             std::string tp = p + ".transmission";
-            encoderEdit->setText(QString::number(cfg.getValue<int>(tp + ".encoderResolution", 131072)));
-            microStepEdit->setText(QString::number(cfg.getValue<int>(tp + ".microSteps", 512)));
-            gearEdit->setText(QString::number(cfg.getValue<int>(tp + ".gearRatio", 50)));
-            leadEdit->setText(QString::number(cfg.getValue<double>(tp + ".lead", 20.0)));
+            axisTypeCombo->blockSignals(true);
+            axisTypeCombo->setCurrentIndex(
+                cfg.getValue<std::string>(p + ".axisType", "rotation") == "linear" ? 1 : 0);
+            axisTypeCombo->blockSignals(false);
+            encoderEdit->setText(QString::number(cfg.getValue<int>(tp + ".encoderResolution", 32000)));
+            microStepEdit->setText(QString::number(cfg.getValue<int>(tp + ".microSteps", 1)));
+            gearEdit->setText(QString::number(cfg.getValue<double>(tp + ".gearRatio", 1.0)));
+            leadEdit->setText(QString::number(cfg.getValue<double>(tp + ".lead", 360.0)));
             minPulseEdit->setText(QString::number(cfg.getValue<int>(tp + ".minPulse", 500)));
             maxPulseEdit->setText(QString::number(cfg.getValue<int>(tp + ".maxPulse", 2500)));
             minAngleEdit->setText(QString::number(cfg.getValue<int>(tp + ".minAngle", 0)));
@@ -1061,6 +1072,11 @@ QWidget* ConfigPage::CreateElecMapTab()
             if (ok) ConfigManager::instance().set(path, v);
         });
     };
+    connect(axisTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+        [this, pathFor](int idx) {
+        auto p = pathFor("axisType");
+        if (!p.empty()) ConfigManager::instance().set(p, idx == 1 ? "linear" : "rotation");
+    });
     connectTransEdit(encoderEdit, "transmission.encoderResolution");
     connectTransEdit(microStepEdit, "transmission.microSteps");
     connectTransEdit(gearEdit, "transmission.gearRatio");

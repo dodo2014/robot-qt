@@ -91,6 +91,12 @@ bool SimServo::Stop()
     return true;
 }
 
+int SimServo::GetLastMoveTimeMs() const
+{
+    // 仿真瞬时完成，返回 0（立即到位）
+    return 0;
+}
+
 bool SimServo::SetSpeed(double speedDps)
 {
     std::lock_guard<std::mutex> lock(mutex_);

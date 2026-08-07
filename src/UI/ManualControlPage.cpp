@@ -34,6 +34,10 @@ ManualControlPage::ManualControlPage(QWidget* parent)
             this, &ManualControlPage::OnLimitTriggered);
     connect(&HardwareManager::instance(), &HardwareManager::softLimitTriggered,
             this, &ManualControlPage::OnSoftLimit);
+    connect(&HardwareManager::instance(), &HardwareManager::enableStateChanged,
+            this, &ManualControlPage::OnEnableStateChanged);
+    connect(&HardwareManager::instance(), &HardwareManager::axisMoveFinished,
+            this, &ManualControlPage::OnAxisMoveFinished);
 
     const int count = static_cast<int>(LogicalAxis::Count);
     alarmState_.fill(false, count);
@@ -70,6 +74,13 @@ void ManualControlPage::OnConnectionChanged()
         speedSpins_[i]->setValue(jogSpeed);
         speedSpins_[i]->blockSignals(false);
     }
+}
+
+void ManualControlPage::OnEnableStateChanged()
+{
+    // 使能状态变化 → 刷新所有轴状态灯
+    for (int i = 0; i < statusDots_.size(); ++i)
+        RefreshStatusDot(i);
 }
 
 void ManualControlPage::SetupUI()
@@ -347,6 +358,7 @@ void ManualControlPage::SetupUI()
         goBtn->setCursor(Qt::PointingHandCursor);
         goBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         connect(goBtn, &QPushButton::clicked, this, [this, axisIdx]() { OnGoClicked(axisIdx); });
+        goButtons_.append(goBtn);
         rowLayout->addWidget(goBtn, colStretches[7]);
 
         // Col 8: Stop button
@@ -416,6 +428,11 @@ void ManualControlPage::OnGlobalHome()
 {
     bool connected = HardwareManager::instance().IsMotionCardConnected()
                      || HardwareManager::instance().IsServoConnected();
+    // 需求3：全局轴使能未执行 / 全局断使能执行后，不允许一键回零
+    if (!HardwareManager::instance().IsGlobalEnabled()) {
+        SetHint(QStringLiteral("请先执行全局轴使能，再进行一键回零"), "#e0a520");
+        return;
+    }
     if (!connected) { SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
     homingPending_ = true;
     HardwareManager::instance().HomeAll();
@@ -434,6 +451,12 @@ void ManualControlPage::OnJogMinus(int axis)
         if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
         RefreshStatusDot(axis);
         RefreshSoftLimitHint();
+    } else {
+        // 使能门禁 / 报警 / 软限位拒绝
+        if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
+            SetHint(QStringLiteral("请先执行全局轴使能，再进行点动"), "#e0a520");
+        else if (axis < alarmState_.size() && alarmState_[axis])
+            SetHint(QStringLiteral("轴%1 处于报警状态，禁止点动").arg(axis + 1), "#e0a520");
     }
     qDebug() << "JOG - 轴" << axis;
     qDebug() << "速度" << speed;
@@ -450,6 +473,11 @@ void ManualControlPage::OnJogPlus(int axis)
         if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
         RefreshStatusDot(axis);
         RefreshSoftLimitHint();
+    } else {
+        if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
+            SetHint(QStringLiteral("请先执行全局轴使能，再进行点动"), "#e0a520");
+        else if (axis < alarmState_.size() && alarmState_[axis])
+            SetHint(QStringLiteral("轴%1 处于报警状态，禁止点动").arg(axis + 1), "#e0a520");
     }
     qDebug() << "JOG + 轴" << axis;
 }
@@ -459,6 +487,7 @@ void ManualControlPage::OnJogStop(int axis)
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
     HardwareManager::instance().StopJog(static_cast<LogicalAxis>(axis));
     runningState_[axis] = false;
+    if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(true);
     RefreshStatusDot(axis);
     qDebug() << "JOG 停止 轴" << axis;
 }
@@ -477,8 +506,15 @@ void ManualControlPage::OnGoClicked(int axis)
         }
         if (HardwareManager::instance().MoveAbs(static_cast<LogicalAxis>(axis), target)) {
             if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
+            // 运动中置灰 Go，防连点打断/指令覆盖（曾引发舵机突然加速）
+            if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(false);
             RefreshStatusDot(axis);
             RefreshSoftLimitHint();
+        } else {
+            if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
+                SetHint(QStringLiteral("请先执行全局轴使能，再进行移动"), "#e0a520");
+            else if (axis < alarmState_.size() && alarmState_[axis])
+                SetHint(QStringLiteral("轴%1 处于报警状态，禁止移动").arg(axis + 1), "#e0a520");
         }
     }
     qDebug() << "Go 轴" << axis;
@@ -489,13 +525,25 @@ void ManualControlPage::OnStopAxis(int axis)
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
     HardwareManager::instance().StopAxis(static_cast<LogicalAxis>(axis));
     runningState_[axis] = false;
+    if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(true);
     RefreshStatusDot(axis);
     qDebug() << "停止 轴" << axis;
+}
+
+void ManualControlPage::OnAxisMoveFinished(int axis)
+{
+    // Go 到位（或被打断/停止）→ 恢复 Go 按钮
+    if (axis >= 0 && axis < goButtons_.size())
+        goButtons_[axis]->setEnabled(true);
 }
 
 void ManualControlPage::OnHomeAxis(int axis)
 {
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
+    if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis))) {
+        SetHint(QStringLiteral("请先执行全局轴使能，再进行回零"), "#e0a520");
+        return;
+    }
     runningState_[axis] = false;
     homeDoneState_[axis] = false;
     RefreshStatusDot(axis);
@@ -508,7 +556,8 @@ void ManualControlPage::OnStateUpdated(const QVector<MotorStatus>& axes)
 {
     for (const auto& st : axes) {
         if (st.axisId < 0 || st.axisId >= posLabels_.size()) continue;
-        posLabels_[st.axisId]->setText(QStringLiteral("%1").arg(st.position, 0, 'f', 1));
+        QString unit = HardwareManager::instance().AxisUnit(static_cast<LogicalAxis>(st.axisId));
+        posLabels_[st.axisId]->setText(QStringLiteral("%1%2").arg(st.position, 0, 'f', 1).arg(unit));
         if (st.axisId < enabledState_.size()) {
             enabledState_[st.axisId]  = st.enabled;
             runningState_[st.axisId]  = st.running;
@@ -541,11 +590,9 @@ void ManualControlPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servo
         if (axis >= 0 && axis < posLabels_.size()) {
             posLabels_[axis]->setText(QStringLiteral("%1°").arg(servos[i].angleDeg, 0, 'f', 1));
         }
-        if (axis >= 0 && axis < enabledState_.size()) {
-            enabledState_[axis] = servos[i].online;
-            RefreshStatusDot(axis);
-        }
     }
+    // 使能灯以 HardwareManager::IsAxisEnabled 为准（见 OnEnableStateChanged）
+    OnEnableStateChanged();
 }
 
 void ManualControlPage::OnAxisAlarm(int axis, bool alarm)
@@ -578,11 +625,12 @@ void ManualControlPage::RefreshStatusDot(int axis)
     if (axis < 0 || axis >= statusDots_.size()) return;
     QString color;
     QString tip;
+    bool enabled = HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis));
     if (alarmState_[axis])        { color = "#ff5f5f"; tip = QStringLiteral("报警"); }
     else if (limitState_[axis] || (axis < softLimitDir_.size() && softLimitDir_[axis] != 0))
                                   { color = "#ffb347"; tip = QStringLiteral("限位"); }
     else if (runningState_[axis]) { color = "#4fb3ff"; tip = QStringLiteral("运行中"); }
-    else if (enabledState_[axis]) { color = "#3bff7b"; tip = QStringLiteral("已使能"); }
+    else if (enabled)             { color = "#3bff7b"; tip = QStringLiteral("已使能"); }
     else                          { color = "#5a6a7a"; tip = QStringLiteral("未使能"); }
     statusDots_[axis]->setStyleSheet(QStringLiteral("background: %1; border-radius: 6px;").arg(color));
     statusDots_[axis]->setToolTip(tip);

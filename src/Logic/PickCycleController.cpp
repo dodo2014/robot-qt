@@ -6,6 +6,8 @@
 #include <atomic>
 #include <cmath>
 
+#include "HAL/HardwareManager.h"
+
 class PickCycleController::Impl
 {
 public:
@@ -244,6 +246,12 @@ void PickCycleController::SetHardware(IMotionCard* motion, IAxisServo* j2, IAxis
 
 bool PickCycleController::StartCycle()
 {
+    // 使能门禁：自动循环与手动界面共用同一安全门禁（先使能再运动）
+    if (!HardwareManager::instance().IsGlobalEnabled()) {
+        SPDLOG_WARN("[PickCycleController] Start cycle rejected: axes not enabled");
+        impl_->SetState(PickCycleState::Error, "Axes not enabled, enable first");
+        return false;
+    }
     impl_->running = true;
     SPDLOG_INFO("[PickCycleController] Start cycle");
     return impl_->ExecuteOneCycle();
@@ -312,5 +320,11 @@ void PickCycleController::SetStateCallback(StateCallback cb)
 
 bool PickCycleController::ExecuteOneShot()
 {
+    // 使能门禁：自动循环与手动界面共用同一安全门禁（先使能再运动）
+    if (!HardwareManager::instance().IsGlobalEnabled()) {
+        SPDLOG_WARN("[PickCycleController] ExecuteOneShot rejected: axes not enabled");
+        impl_->SetState(PickCycleState::Error, "Axes not enabled, enable first");
+        return false;
+    }
     return impl_->ExecuteOneCycle();
 }

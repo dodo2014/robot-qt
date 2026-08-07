@@ -35,6 +35,8 @@ public:
     bool connected = false;
     short cardNum = 1;
     std::string lastError;
+    std::string pcIp = "192.168.0.200";
+    int pcPort = 60000;
 };
 
 // ============================================================
@@ -54,11 +56,12 @@ bool BoPaiCard::Connect(const std::string& ip, int port)
 
     char pcIp[64] = { 0 };
     char cardIp[64] = { 0 };
-    strncpy_s(pcIp, "192.168.0.200", sizeof(pcIp) - 1);
+    strncpy_s(pcIp, impl_->pcIp.c_str(), sizeof(pcIp) - 1);
     strncpy_s(cardIp, ip.c_str(), sizeof(cardIp) - 1);
     unsigned short p = static_cast<unsigned short>(port > 0 ? port : 60000);
+    unsigned short pcP = static_cast<unsigned short>(impl_->pcPort > 0 ? impl_->pcPort : 60000);
 
-    int ret = impl_->card.MC_Open(impl_->cardNum, pcIp, p, cardIp, p);
+    int ret = impl_->card.MC_Open(impl_->cardNum, pcIp, pcP, cardIp, p);
     if (ret != 0) {
         impl_->lastError = "MC_Open failed, code=" + std::to_string(ret);
         impl_->useHardware = false;
@@ -70,8 +73,16 @@ bool BoPaiCard::Connect(const std::string& ip, int port)
     impl_->card.MC_Reset();
     impl_->useHardware = true;
     impl_->connected = true;
-    SPDLOG_INFO("[BoPaiCard] Connected to Bopai card at {}:{}", ip, port);
+    SPDLOG_INFO("[BoPaiCard] Connected to Bopai card at {}:{} (pc {})", ip, port, impl_->pcIp);
     RefreshStatus();
+    return true;
+}
+
+bool BoPaiCard::SetHost(const std::string& pcIp, int pcPort)
+{
+    impl_->pcIp = pcIp;
+    impl_->pcPort = (pcPort > 0) ? pcPort : 60000;
+    SPDLOG_INFO("[BoPaiCard] Host IP set to {}:{}", impl_->pcIp, impl_->pcPort);
     return true;
 }
 
@@ -239,7 +250,7 @@ bool BoPaiCard::MoveAbs(int axisId, double position, double speed)
     trapPrm.velStart = 0;
     trapPrm.smoothTime = 0;
 
-    double vel = (speed > 0) ? speed : (cfg ? cfg->maxSpeed : 100.0);
+    double vel = (speed > 0) ? speed : (cfg ? cfg->maxSpeed * PulsePerUnit(axisId) : 100.0);
     vel = vel / 1000.0; // Pulse/ms
 
     impl_->card.MC_PrfTrap(static_cast<short>(axisId + 1));
@@ -270,7 +281,7 @@ bool BoPaiCard::MoveRel(int axisId, double distance, double speed)
     trapPrm.velStart = 0;
     trapPrm.smoothTime = 0;
 
-    double vel = (speed > 0) ? speed : (cfg ? cfg->maxSpeed : 100.0);
+    double vel = (speed > 0) ? speed : (cfg ? cfg->maxSpeed * PulsePerUnit(axisId) : 100.0);
     vel = vel / 1000.0;
 
     impl_->card.MC_PrfTrap(static_cast<short>(axisId + 1));

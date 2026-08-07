@@ -26,6 +26,8 @@ public:
     bool MoveAtSpeed(double angleDeg, double speedDps) override;
     bool Stop() override;
 
+    int GetLastMoveTimeMs() const override;
+
     bool SetSpeed(double speedDps) override;
 
     double ReadAngle() override;

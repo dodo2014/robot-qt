@@ -33,10 +33,11 @@ struct AxisConfig
 
     // 单位换算参数（由 HardwareManager 从 config 喂入）
     int     hardwareType  = 0;     // 0=运动控制卡(脉冲), 1=串口总线舵机
+    int     axisType      = 0;     // 0=旋转(角度), 1=直线(mm)，仅卡轴参与换算
     double  pulsesPerRev  = 131072;
     int     microSteps    = 512;
     double  lead          = 20.0;  // 直线轴导程 (mm/rev)
-    double  gearRatio     = 1.0;
+    double  gearRatio     = 1.0;   // 电机每转时输出端转数 (从动/主动), 直线轴参与换算
 };
 
 class IMotionCard
@@ -47,6 +48,13 @@ public:
     virtual bool Connect(const std::string& ip, int port) = 0;
     virtual void Disconnect() = 0;
     virtual bool IsConnected() const = 0;
+
+    // 网口卡的本地(PC)地址注入。默认空实现，仅网口卡按需 override。
+    virtual bool SetHost(const std::string& pcIp, int pcPort)
+    {
+        (void)pcIp; (void)pcPort;
+        return true;
+    }
 
     virtual bool EnableAxis(int axisId) = 0;
     virtual bool DisableAxis(int axisId) = 0;

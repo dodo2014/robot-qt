@@ -21,8 +21,8 @@ const AxisConfig* AxisConverter::Find(int axisId) const
 }
 
 // 每脉冲对应的物理量
-//   - hardwareType==0 (运动控制卡/角度轴): 度/脉冲 = 360 / (pulsesPerRev * microSteps)
-//   - hardwareType==1 (直线轴或舵机):      mm/脉冲 = lead / (pulsesPerRev * microSteps)
+//   - axisType==0 (旋转轴): 度/脉冲 = 360 / (pulsesPerRev * microSteps)
+//   - axisType==1 (直线轴):  mm/脉冲 = (lead × gearRatio) / (pulsesPerRev * microSteps)
 double AxisConverter::PhysicalPerPulse(int axisId) const
 {
     const AxisConfig* cfg = Find(axisId);
@@ -32,7 +32,13 @@ double AxisConverter::PhysicalPerPulse(int axisId) const
     }
     double pulsesPerRev = (cfg->pulsesPerRev > 0) ? cfg->pulsesPerRev : 1.0;
     double steps = pulsesPerRev * std::max(1, cfg->microSteps);
-    double denom = (cfg->hardwareType == 0) ? 360.0 : (cfg->lead > 0 ? cfg->lead : 1.0);
+    double denom;
+    if (cfg->axisType == 1) {
+        double mmPerRev = cfg->lead * cfg->gearRatio;
+        denom = (mmPerRev > 0) ? mmPerRev : 1.0;
+    } else {
+        denom = 360.0;
+    }
     return denom / steps;
 }
 

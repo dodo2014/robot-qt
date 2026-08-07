@@ -5,6 +5,8 @@
 #include <QLabel>
 #include <QDoubleSpinBox>
 
+class QPushButton;
+
 #include "HAL/IMotionCard.h"
 #include "HAL/IAxisServo.h"
 
@@ -28,9 +30,11 @@ private slots:
     void OnStateUpdated(const QVector<MotorStatus>& axes);
     void OnServoStateUpdated(const QVector<ServoTelemetry>& servos);
     void OnConnectionChanged();
+    void OnEnableStateChanged();
     void OnAxisAlarm(int axis, bool alarm);
     void OnLimitTriggered(int axis, bool positive, bool negative);
     void OnSoftLimit(int axis, bool positive);
+    void OnAxisMoveFinished(int axis);
 
 private:
     void SetupUI();
@@ -45,6 +49,7 @@ private:
     QVector<QLabel*> statusDots_;
     QVector<QDoubleSpinBox*> targetSpins_;
     QVector<QDoubleSpinBox*> speedSpins_;
+    QVector<QPushButton*> goButtons_;
     QLabel* connStatusLabel_ = nullptr;
     QLabel* hintLabel_ = nullptr;
 

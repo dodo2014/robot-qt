@@ -22,6 +22,22 @@
 #include <iomanip>
 
 #include "UI/MainWindow.h"
+#include "HAL/HardwareManager.h"
+
+// 控制台信号处理器：直接关闭 cmd 窗口（CTRL_CLOSE_EVENT）或 Ctrl+C/Ctrl+Break
+// 属于 Windows 强杀进程，不经过 Qt 事件循环，QCoreApplication::aboutToQuit
+// 不会触发。必须在此时对舵机/卡断使能，否则软件关闭后硬件仍带电。
+// 注意：本回调运行在独立的控制台信号线程，只能做线程安全的硬件层操作
+// （HardwareManager::ShutdownHalt 不触碰 Qt 对象）。
+static BOOL WINAPI ConsoleSignalHandler(DWORD ctrlType)
+{
+    SPDLOG_WARN("[Main] Console signal received: type={}, halting hardware", (int)ctrlType);
+    try {
+        HardwareManager::instance().ShutdownHalt();
+    } catch (...) {}
+    // 返回 FALSE：继续执行系统默认处理（进程终止）
+    return FALSE;
+}
 
 extern "C" USHORT __stdcall RtlCaptureStackBackTrace(ULONG, ULONG, PVOID*, PULONG);
 
@@ -129,6 +145,9 @@ int main(int argc, char* argv[])
 {
     SetUnhandledExceptionFilter(CrashHandler);
 
+    // 注册控制台信号处理器（关闭 cmd 窗口 / Ctrl+C 等强杀路径也断使能）
+    SetConsoleCtrlHandler(ConsoleSignalHandler, TRUE);
+
     QApplication app(argc, argv);
     app.setApplicationName("CreamPuffRobot");
     app.setApplicationVersion("1.0.0");
@@ -182,6 +201,13 @@ int main(int argc, char* argv[])
 
     MainWindow mainWindow;
     mainWindow.show();
+
+    // 退出前断使能：舵机发 Damping 松力（避免软件关闭后舵机仍带电锁定）。
+    // 必须在 HardwareManager 单例析构前执行（此时串口仍打开，能发帧）。
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, []() {
+        SPDLOG_INFO("[Main] App quitting, disabling all axes");
+        HardwareManager::instance().DisableAll();
+    });
 
     return app.exec();
 }

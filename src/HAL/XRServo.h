@@ -7,10 +7,12 @@
 #include <string>
 
 // ============================================================
-// XR 串口总线舵机 (XRServo) — IAxisServo 实现
-// 协议参考 bopai\puff\src\core\XRServo.*
-// 修正点：舵机 ID 由 HardwareManager 从 config 读取并经
-// SetServoId 喂入，不再硬编码。
+// FashionStar 总线伺服舵机 (XRServo) — IAxisServo 实现
+// 协议：Fashionrobo 总线舵机串口协议（帧头 0x4C12/0x1C05），
+// 参考同事工程 D:\workspace\projects\ServoTest\FashionStar_UartServoProtocol.*
+// 注意：真机为 FashionStar 舵机，非 bopai\puff 移植的 0xF9/0xFF 协议
+// （曾用错协议导致点动无动作、角度读取错误）。
+// 舵机 ID 由 HardwareManager 从 config 读取并经 SetServoId 喂入。
 // ============================================================
 class XRServo : public IAxisServo
 {
@@ -31,6 +33,8 @@ public:
     bool MoveToAngle(double angleDeg, int timeMs) override;
     bool MoveAtSpeed(double angleDeg, double speedDps) override;
     bool Stop() override;
+
+    int GetLastMoveTimeMs() const override;
 
     bool SetSpeed(double speedDps) override;
 
