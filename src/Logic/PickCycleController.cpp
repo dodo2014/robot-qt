@@ -6,7 +6,7 @@
 #include <atomic>
 #include <cmath>
 
-#include "HAL/HardwareManager.h"
+#include "HAL/core/HardwareManager.h"
 
 class PickCycleController::Impl
 {

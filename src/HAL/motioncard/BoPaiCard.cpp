@@ -1,7 +1,9 @@
 #include "BoPaiCard.h"
 
 #include <spdlog/spdlog.h>
+#include <chrono>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 // BoPai SDK 头文件 — 注意：该头文件 GBK 编码 + #pragma pack(2)，
@@ -114,7 +116,13 @@ double BoPaiCard::PulsePerUnit(int axisId) const
     const AxisConfig& c = it->second;
     double pulsesPerRev = (c.pulsesPerRev > 0) ? c.pulsesPerRev : 1.0;
     double steps = pulsesPerRev * (c.microSteps > 1 ? c.microSteps : 1);
-    double denom = (c.hardwareType == 0) ? 360.0 : (c.lead > 0 ? c.lead : 1.0);
+    double denom;
+    if (c.axisType == 1) {
+        double mmPerRev = c.lead * c.gearRatio;
+        denom = (mmPerRev > 0) ? mmPerRev : 1.0;
+    } else {
+        denom = 360.0;
+    }
     return steps / denom; // 脉冲/物理单位
 }
 
@@ -151,8 +159,9 @@ void BoPaiCard::RefreshStatus()
         s.limitPositive = (st & kStatusPosHardLimit) != 0;
         s.limitNegative = (st & kStatusNegHardLimit) != 0;
 
-        double ppu = PulsePerUnit(axisId);
-        s.position = (ppu > 0) ? impl_->sysStatus.lAxisPrfPos[axisId] / ppu : 0.0;
+        // 状态回读：直接回读卡内位置寄存器（脉冲），与 IMotionCard「脉冲单位」契约一致；
+        // 物理换算统一由 HardwareManager/AxisConverter 完成。
+        s.position = static_cast<double>(impl_->sysStatus.lAxisPrfPos[axisId]);
         s.velocity = 0.0;
         s.current  = 0.0;
         lastStatus_[axisId] = s;
@@ -189,22 +198,64 @@ bool BoPaiCard::HomeAxis(int axisId)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (impl_->useHardware) {
+        int homeDir = Cfg(axisId)->homeDir;   // config: axes.<key>.homeDir, 1=正方向 0=反方向
+        int homeSns = Cfg(axisId)->homeSns;   // config: axes.<key>.homeSns, -1=不改 0/1=有效电平
+        double homeRapidVel = Cfg(axisId)->homeRapidVel;   // Pulse/ms
+        double homeLocatVel = Cfg(axisId)->homeLocatVel;   // Pulse/ms
         TAxisHomePrm prm{};
         prm.nHomeMode = 1;
-        prm.nHomeDir = 1;
+        prm.nHomeDir = homeDir;
         prm.lOffset = 0;
-        prm.dHomeRapidVel = 5.0;
-        prm.dHomeLocatVel = 1.0;
+        prm.dHomeRapidVel = (homeRapidVel > 0) ? homeRapidVel : 5.0;
+        prm.dHomeLocatVel = (homeLocatVel > 0) ? homeLocatVel : 1.0;
         prm.dHomeIndexVel = 1.0;
         prm.dHomeAcc = 1.0;
         prm.ulHomeIndexDis = 0;
         prm.ulHomeBackDis = 0;
         prm.nDelayTimeBeforeZero = 1000;
         prm.ulHomeMaxDis = 0;
-        impl_->card.MC_HomeSetPrm(static_cast<short>(axisId + 1), &prm);
-        impl_->card.MC_HomeStop(static_cast<short>(axisId + 1));
-        impl_->card.MC_HomeStart(static_cast<short>(axisId + 1));
-        SPDLOG_INFO("[BoPaiCard] Home axis {} started", axisId);
+        short ch = static_cast<short>(axisId + 1);
+        int ecSns = 0;
+        if (homeSns >= 0) {
+            ecSns = impl_->card.MC_HomeSns(static_cast<unsigned long>(1 << axisId));
+            SPDLOG_INFO("[BoPaiCard] Home axis {} set HOME sense={} mask=0x{:x} ret={}",
+                        axisId, homeSns, 1 << axisId, ecSns);
+        }
+        // 前置清理：HomeStart 需要轴就绪（使能 + 静止），未使能先重新使能
+        RefreshStatus();
+        if (lastStatus_.count(axisId) && !lastStatus_[axisId].enabled) {
+            int ecOn = impl_->card.MC_AxisOn(ch);
+            SPDLOG_INFO("[BoPaiCard] Home axis {} re-enable before home ret={}", axisId, ecOn);
+        }
+        impl_->card.MC_Stop(0x0001 << axisId, 0);
+        int ecStop0 = impl_->card.MC_HomeStop(ch);
+        int ec0 = impl_->card.MC_HomeSetPrm(ch, &prm);
+
+        // 启动回零：HomeStop 刚发出后 HomeStart 可能被卡以"轴忙/未就绪"拒绝（返回 1），
+        // 短暂间隔重试最多 3 次
+        int ec2 = -1;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            ec2 = impl_->card.MC_HomeStart(ch);
+            if (ec2 == 0) break;
+            SPDLOG_WARN("[BoPaiCard] Home axis {} start attempt {} failed: {}", axisId, attempt + 1, ec2);
+            impl_->card.MC_HomeStop(ch);
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+        SPDLOG_INFO("[BoPaiCard] Home axis {} started mode={} dir={} offset={} rapid={} locat={} "
+                    "maxDis={} | sns={} set={} stop={} start={}",
+                    axisId, prm.nHomeMode, prm.nHomeDir, prm.lOffset,
+                    prm.dHomeRapidVel, prm.dHomeLocatVel, prm.ulHomeMaxDis,
+                    ecSns, ec0, ecStop0, ec2);
+        if (ec0 != 0 || ec2 != 0) {
+            SPDLOG_WARN("[BoPaiCard] Home axis {} failed: set={} start={}", axisId, ec0, ec2);
+            return false;
+        }
+        // 启动后验证（持锁内直接读 lastStatus_，避免 GetAxisStatus 二次加锁死锁）：
+        // running=false 说明回零立即结束（常见于 HOME 信号极性反导致卡认为已在原点）
+        RefreshStatus();
+        MotorStatus st = lastStatus_.count(axisId) ? lastStatus_[axisId] : MotorStatus{};
+        SPDLOG_INFO("[BoPaiCard] Home axis {} post-start: running={} homeDone={} alarm={} enabled={}",
+                    axisId, st.running, st.homeDone, st.alarm, st.enabled);
     }
     return true;
 }
@@ -212,8 +263,12 @@ bool BoPaiCard::HomeAxis(int axisId)
 bool BoPaiCard::StopAxis(int axisId)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (impl_->useHardware)
+    if (impl_->useHardware) {
+        // 先终止可能进行中的回零，再停止运动：仅 MC_Stop 可能无法退出卡端 HOME 状态机，
+        // 导致后续 Jog/Trap 被拒绝
+        impl_->card.MC_HomeStop(static_cast<short>(axisId + 1));
         impl_->card.MC_Stop(0x0001 << axisId, 0);
+    }
     RefreshStatus();
     return true;
 }
@@ -241,8 +296,8 @@ bool BoPaiCard::MoveAbs(int axisId, double position, double speed)
     if (!impl_->useHardware) return false;
 
     const AxisConfig* cfg = Cfg(axisId);
-    double ppu = PulsePerUnit(axisId);
-    long posPulse = static_cast<long>(position * ppu);
+    // position 已是脉冲（IMotionCard 契约，HardwareManager 已换算），不再 ×ppu
+    long posPulse = static_cast<long>(position);
 
     TTrapPrm trapPrm{};
     trapPrm.acc = (cfg && cfg->maxAccel > 0) ? cfg->maxAccel : 200.0;
@@ -259,7 +314,7 @@ bool BoPaiCard::MoveAbs(int axisId, double position, double speed)
     impl_->card.MC_SetVel(static_cast<short>(axisId + 1), vel);
     impl_->card.MC_Update(0x0001 << axisId);
 
-    SPDLOG_INFO("[BoPaiCard] Axis {} MoveAbs: {:.1f} pulses, vel={:.2f} p/ms", axisId, position, vel);
+    SPDLOG_INFO("[BoPaiCard] Axis {} MoveAbs: {} pulses, vel={:.2f} p/ms", axisId, posPulse, vel);
     RefreshStatus();
     return true;
 }
@@ -270,8 +325,8 @@ bool BoPaiCard::MoveRel(int axisId, double distance, double speed)
     if (!impl_->useHardware) return false;
 
     const AxisConfig* cfg = Cfg(axisId);
-    double ppu = PulsePerUnit(axisId);
-    long distPulse = static_cast<long>(distance * ppu);
+    // distance 已是脉冲增量（IMotionCard 契约），不再 ×ppu
+    long distPulse = static_cast<long>(distance);
     long curPos = impl_->sysStatus.lAxisPrfPos[axisId];
     long targetPulse = curPos + distPulse;
 
@@ -316,12 +371,18 @@ bool BoPaiCard::MoveJog(int axisId, double speedPulsesPerSec, double accel, int 
     jogPrm.dDec = (cfg && cfg->maxDecel > 0) ? cfg->maxDecel : jogPrm.dAcc;
     jogPrm.dSmooth = 100;
 
-    impl_->card.MC_PrfJog(static_cast<short>(axisId + 1));
-    impl_->card.MC_SetJogPrm(static_cast<short>(axisId + 1), &jogPrm);
-    impl_->card.MC_SetVel(static_cast<short>(axisId + 1), velDir);
-    impl_->card.MC_Update(0x0001 << axisId);
-
-    SPDLOG_INFO("[BoPaiCard] Axis {} MoveJog: vel={:.2f} p/ms", axisId, velDir);
+    short ch = static_cast<short>(axisId + 1);
+    int e0 = impl_->card.MC_PrfJog(ch);
+    int e1 = impl_->card.MC_SetJogPrm(ch, &jogPrm);
+    int e2 = impl_->card.MC_SetVel(ch, velDir);
+    int e3 = impl_->card.MC_Update(0x0001 << axisId);
+    SPDLOG_INFO("[BoPaiCard] Axis {} MoveJog: vel={:.2f} p/ms (prf={} prm={} vel={} upd={})",
+                axisId, velDir, e0, e1, e2, e3);
+    if (e0 != 0 || e1 != 0 || e2 != 0 || e3 != 0) {
+        SPDLOG_WARN("[BoPaiCard] Axis {} MoveJog rejected by card: prf={} prm={} vel={} upd={}",
+                    axisId, e0, e1, e2, e3);
+        return false;
+    }
     return true;
 }
 

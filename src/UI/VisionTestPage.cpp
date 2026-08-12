@@ -1,9 +1,9 @@
 #include "VisionTestPage.h"
 
-#include "HAL/HardwareManager.h"
-#include "HAL/HALFactory.h"
-#include "HAL/FrameConverter.h"
-#include "HAL/FrameSaver.h"
+#include "HAL/core/HardwareManager.h"
+#include "HAL/core/HALFactory.h"
+#include "HAL/camera/FrameConverter.h"
+#include "HAL/camera/FrameSaver.h"
 #include "Config/ConfigManager.h"
 
 #include <QHBoxLayout>

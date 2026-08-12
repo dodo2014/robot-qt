@@ -6,7 +6,7 @@
 #include "ConfigPage.h"
 #include "ToggleSwitch.h"
 
-#include "HAL/HardwareManager.h"
+#include "HAL/core/HardwareManager.h"
 
 #include <QApplication>
 #include <QHBoxLayout>

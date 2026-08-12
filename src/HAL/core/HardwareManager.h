@@ -15,7 +15,8 @@
 #include "AxisMap.h"
 
 class QThread;
-class CameraCaptureWorker;
+class CameraManager;
+class AxisConfigService;
 
 // ============================================================
 // 硬件组装管理 (HardwareManager)
@@ -40,7 +41,7 @@ public:
     bool IsInitialized() const;
 
     // ---- 物理单位门面 (mm / 度) ----
-    bool MoveAbs(LogicalAxis axis, double mmOrDeg);
+    bool MoveAbs(LogicalAxis axis, double mmOrDeg, double speed = 0.0);
     bool MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direction = 1);
     void StopJog(LogicalAxis axis);
     bool HomeAxis(LogicalAxis axis);
@@ -159,9 +160,10 @@ private:
     std::unique_ptr<ICamera>        camera_;
     std::unique_ptr<IPuffAlgorithm> algorithm_;
 
-    QThread*             cameraThread_  = nullptr;
-    CameraCaptureWorker* cameraWorker_  = nullptr;
-    bool                 cameraStreaming_ = false;
+    // 相机生命周期（采集线程/worker/流状态）委托给 CameraManager
+    std::unique_ptr<CameraManager>  cameraManager_;
+    // 每轴速度/单位/软限位查询（委托 AxisConfigService）
+    std::unique_ptr<AxisConfigService> axisCfgSvc_;
 
     // 每个逻辑轴从 config 加载的配置快照（LoadAxisConfigsFromConfig 填充）
     QVector<AxisConfig> axisConfigs_;
@@ -182,6 +184,10 @@ private:
     QVector<qint64> axisBusyUntilMs_;
     // 每个逻辑轴"忙"是否已广播（边沿去重）
     QVector<bool>   axisBusyNotified_;
+
+    // 每个逻辑轴是否正在回零（HomeAxis 置位；回零完成/停止/急停/断使能复位）。
+    // MoveAbs/MoveJog 据此拒绝回零中的运动请求（安全门禁，与 busy 分离避免挡点动 autoRepeat）。
+    QVector<bool>   homingActive_;
 
     void MarkAxisBusy(LogicalAxis axis, int busyMs);
     void CheckAxisBusy();

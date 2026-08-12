@@ -37,6 +37,10 @@ double AxisConverter::PhysicalPerPulse(int axisId) const
         double mmPerRev = cfg->lead * cfg->gearRatio;
         denom = (mmPerRev > 0) ? mmPerRev : 1.0;
     } else {
+        // 旋转轴：减速比补偿。gearRatio = 输出端转数/电机转数（如 1:100 谐波减速机 → 0.01）
+        // 输出端每圈脉冲 = pulsesPerRev * microSteps / gearRatio
+        double gear = (cfg->gearRatio > 0) ? cfg->gearRatio : 1.0;
+        steps /= gear;
         denom = 360.0;
     }
     return denom / steps;

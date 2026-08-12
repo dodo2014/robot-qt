@@ -1,7 +1,7 @@
 #include "ManualControlPage.h"
 
-#include "HAL/HardwareManager.h"
-#include "HAL/AxisMap.h"
+#include "HAL/core/HardwareManager.h"
+#include "HAL/core/AxisMap.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -452,11 +452,13 @@ void ManualControlPage::OnJogMinus(int axis)
         RefreshStatusDot(axis);
         RefreshSoftLimitHint();
     } else {
-        // 使能门禁 / 报警 / 软限位拒绝
+        // 使能门禁 / 报警 / 回零 / 软限位拒绝
         if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
             SetHint(QStringLiteral("请先执行全局轴使能，再进行点动"), "#e0a520");
         else if (axis < alarmState_.size() && alarmState_[axis])
             SetHint(QStringLiteral("轴%1 处于报警状态，禁止点动").arg(axis + 1), "#e0a520");
+        else if (HardwareManager::instance().IsAxisBusy(static_cast<LogicalAxis>(axis)))
+            SetHint(QStringLiteral("轴%1 正在运动/回零，请先停止").arg(axis + 1), "#e0a520");
     }
     qDebug() << "JOG - 轴" << axis;
     qDebug() << "速度" << speed;
@@ -478,6 +480,8 @@ void ManualControlPage::OnJogPlus(int axis)
             SetHint(QStringLiteral("请先执行全局轴使能，再进行点动"), "#e0a520");
         else if (axis < alarmState_.size() && alarmState_[axis])
             SetHint(QStringLiteral("轴%1 处于报警状态，禁止点动").arg(axis + 1), "#e0a520");
+        else if (HardwareManager::instance().IsAxisBusy(static_cast<LogicalAxis>(axis)))
+            SetHint(QStringLiteral("轴%1 正在运动/回零，请先停止").arg(axis + 1), "#e0a520");
     }
     qDebug() << "JOG + 轴" << axis;
 }
@@ -504,7 +508,11 @@ void ManualControlPage::OnGoClicked(int axis)
             SetHint(QStringLiteral("目标位置超出软限位范围（%1 ~ %2）").arg(lo).arg(hi), "#e0a520");
             return;
         }
-        if (HardwareManager::instance().MoveAbs(static_cast<LogicalAxis>(axis), target)) {
+        // 移动速度使用界面速度输入框（与点动一致），超 maxSpeed 时截断
+        double goSpeed = (axis < speedSpins_.size()) ? speedSpins_[axis]->value() : 20.0;
+        double maxSpeed = HardwareManager::instance().GetMaxSpeed(static_cast<LogicalAxis>(axis));
+        if (maxSpeed > 0.0 && goSpeed > maxSpeed) goSpeed = maxSpeed;
+        if (HardwareManager::instance().MoveAbs(static_cast<LogicalAxis>(axis), target, goSpeed)) {
             if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
             // 运动中置灰 Go，防连点打断/指令覆盖（曾引发舵机突然加速）
             if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(false);
@@ -515,6 +523,8 @@ void ManualControlPage::OnGoClicked(int axis)
                 SetHint(QStringLiteral("请先执行全局轴使能，再进行移动"), "#e0a520");
             else if (axis < alarmState_.size() && alarmState_[axis])
                 SetHint(QStringLiteral("轴%1 处于报警状态，禁止移动").arg(axis + 1), "#e0a520");
+            else if (HardwareManager::instance().IsAxisBusy(static_cast<LogicalAxis>(axis)))
+                SetHint(QStringLiteral("轴%1 正在运动/回零，请先停止").arg(axis + 1), "#e0a520");
         }
     }
     qDebug() << "Go 轴" << axis;

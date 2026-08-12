@@ -103,8 +103,16 @@ add_executable(${PROJECT_NAME}
     ${MAIN_SOURCES}
 )
 
+# 整库链接 HAL：强制包含其全部 .obj，保证各品牌/仿真实现的静态注册
+# 对象不被链接器 dead-strip（无需手写注册表）。MSVC 生成 /WHOLEARCHIVE:HAL。
+if(MSVC)
+    set(HAL_LINK_LIB "$<LINK_LIBRARY:WHOLE_ARCHIVE,HAL>")
+else()
+    set(HAL_LINK_LIB "HAL")
+endif()
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    HAL
+    ${HAL_LINK_LIB}
     Core
     Logic
     UI

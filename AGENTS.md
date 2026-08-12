@@ -16,13 +16,14 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
   ```
 - **Run**: `out\build\x64-Debug\CreamPuffRobot.exe`
 - **Release**: root `build_release.bat` (relocatable via `%~dp0`, ASCII-only; builds Release + one-click packaging)
+- **用户实际运行 Debug 版**（真机验证用 `out\build\x64-Debug\CreamPuffRobot.exe`）。改动代码后**务必同时编译 Debug + Release**，否则用户拿到的 exe 不含修复。编译前若 `LNK1168 无法写入 exe`，先结束正在运行的 `CreamPuffRobot.exe` 进程。CLI 编译（无需开 VS）：先 `cmd /c "call vcvars64.bat && ninja CreamPuffRobot"`（vcvars 在 `D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\`，Debug 用 VS 自带 ninja，Release 用 `D:\Qt\Tools\Ninja\ninja.exe`）。
 
 ## Architecture
 
 ```
 CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
 ├─ src/Config/  — Configuration management (ConfigManager, ProcessManager)
-├─ src/HAL/     — Hardware Abstraction Layer (interfaces + SimCard/SimServo/SimCamera/SimAlgo + HardwareManager)
+├─ src/HAL/     — Hardware Abstraction Layer（interfaces/core/motioncard/servo/camera/algorithm 六子目录）
 ├─ src/Core/    — Kinematics, CoordTransform, Trajectory
 ├─ src/Logic/   — PickCycleController (state machine)
 └─ src/UI/      — MainWindow + 5 pages + ToggleSwitch
@@ -32,7 +33,10 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 
 ### HAL 多品牌体系
 
-- **接口层**（纯虚，`src/HAL/`）: `IMotionCard`(脉冲单位)、`IAxisServo`、`IEndEffector`、`ICamera`、`IPuffAlgorithm`
+- **目录结构（已重组，2026-08）**：`src/HAL/` 下分六子目录——
+  `interfaces/`（纯接口 I*.h）、`core/`（HardwareManager、AxisConverter、AxisMap、HALFactory、AxisConfigService）、`motioncard/`（BoPaiCard、SimCard）、`servo/`（XRServo、SimServo）、`camera/`（SimCamera、CameraCaptureWorker、FrameSaver、FrameConverter、SimVision、CameraManager）、`algorithm/`（SimAlgo）。
+  **include 约定**：HAL 内部互 include 用平铺文件名（`#include "SimCard.h"`），靠 CMake include dir 追加全部子目录解析；外部引用用 `HAL/<子目录>/Xxx.h`（如 `HAL/core/HardwareManager.h`、`HAL/interfaces/IMotionCard.h`）。
+- **接口层**（纯虚，`src/HAL/interfaces/`）: `IMotionCard`(脉冲单位)、`IAxisServo`、`IEndEffector`、`ICamera`、`IPuffAlgorithm`
 - **工厂**: `HALFactory.h` 运行时字符串注册工厂，`REGISTER_MOTION_CARD/AXIS_SERVO/END_EFFECTOR/CAMERA/PUFF_ALGORITHM` 宏自动注册
 - **仿真实现**: `SimCard`("SimCard")、`SimServo`("SimServo")、`SimCamera`("SimCamera")、`SimAlgo`("SimAlgo")。`SimCamera` 生成含移动目标（粉/蓝泡芙斑块 + 深度图 mm）的测试图案帧；`SimAlgo` 按 `SimVision.h` 的 `TargetSpec` 颜色匹配检测目标→`PuffResult`（像素框 + 相机内参换算的物理坐标，`z` 取深度并受 `vision.depthZMin/ZMax` 过滤，`confidence`≈覆盖率）。`SimVision.h` 是两者共用的目标规格（改图案颜色/半径必须同步，保证"生成→识别"闭环）
 - **相机采集线程**: `CameraCaptureWorker`（QObject + QTimer，被移入 `QThread`）每帧调 `ICamera::CaptureFrame()` 并经 `frameReady(const CameraFrame&)` 信号广播（值类型，`qRegisterMetaType<CameraFrame>` 已注册，跨线程自动深拷贝）。`HardwareManager` 负责生命周期：`CameraOpen/Close`、`StartCameraStream(fps)/StopCameraStream`、`IsCameraStreaming`，并把 worker 的 `frameReady` 转发为自身信号供 UI 订阅
@@ -50,10 +54,20 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **触发语义（曾踩坑）**: `PollTick` 只在轴**正在点动撞入边界**（`st.running == true`）时 `emit softLimitTriggered`。静止停在边界（如 Z/夹爪/挤出的初始最小位置 0，或 MoveAbs 恰好落在边界）**不触发**，否则启动即误报"到达软限位"。`MoveJog` 启动方向已在边界时由拒绝路径补发一次信号
   - **UI 联动（ManualControlPage）**: 用 `QVector<int> softLimitDir_`（1=撞最大/-1=撞最小/0=正常）跟踪每轴方向（曾用 bool 无法区分方向）。`RefreshSoftLimitHint()` 聚合所有 `dir != 0` 的轴，用 " / " 拼接为 `轴N 到达软限位（最大位置 X）` 逐条提示；点动离开或 Go 成功时清 0 并**重算提示**（全部清除后恢复默认 `提示：按住 +/- 按钮持续运动，松开停止`）。状态点橙色 `#ffb347`；默认提示浅蓝 `#8fd4ff`
 - **`AxisConverter`**（单例）: 物理↔脉冲双向换算；参数由 HardwareManager 从 `config.axes.<key>.transmission` 读取后 `ConfigureAxis()` 喂入，**底层卡代码禁止 `#include "ConfigManager.h"`**
-- **`AxisMap.h`**: 逻辑轴枚举 `LogicalAxis{J1,J2,Z,R,Gripper,Extruder}` ↔ 硬件绑定(卡轴/舵机) 映射
-- **IMotionCard 契约**: `MoveAbs/MoveRel/GetPosition` 均以**脉冲**为单位；`SetAxisConfig(axisId, cfg)` 下发每轴换算参数。`SimCard` 内部位置即脉冲。**单位陷阱（曾引发回归）**: 仿真限位夹紧必须用脉冲域限位（`SimAxis::limitMinPulse/limitMaxPulse`，`SetAxisConfig` 按 `ppu = ppr*microSteps/(360 或导程)` 换算，缺省 ±1e30），**禁止拿 `cfg.limitMin/limitMax`（度/mm）直接夹紧脉冲位置**——J1 的 180° 会被当成 180 脉冲（≈0.00097°），导致每次轮询位置被归零、点动/Go 不动
-- **品牌扩展**: 新增品牌实现文件放 `src/HAL/`，SDK 放根目录 `3rdparty/<brand>/`（`include/lib/bin` 三目录）。顶层 CMake POST_BUILD 自动复制 `3rdparty/bopai/bin/*.dll`。`ZMotion/Leisai` 目录已预留
-- **新实现链接陷阱**: 只靠 `REGISTER_*` 宏的静态注册对象可能被链接器 dead-strip 丢弃 .obj，导致工厂找不到类型（曾导致 SimServo 无法创建）。`HardwareManager.cpp` 的 `ForceLinkHALImpls()` 通过取成员函数地址强制保留，并在其中**显式 `Factory::Register(...)` 兜底**（覆盖注册无副作用）。**新增相机/算法/运动卡/舵机实现必须同步加入该函数**（`SimCamera`/`SimAlgo` 已在其中显式注册）
+- **`AxisMap.h`**: 逻辑轴枚举 `LogicalAxis{J1,J2,Z,R,Gripper,Extruder}` ↔ 硬件绑定(卡轴/舵机) 映射。**已改为 config 驱动**：`HardwareManager::LoadAxisConfigsFromConfig` 读 `axes.<key>.portId` 注入 `AxisMap::SetBinding`（卡轴 index = BoPai 卡 axis 号、舵机 index = 总线 ID）；默认表仅作 config 缺失兜底。真机接线（电机-卡 axis / home）见 `doc/card_axis_test.md`：J1→axis1/home1、Z→axis2/home2、夹爪→axis4/home4、挤出→axis3（未接）。**home 输入按轴号固定（第 N 轴接 home N），软件不可改映射**。
+- **IMotionCard 契约**: `MoveAbs/MoveRel/GetPosition` 均以**脉冲**为单位；`SetAxisConfig(axisId, cfg)` 下发每轴换算参数。`SimCard` 内部位置即脉冲。**BoPaiCard 曾违反契约（真机首测必现，已修复）**: `MoveAbs/MoveRel` 内部二次 `×ppu`（传入已是脉冲）、`RefreshStatus` 回读再 `/ppu`（再配 `HardwareManager::GetPosition` 的 `ToPhysical` ≈ 平方误差，J1 错约 89 倍、Z/夹爪 144/71 倍）。**修复**：MoveAbs/MoveRel 直接收脉冲、回读直接给 `lAxisPrfPos`、`PulsePerUnit` 改按 `axisType`+`lead×gearRatio` 计算（与 `AxisConverter` 同一公式）。`SimCard::SetAxisConfig` 软限位换算同步改用同一公式。**单位陷阱（曾引发回归）**: 仿真限位夹紧必须用脉冲域限位（`SimAxis::limitMinPulse/limitMaxPulse`，`SetAxisConfig` 按 `ppu = ppr*microSteps/(360 或导程)` 换算，缺省 ±1e30），**禁止拿 `cfg.limitMin/limitMax`（度/mm）直接夹紧脉冲位置**——J1 的 180° 会被当成 180 脉冲（≈0.00097°），导致每次轮询位置被归零、点动/Go 不动
+- **品牌扩展**: 新增品牌实现文件放 `src/HAL/<子目录>/`（卡→`motioncard/`，舵机→`servo/`，相机→`camera/`），SDK 放根目录 `3rdparty/<brand>/`（`include/lib/bin` 三目录）。顶层 CMake POST_BUILD 自动复制 `3rdparty/bopai/bin/*.dll`。`ZMotion/Leisai` 目录已预留
+- **实现注册与链接（新方案）**: 品牌/仿真实现以 `REGISTER_*` 宏在各自 cpp 内注册；**主 exe 通过 CMake `$<LINK_LIBRARY:WHOLE_ARCHIVE,HAL>` 整库链接 HAL**（MSVC → `/WHOLEARCHIVE:HAL`），强制包含全部 .obj，静态注册对象必然执行。**新增品牌只需**：写实现文件（放对应子目录）+ `REGISTER_*` 宏 + 在 `src/HAL/CMakeLists.txt` 的 `HAL_SOURCES` 加源文件（带子目录前缀，沿用 `USE_XXX` option）——**无需改任何中心代码**。曾用 `ForceLinkHALImpls()` 手写注册表（取成员地址保活 + 显式 Register 兜底），已废弃移除。若未来出现运行时换品牌/闭源分发需求，再演进为 DLL 插件 + 工厂 `Register` 注入。
+- **BoPai 运动卡连接环境（真机测试注意事项）**: 官方测试软件连 wifi 可连卡；而本程序（BoPai SDK `MC_Open`）在 **wifi 开启时会 `MC_Open failed`（如 code=-6）**，必须**关闭 wifi** 才能连上卡（与旧同事工程 `PuffPickerPlugin` 行为一致）。config `communication.motionCard.pcIp` 需为真实网卡 IP、卡 IP `192.168.0.1` 同网段。
+- **旋转轴换算必须含 gearRatio（曾差 100 倍）**: `AxisConverter::PhysicalPerPulse` rotation 分支**必须 `steps /= gearRatio`**（gearRatio=输出端转数/电机转数，1:100 谐波→0.01），直线轴用 `lead×gearRatio` 同理。曾漏算导致 J1 显示偏大 100 倍、软限位 ±180° 秒超。用户看到的软限位 -180~180 单位是**角度（度）**。
+- **inverted（direction=反向）语义（统一逻辑坐标）**: 配置 `direction=1` 后，`MoveAbs/MoveJog` 下发目标取反（物理坐标），同时 `GetPosition()`/`PollTick` 回读位置**同样取反**返回逻辑坐标——界面显示、软限位判断（`limitMin/Max` 为逻辑范围）、按钮方向全部一致。只反转下发不回读会造成"Go +90 显示 -90"。
+- **BoPai 回零（已调通，关键陷阱）**:
+  - **HomeAxis 持锁后禁止调 `GetAxisStatus`**（内部对同一 `std::mutex` 二次加锁 → 死锁抛 `0xe06d7363` 崩溃；仅 `MC_HomeStart` 成功路径触发）。持锁内直接读 `lastStatus_` 即可。
+  - `MC_HomeStart` 偶发返回 **1**（轴忙/未就绪竞态，`HomeStop` 刚发出即 `Start`）：需 `MC_HomeStop` + 延时 150ms 重试（≤3 次）；启动前先 `MC_Stop` + 确认使能（未使能先 `MC_AxisOn`）。
+  - **`MC_HomeSns(1<<axisId)` 设该轴 HOME 高有效，极性决定搜索方向**（真机 J1：`homeSns=-1` 顺时针、`0/1` 逆时针）；配置 `homeSns>=0` 才调用。回零搜索方向 `homeDir` 独立配置。
+  - `StopAxis` 必须**先 `MC_HomeStop` 再 `MC_Stop`**：仅 `MC_Stop` 可能无法退出卡端 HOME 状态机，导致后续 Jog/Trap 被拒（回零中停止后再点动无反应）。
+  - 回零速度单位 **Pulse/ms**（`dHomeRapidVel/dHomeLocatVel`），经 `axes.<key>.homeRapidVel/homeLocatVel` 配置，换算公式见 `doc/config.md`（J1 3°/s→21.3、1°/s→7.1）。
+  - **回零门禁 `homingActive_`**（HardwareManager）：`HomeAxis` 置位，`MoveAbs/MoveJog` 入口拒绝回零中的运动请求；`PollTick` 检测 `running` 复位或 `StopAxis/StopJog/DisableAll/EmergencyStop` 时清除。**不能用 `IsAxisBusy` 替代**（点动按钮 `autoRepeat` 每 100ms 触发，busy 会挡掉连续点动）。
 
 ## Code Conventions
 
@@ -85,7 +99,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **轴换算参数**（`axes.<key>.axisType` + `transmission`）: `axisType` = `"rotation"`(角度)/`"linear"`(直线 mm)，**废除曾用 `hardwareType` 兼任旋转/直线的推断**。换算公式（参考 `D:\workspace\projects\bopai\puff\config.json` 及其换算，注意参考工程公式漏了 gearRatio）:
     - rotation: `pulsesPerUnit = pulsesPerRev×microSteps / 360`（脉冲/度）
     - linear: `pulsesPerUnit = pulsesPerRev×microSteps / (lead×gearRatio)`（脉冲/mm）；`gearRatio`=电机每转的输出端转数（从动/主动，皮带 20/40 → 0.5）
-  - **真实机械参数**（信捷 MP3-57H023 步进，`3rdparty` 外参考）：J1=32000/1/360°/gear1（无减速器）；Z=32000/1/lead5/gear0.5（皮带20:40 + 丝杆导程5mm → 电机每圈 2.5mm）；夹爪=32000/1/lead2/gear1（电机轴丝杆状，金属环行程~20mm）；J2/R=串口舵机（minPulse500/maxPulse2500/minAngle0/maxAngle180）。**Z/夹爪每圈脉冲 32000 为初值、待真机标定**（`calibrationPending:true`），用低速点动实测反推；夹爪软限位 0–20mm 为目测值待实测修正
+  - **真实机械参数**（信捷 MP3-57H023 步进，`3rdparty` 外参考）：**J1=驱动器拨码 25600 Pulse/rev + 谐波减速比 1:100** → rotation `encoderResolution=25600`、`gearRatio=0.01`（7111.11 脉冲/度；曾误填 32000/gear1"无减速"，显示偏大 100 倍）；Z=32000/1/lead5/gear0.5（皮带20:40 + 丝杆导程5mm → 电机每圈 2.5mm）；夹爪=32000/1/lead2/gear1（电机轴丝杆状，金属环行程~20mm）；J2/R=串口舵机（minPulse500/maxPulse2500/minAngle0/maxAngle180）。**Z/夹爪每圈脉冲 32000 为初值、待真机标定**（`calibrationPending:true`），用低速点动实测反推；夹爪软限位 0–20mm 为目测值待实测修正
   - `communication.motionCard` 含 `pcIp`（本机网卡 IP，需与卡同网段）；`communication.servo.baudRate` 与 `port` 一样**存为字符串**，读取须 `getValue<std::string>` 再 `stoi`
 
 ### ConfigManager (src/Config/ConfigManager.h/.cpp)
@@ -167,6 +181,10 @@ HAL 多品牌硬件接入全部完成：
   - **门禁位置**：`MoveAbs`/`MoveJog`/`HomeAxis`/`HomeAll` 入口（单点拦截，UI 和未来自动流程统一走此门面）。`PickCycleController::StartCycle`/`ExecuteOneShot` 入口加 `IsGlobalEnabled` 检查。UI 状态灯改为读 `IsAxisEnabled`（不再用 servo online 冒充使能）。
   - **热重连后**：舵机扭矩归零，对应轴使能标志复位，需重新手动使能。
 
-**下一步**：**真机舵机轴（J2/R）功能测试**（步进电机接线断开，先测舵机轴；config 已 `servoType="XRServo"`、`motionCardType` 保持 `SimCard`）——验证：连接在线、使能扭矩、点动 +/- 连续运动、角度实时显示与机械一致、软限位夹紧、急停阻尼松力、UI 不卡顿。舵机轴通过后再接步进电机线测卡轴（8 阶段全流程）。随后 ZMotion/Leisai 品牌接入（SDK 目录已预留）；`PickCycleController::SetHardware` 注入与自动运行硬件接线；AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；状态机实现。
+- **真机 J1 换算/方向/回零/按钮门禁（已完成并真机验证）**：J1 驱动器 25600 Pulse/rev + 谐波 1:100 → rotation `gearRatio=0.01`（`AxisConverter` 补除 gearRatio）；`inverted` 统一逻辑坐标（下发+回读同步取反）；回零修复（HomeAxis 内 `GetAxisStatus` 二次加锁死锁、`MC_HomeStart` 返回 1 竞态加延时重试、`MC_HomeSns` 极性定方向、`StopAxis` 先 `MC_HomeStop`）、回零速度配置化（`homeRapidVel/homeLocatVel`，3°/s→21.3、1°/s→7.1 Pulse/ms）、回零门禁 `homingActive_` + UI 统一提示。回零动作到位、数值归零。
+
+- **HAL 目录重组 + HardwareManager 拆分（已完成，编译+冒烟通过）**：`src/HAL/` 拆六子目录（interfaces/core/motioncard/servo/camera/algorithm）；相机生命周期拆出 `CameraManager`（HardwareManager 保留 `CameraOpen/Close/Start/Stop/IsStreaming` 转发与 `frameReady` 信号）；每轴速度/单位/软限位查询拆出 `AxisConfigService`（HardwareManager 保留转发方法，UI 层零改动）。**对外 API 不变**，Debug/Release 编译通过、仿真启动存活。经验：拆分共享 `HardwareManager.h/.cpp` 与 `CMakeLists.txt` 的模块**不能并行**；外部 include 用 `HAL/<子目录>/Xxx.h`，HAL 内部平铺靠 include dir 追加子目录解析。
+
+**下一步**：**真机电机轴（轴1 J1 / 轴3 Z / 轴5 夹爪）手动功能测试**（config 已切 `Bopai`，测试计划见 `doc/card_axis_test.md`）——J1 已测通换算/方向/回零/停止；待测：Z/夹爪 `calibrationPending` 每圈脉冲标定、Go 定位精度、遥测、拔网线异常。**自动流程遗留**：`PickCycleController` 仍硬编码卡轴号（0/2/3），与新 `portId` 映射不一致，手动测试完成后需改为走 `HardwareManager`/`AxisMap` 接口再接自动流程。随后 ZMotion/Leisai 品牌接入（SDK 目录已预留）；AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；状态机实现。
 
 其余未接线部分（`qDebug()`/`SPDLOG` 桩）：AutoRunPage 的 启动/复位/停止/初始化/急停；ProcessPage 的"示教读取"；ConfigPage 的"九点标定"。

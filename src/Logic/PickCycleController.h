@@ -5,11 +5,11 @@
 
 #include "Core/Kinematics.h"
 #include "Core/CoordTransform.h"
-#include "HAL/IMotionCard.h"
-#include "HAL/IAxisServo.h"
-#include "HAL/IEndEffector.h"
-#include "HAL/ICamera.h"
-#include "HAL/IPuffAlgorithm.h"
+#include "HAL/interfaces/IMotionCard.h"
+#include "HAL/interfaces/IAxisServo.h"
+#include "HAL/interfaces/IEndEffector.h"
+#include "HAL/interfaces/ICamera.h"
+#include "HAL/interfaces/IPuffAlgorithm.h"
 
 enum class PickCycleState
 {

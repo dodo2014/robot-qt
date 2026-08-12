@@ -200,10 +200,16 @@ bool SimCard::SetAxisConfig(int axisId, const AxisConfig& cfg)
     axis.speed = cfg.maxSpeed;
     axis.accel = cfg.maxAccel;
     axis.decel = cfg.maxDecel;
-    // 把物理单位软限位换算成脉冲域（与 BoPaiCard::PulsePerUnit 同一公式）
+    // 把物理单位软限位换算成脉冲域（与 BoPaiCard::PulsePerUnit 同一公式，axisType 判断旋转/直线）
     double pulsesPerRev = (cfg.pulsesPerRev > 0) ? cfg.pulsesPerRev : 1.0;
     double steps = pulsesPerRev * (cfg.microSteps > 1 ? cfg.microSteps : 1);
-    double denom = (cfg.hardwareType == 0) ? 360.0 : (cfg.lead > 0 ? cfg.lead : 1.0);
+    double denom;
+    if (cfg.axisType == 1) {
+        double mmPerRev = cfg.lead * cfg.gearRatio;
+        denom = (mmPerRev > 0) ? mmPerRev : 1.0;
+    } else {
+        denom = 360.0;
+    }
     double ppu = steps / denom;
     if (cfg.limitMin < cfg.limitMax) {
         axis.limitMinPulse = cfg.limitMin * ppu;

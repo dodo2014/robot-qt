@@ -4,59 +4,11 @@
 
 #include "HALFactory.h"
 #include "AxisConverter.h"
+#include "AxisConfigService.h"
 #include "ConfigManager.h"
-#include "SimCard.h"
-#include "SimServo.h"
-#include "SimCamera.h"
-#include "SimAlgo.h"
+#include "CameraManager.h"
 #include "CameraCaptureWorker.h"
-#ifdef USE_BOPAI
-#include "BoPaiCard.h"
-#endif
-#ifdef USE_XRSERVO
-#include "XRServo.h"
-#endif
-
-namespace {
-
-// 强制引用各硬件实现中的非内联成员函数，确保其 .obj 被链接，
-// 否则静态库中的文件级注册对象会被链接器丢弃（dead-strip），
-// 导致 REGISTER_*_MAKER 的注册永远不执行。
-void ForceLinkHALImpls()
-{
-    auto f1 = &SimCard::Step;
-    auto f2 = &SimServo::Connect;
-    auto f5 = &SimCamera::CaptureFrame;
-    auto f6 = &SimAlgo::Detect;
-#ifdef USE_BOPAI
-    auto f3 = &BoPaiCard::Connect;
-#endif
-#ifdef USE_XRSERVO
-    auto f4 = &XRServo::Connect;
-#endif
-    (void)f1; (void)f2; (void)f5; (void)f6;
-#ifdef USE_BOPAI
-    (void)f3;
-#endif
-#ifdef USE_XRSERVO
-    (void)f4;
-#endif
-
-    // 兜底：若链接器仍丢弃了注册对象，则显式注册，确保工厂一定能创建。
-    // 注册相同类型会覆盖原条目，因此与静态注册共存时也无副作用。
-    AxisServoFactory::Instance().Register("SimServo",
-        []() -> std::unique_ptr<IAxisServo> { return std::make_unique<SimServo>(); });
-    CameraFactory::Instance().Register("SimCamera",
-        []() -> std::unique_ptr<ICamera> { return std::make_unique<SimCamera>(); });
-    PuffAlgorithmFactory::Instance().Register("SimAlgo",
-        []() -> std::unique_ptr<IPuffAlgorithm> { return std::make_unique<SimAlgo>(); });
-#ifdef USE_XRSERVO
-    AxisServoFactory::Instance().Register("XRServo",
-        []() -> std::unique_ptr<IAxisServo> { return std::make_unique<XRServo>(); });
-#endif
-}
-
-}
+#include "SimCard.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -113,20 +65,14 @@ HardwareManager::HardwareManager()
     jogTimer_->setInterval(50);
     connect(jogTimer_, &QTimer::timeout, this, &HardwareManager::JogTick);
 
-    cameraThread_ = new QThread(this);
-    cameraWorker_ = new CameraCaptureWorker();
-    cameraWorker_->moveToThread(cameraThread_);
-    connect(cameraThread_, &QThread::finished, cameraWorker_, &QObject::deleteLater);
-    connect(cameraWorker_, &CameraCaptureWorker::frameReady, this, &HardwareManager::frameReady);
+    cameraManager_ = std::make_unique<CameraManager>();
+    connect(cameraManager_.get(), &CameraManager::frameReady, this, &HardwareManager::frameReady);
 }
 
 HardwareManager::~HardwareManager()
 {
     StopCameraStream();
-    if (cameraThread_ && cameraThread_->isRunning()) {
-        cameraThread_->quit();
-        cameraThread_->wait(2000);
-    }
+    cameraManager_.reset();   // 停采集线程并释放 worker
     pollTimer_->stop();
     if (motionCard_) motionCard_->Disconnect();
     if (servoJ2_) servoJ2_->Disconnect();
@@ -139,7 +85,6 @@ bool HardwareManager::Initialize()
 {
     if (initialized_) return true;
 
-    ForceLinkHALImpls();  // 确保各硬件实现的静态注册对象被链接
     SPDLOG_INFO("[HardwareManager] Initialize BEGIN");
 
     EnsureConfigLoaded();
@@ -225,6 +170,7 @@ bool HardwareManager::Initialize()
     if (!camera_) {
         SPDLOG_WARN("[HardwareManager] Camera type '{}' not registered", camType);
     } else {
+        cameraManager_->SetCamera(camera_.get());
         int    w   = cfg.getValue<int>("vision.frameWidth", 640);
         int    h   = cfg.getValue<int>("vision.frameHeight", 480);
         double fps = cfg.getValue<double>("vision.frameFps", 30.0);
@@ -233,6 +179,7 @@ bool HardwareManager::Initialize()
 
     // ---- 4. 每轴换算参数喂给卡与 AxisConverter ----
     LoadAxisConfigsFromConfig();
+    axisCfgSvc_ = std::make_unique<AxisConfigService>(axisConfigs_);
 
     // ---- 5. 启动 50ms 状态轮询 ----
     lastAlarm_.fill(false, static_cast<int>(LogicalAxis::Count));
@@ -243,6 +190,7 @@ bool HardwareManager::Initialize()
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
     axisBusyUntilMs_.fill(0, static_cast<int>(LogicalAxis::Count));
     axisBusyNotified_.fill(false, static_cast<int>(LogicalAxis::Count));
+    homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     pollTimer_->start();
 
     initialized_ = true;
@@ -275,59 +223,27 @@ QString HardwareManager::ConnectionStatus() const
 
 bool HardwareManager::CameraOpen(int width, int height, double fps)
 {
-    if (!camera_) {
-        SPDLOG_WARN("[HardwareManager] CameraOpen failed: no camera instance");
-        return false;
-    }
-    std::string deviceId = ConfigManager::instance().getValue<std::string>(
-        "simulation.cameraDeviceId", "CAM-SIM-001");
-    bool ok = camera_->Open(deviceId, width, height, fps);
-    if (!ok)
-        SPDLOG_WARN("[HardwareManager] CameraOpen FAILED: {}", camera_->GetLastError());
-    else
-        SPDLOG_INFO("[HardwareManager] Camera opened");
-    return ok;
+    return cameraManager_ && cameraManager_->Open(width, height, fps);
 }
 
 void HardwareManager::CameraClose()
 {
-    StopCameraStream();
-    if (camera_) camera_->Close();
+    if (cameraManager_) cameraManager_->Close();
 }
 
 bool HardwareManager::StartCameraStream(int fps)
 {
-    if (!camera_) {
-        SPDLOG_WARN("[HardwareManager] StartCameraStream failed: no camera instance");
-        return false;
-    }
-    if (!camera_->IsOpened())
-        CameraOpen(0, 0, 0);
-    if (!camera_->StartStream()) {
-        SPDLOG_WARN("[HardwareManager] StartStream FAILED: {}", camera_->GetLastError());
-        return false;
-    }
-    if (!cameraThread_->isRunning()) {
-        cameraWorker_->SetCamera(camera_.get());
-        cameraThread_->start();
-    }
-    QMetaObject::invokeMethod(cameraWorker_, "Start", Qt::QueuedConnection,
-                              Q_ARG(int, fps));
-    cameraStreaming_ = true;
-    return true;
+    return cameraManager_ && cameraManager_->StartStream(fps);
 }
 
 void HardwareManager::StopCameraStream()
 {
-    cameraStreaming_ = false;
-    if (camera_) camera_->StopStream();
-    if (cameraWorker_)
-        QMetaObject::invokeMethod(cameraWorker_, "Stop", Qt::QueuedConnection);
+    if (cameraManager_) cameraManager_->StopStream();
 }
 
 bool HardwareManager::IsCameraStreaming() const
 {
-    return cameraStreaming_;
+    return cameraManager_ && cameraManager_->IsStreaming();
 }
 
 void HardwareManager::LoadAxisConfigsFromConfig()
@@ -353,12 +269,17 @@ void HardwareManager::LoadAxisConfigsFromConfig()
                         key, ac.limitMin, ac.limitMax);
         ac.inverted     = (cfg.getValue<int>(base + "direction", 0) != 0);
         ac.hardwareType = cfg.getValue<int>(base + "hardwareType", 0);
+        int portId      = cfg.getValue<int>(base + "portId", -1);
         // 轴类型：rotation(角度)/linear(直线 mm)，决定换算用 360° 还是 导程×减速比
         ac.axisType     = (cfg.getValue<std::string>(base + "axisType", "rotation") == "linear") ? 1 : 0;
         ac.pulsesPerRev = cfg.getValue<int>(base + "transmission.encoderResolution", 32000);
         ac.microSteps   = cfg.getValue<int>(base + "transmission.microSteps", 1);
         ac.lead         = cfg.getValue<double>(base + "transmission.lead", 360.0);
         ac.gearRatio    = cfg.getValue<double>(base + "transmission.gearRatio", 1.0);
+        ac.homeDir      = (cfg.getValue<int>(base + "homeDir", 1) != 0) ? 1 : 0;
+        ac.homeSns      = cfg.getValue<int>(base + "homeSns", -1);
+        ac.homeRapidVel = cfg.getValue<double>(base + "homeRapidVel", 5.0);
+        ac.homeLocatVel = cfg.getValue<double>(base + "homeLocatVel", 1.0);
         // 换算公式（参考 bopai\puff\MotionController.cpp）：
         //   rotation: pulsesPerUnit = 每圈脉冲 / 360          (脉冲/度)
         //   linear:   pulsesPerUnit = 每圈脉冲 / (lead×gearRatio) (脉冲/mm)
@@ -374,6 +295,14 @@ void HardwareManager::LoadAxisConfigsFromConfig()
 
         AxisConverter::Instance().ConfigureAxis(i, ac);
 
+        // 以 config 的 hardwareType/portId 覆盖 AxisMap 绑定：
+        //   卡轴 index = BoPai 卡 axis 号，舵机 index = 总线 ID。
+        // 缺省 portId 时保留 AxisMap 默认兜底值。
+        if (portId >= 0)
+            AxisMap::SetBinding(static_cast<LogicalAxis>(i),
+                                (ac.hardwareType == 1) ? AxisBinding::Type::Servo : AxisBinding::Type::Card,
+                                portId);
+
         auto binding = AxisMap::Get(static_cast<LogicalAxis>(i));
         if (binding.type == AxisBinding::Type::Card && motionCard_) {
             ac.axisId = binding.index;
@@ -386,7 +315,7 @@ void HardwareManager::LoadAxisConfigsFromConfig()
 // ============================================================
 // 物理单位门面
 // ============================================================
-bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg)
+bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
 {
     // 使能门禁：未使能禁止运动（安全门禁，先使能再运动）
     if (!IsAxisEnabled(axis)) {
@@ -399,22 +328,35 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg)
         SPDLOG_WARN("[HardwareManager] MoveAbs rejected: axis {} in alarm", (int)axis);
         return false;
     }
+    // 回零门禁：回零进行中禁止运动，需先停止回零
+    if (ai >= 0 && ai < homingActive_.size() && homingActive_[ai]) {
+        SPDLOG_WARN("[HardwareManager] MoveAbs rejected: axis {} homing in progress", ai);
+        return false;
+    }
 
-    // 软限位校验：目标位置超出 [limitMin, limitMax] 直接拒绝
+    // 方向反转（config direction=反向）：下发用物理目标；界面/软限位按逻辑坐标
+    bool inv = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) && axisConfigs_[ai].inverted;
+    double targetPhys = inv ? -mmOrDeg : mmOrDeg;
+
+    // 软限位校验（逻辑坐标，与界面显示一致）：目标位置超出 [limitMin, limitMax] 直接拒绝
     if (!IsWithinSoftLimits(axis, mmOrDeg)) {
         SPDLOG_WARN("[HardwareManager] MoveAbs rejected: axis {} target {:.1f} out of soft limits [{:.1f}, {:.1f}]",
-                    static_cast<int>(axis), mmOrDeg, GetLimitMin(axis), GetLimitMax(axis));
+                    ai, mmOrDeg, GetLimitMin(axis), GetLimitMax(axis));
         return false;
     }
 
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
-        long pulse = AxisConverter::Instance().ToPulse(static_cast<int>(axis), mmOrDeg);
-        bool ok = motionCard_->MoveAbs(binding.index, pulse);
+        long pulse = AxisConverter::Instance().ToPulse(ai, targetPhys);
+        // speed>0：物理速度 → 脉冲速度下发（Go 使用界面速度框）；speed<=0：沿用卡 maxSpeed
+        double speedPulse = (speed > 0)
+            ? AxisConverter::Instance().SpeedToPulse(ai, speed)
+            : -1.0;
+        bool ok = motionCard_->MoveAbs(binding.index, pulse, speedPulse);
         if (ok) {
             // 卡轴按速度估算到位时间用于 Go 按钮门禁（卡本身 running 态也由轮询驱动）
             double dist = std::fabs(mmOrDeg - GetPosition(axis));
-            double spd = GetJogSpeed(axis);
+            double spd = (speed > 0) ? speed : GetJogSpeed(axis);
             int busyMs = (spd > 0.01) ? static_cast<int>(dist / spd * 1000.0) + 200 : 1000;
             MarkAxisBusy(axis, busyMs);
         }
@@ -423,9 +365,9 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg)
     if (binding.type == AxisBinding::Type::Servo) {
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
         if (servo) {
-            bool ok = servo->MoveToAngle(mmOrDeg, 0);
+            bool ok = servo->MoveToAngle(targetPhys, 0);
             if (ok) MarkAxisBusy(axis, servo->GetLastMoveTimeMs());
-            SPDLOG_INFO("[HardwareManager] MoveAbs axis={} target={:.1f} -> {}", (int)axis, mmOrDeg, ok);
+            SPDLOG_INFO("[HardwareManager] MoveAbs axis={} target={:.1f} -> {}", ai, mmOrDeg, ok);
             return ok;
         }
     }
@@ -445,18 +387,27 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
         SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} in alarm", (int)axis);
         return false;
     }
+    // 回零门禁：回零进行中禁止点动，需先停止回零
+    if (ai >= 0 && ai < homingActive_.size() && homingActive_[ai]) {
+        SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} homing in progress", ai);
+        return false;
+    }
+
+    // 方向反转（config direction=反向）：物理运动方向取反，边界判断/回读均基于物理位置
+    bool inv = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) && axisConfigs_[ai].inverted;
+    int effDir = inv ? -direction : direction;
 
     // 软限位校验：启动方向已在边界则拒绝
     double lo = GetLimitMin(axis);
     double hi = GetLimitMax(axis);
     if (lo < hi) {
         double current = GetPosition(axis);
-        if (direction > 0 && current >= hi - 1e-6) {
+        if (effDir > 0 && current >= hi - 1e-6) {
             emit softLimitTriggered(static_cast<int>(axis), true);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at max soft limit {:.1f}", static_cast<int>(axis), hi);
             return false;
         }
-        if (direction < 0 && current <= lo + 1e-6) {
+        if (effDir < 0 && current <= lo + 1e-6) {
             emit softLimitTriggered(static_cast<int>(axis), false);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at min soft limit {:.1f}", static_cast<int>(axis), lo);
             return false;
@@ -466,7 +417,7 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         double pulseSpeed = AxisConverter::Instance().SpeedToPulse(static_cast<int>(axis), mmOrDegPerSec);
-        bool ok = motionCard_->MoveJog(binding.index, pulseSpeed, -1.0, direction);
+        bool ok = motionCard_->MoveJog(binding.index, pulseSpeed, -1.0, effDir);
         if (ok) MarkAxisBusy(axis, 3600 * 1000);   // 点动视为忙
         return ok;
     }
@@ -477,7 +428,7 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
             // 目标速度 = jogSpeed_（不再每 tick 查询/递增，避免抖动）
             double start = servo->ReadAngle();
             jogAxis_       = axis;
-            jogDir_        = direction;
+            jogDir_        = effDir;
             jogSpeed_      = mmOrDegPerSec;
             jogStartPos_   = start;
             jogStartMs_    = QDateTime::currentMSecsSinceEpoch();
@@ -504,8 +455,9 @@ void HardwareManager::StopJog(LogicalAxis axis)
         if (servo) servo->Stop();
         SPDLOG_INFO("[HardwareManager] StopJog axis={}", (int)axis);
     }
-    // 停止点动 → 忙结束，恢复 Go 按钮
+    // 停止回零/点动 → 解除回零门禁 + 忙结束，恢复 Go 按钮
     int i = static_cast<int>(axis);
+    if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
     if (i >= 0 && i < axisBusyUntilMs_.size()) {
         axisBusyUntilMs_[i] = 0;
         if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
@@ -528,14 +480,32 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
         SPDLOG_WARN("[HardwareManager] HomeAxis rejected: axis {} in alarm", (int)axis);
         return false;
     }
+    // 重入防护：回零进行中拒绝重复触发（防止多次点击导致 SDK 状态机异常/崩溃）
+    if (IsAxisBusy(axis)) {
+        SPDLOG_WARN("[HardwareManager] HomeAxis rejected: axis {} busy (already moving/homing)", ai);
+        return false;
+    }
 
     auto binding = AxisMap::Get(axis);
-    if (binding.type == AxisBinding::Type::Card && motionCard_)
-        return motionCard_->HomeAxis(binding.index);
+    if (binding.type == AxisBinding::Type::Card && motionCard_) {
+        bool ok = motionCard_->HomeAxis(binding.index);
+        if (ok) {
+            if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;   // 回零门禁
+            MarkAxisBusy(axis, 30000);   // 回零最长 30s，超时后 CheckAxisBusy 自动释放忙态
+        }
+        return ok;
+    }
     if (binding.type == AxisBinding::Type::Servo) {
         if (jogTimer_->isActive() && axis == jogAxis_) jogTimer_->stop();
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
-        if (servo) return servo->MoveToAngle(0.0, 0);
+        if (servo) {
+            bool ok = servo->MoveToAngle(0.0, 0);
+            if (ok) {
+                if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;
+                MarkAxisBusy(axis, 5000);   // 舵机回零按 5s 上限
+            }
+            return ok;
+        }
     }
     return false;
 }
@@ -543,14 +513,25 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
 bool HardwareManager::StopAxis(LogicalAxis axis)
 {
     auto binding = AxisMap::Get(axis);
+    bool ok = false;
     if (binding.type == AxisBinding::Type::Card && motionCard_)
-        return motionCard_->StopAxis(binding.index);
-    if (binding.type == AxisBinding::Type::Servo) {
+        ok = motionCard_->StopAxis(binding.index);
+    else if (binding.type == AxisBinding::Type::Servo) {
         if (jogTimer_->isActive() && axis == jogAxis_) jogTimer_->stop();
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
-        if (servo) return servo->Stop();
+        if (servo) ok = servo->Stop();
     }
-    return false;
+    // 停止当前运动（点动/Go/回零）→ 解除回零门禁 + 忙结束，恢复 Go 按钮
+    int i = static_cast<int>(axis);
+    if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
+    if (i >= 0 && i < axisBusyUntilMs_.size()) {
+        axisBusyUntilMs_[i] = 0;
+        if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
+            axisBusyNotified_[i] = true;
+            emit axisMoveFinished(i);
+        }
+    }
+    return ok;
 }
 
 void HardwareManager::MarkAxisBusy(LogicalAxis axis, int busyMs)
@@ -646,6 +627,9 @@ bool HardwareManager::DisableAll()
     if (jogTimer_->isActive()) jogTimer_->stop();
     if (motionCard_) motionCard_->StopAll();
 
+    // 断使能视为回零中止
+    homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+
     bool ok = true;
     if (motionCard_) {
         for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
@@ -670,6 +654,7 @@ bool HardwareManager::EmergencyStop()
     if (servoJ3_) servoJ3_->TorqueOff();
     // 急停后需重新手动使能才能继续点动/移动/回零
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
+    homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     emit enableStateChanged();
     return true;
 }
@@ -691,14 +676,20 @@ void HardwareManager::ShutdownHalt()
 
 double HardwareManager::GetPosition(LogicalAxis axis) const
 {
+    int i = static_cast<int>(axis);
+    bool inv = (i >= 0 && i < static_cast<int>(axisConfigs_.size())) && axisConfigs_[i].inverted;
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         long pulse = static_cast<long>(motionCard_->GetPosition(binding.index));
-        return AxisConverter::Instance().ToPhysical(static_cast<int>(axis), pulse);
+        double phys = AxisConverter::Instance().ToPhysical(i, pulse);
+        return inv ? -phys : phys;
     }
     if (binding.type == AxisBinding::Type::Servo) {
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
-        if (servo) return servo->ReadAngle();
+        if (servo) {
+            double ang = servo->ReadAngle();
+            return inv ? -ang : ang;
+        }
     }
     return 0.0;
 }
@@ -708,65 +699,38 @@ double HardwareManager::GetPosition(LogicalAxis axis) const
 // ============================================================
 double HardwareManager::GetJogSpeed(LogicalAxis axis) const
 {
-    int i = static_cast<int>(axis);
-    if (i >= 0 && i < axisConfigs_.size())
-        return axisConfigs_[i].jogSpeed;
-    return 100.0;
+    return axisCfgSvc_ ? axisCfgSvc_->GetJogSpeed(axis) : 100.0;
 }
 
 double HardwareManager::GetMaxSpeed(LogicalAxis axis) const
 {
-    // 直接读 config（axes.<key>.maxSpeed），保证与 ConfigPage「电控与映射」的编辑实时一致
-    int i = static_cast<int>(axis);
-    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return 150.0;
-    return ConfigManager::instance().getValue<double>(
-        std::string("axes.") + kAxisConfigKeys[i] + ".maxSpeed", 150.0);
+    return axisCfgSvc_ ? axisCfgSvc_->GetMaxSpeed(axis) : 150.0;
 }
 
 bool HardwareManager::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)
 {
-    int i = static_cast<int>(axis);
-    if (i < 0 || i >= axisConfigs_.size()) return false;
-    axisConfigs_[i].jogSpeed = mmOrDegPerSec;
-
-    auto& cfg = ConfigManager::instance();
-    cfg.set("axes." + std::string(kAxisConfigKeys[i]) + ".jogSpeed", mmOrDegPerSec);
-    return true;
+    return axisCfgSvc_ && axisCfgSvc_->SetJogSpeed(axis, mmOrDegPerSec);
 }
 
 QString HardwareManager::AxisUnit(LogicalAxis axis) const
 {
-    int i = static_cast<int>(axis);
-    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return QString();
-    if (AxisMap::Get(axis).type == AxisBinding::Type::Servo)
-        return QStringLiteral("\xC2\xB0");
-    if (i < axisConfigs_.size() && axisConfigs_[i].axisType == 1)
-        return QStringLiteral("mm");
-    return QStringLiteral("\xC2\xB0");
+    return axisCfgSvc_ ? axisCfgSvc_->AxisUnit(axis) : QString();
 }
 
 double HardwareManager::GetLimitMin(LogicalAxis axis) const
 {
-    int i = static_cast<int>(axis);
-    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return -180.0;
-    return ConfigManager::instance().getValue<double>(
-        std::string("axes.") + kAxisConfigKeys[i] + ".limitMin", -180.0);
+    return axisCfgSvc_ ? axisCfgSvc_->GetLimitMin(axis) : -180.0;
 }
 
 double HardwareManager::GetLimitMax(LogicalAxis axis) const
 {
-    int i = static_cast<int>(axis);
-    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return 180.0;
-    return ConfigManager::instance().getValue<double>(
-        std::string("axes.") + kAxisConfigKeys[i] + ".limitMax", 180.0);
+    return axisCfgSvc_ ? axisCfgSvc_->GetLimitMax(axis) : 180.0;
 }
 
 bool HardwareManager::IsWithinSoftLimits(LogicalAxis axis, double pos) const
 {
-    double lo = GetLimitMin(axis);
-    double hi = GetLimitMax(axis);
-    if (lo >= hi) return true; // 配置错误（min>=max）：视为不限制
-    return pos >= lo - 1e-6 && pos <= hi + 1e-6;
+    return axisCfgSvc_ ? axisCfgSvc_->IsWithinSoftLimits(axis, pos)
+                       : (pos >= -1e6 && pos <= 1e6);
 }
 
 bool HardwareManager::IsAxisEnabled(LogicalAxis axis) const
@@ -873,6 +837,8 @@ void HardwareManager::PollTick()
                         MotorStatus st = s;
                         st.axisId   = i;  // 映射为逻辑轴索引
                         st.position = AxisConverter::Instance().ToPhysical(i, static_cast<long>(s.position));
+                        if (i >= 0 && i < axisConfigs_.size() && axisConfigs_[i].inverted)
+                            st.position = -st.position;  // 界面按逻辑坐标显示
                         vec.push_back(st);
 
                         // 软限位：点动过程中到达边界 → 自动停止（只处理越界/到边界的轴）
@@ -891,6 +857,19 @@ void HardwareManager::PollTick()
                             }
                         } else if (i < lastSoftLimitHit_.size() && lastSoftLimitHit_[i]) {
                             lastSoftLimitHit_[i] = false;
+                        }
+
+                        // 回零完成检测：HomeAxis 置位后，卡 running 复位 → 回零结束，释放门禁与忙态
+                        if (i < homingActive_.size() && homingActive_[i] && !st.running) {
+                            homingActive_[i] = false;
+                            if (i < axisBusyUntilMs_.size()) {
+                                axisBusyUntilMs_[i] = 0;
+                                if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
+                                    axisBusyNotified_[i] = true;
+                                    emit axisMoveFinished(i);
+                                }
+                            }
+                            SPDLOG_INFO("[HardwareManager] axis {} home done (running cleared)", i);
                         }
                         break;
                     }

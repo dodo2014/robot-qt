@@ -7,8 +7,8 @@
 
 class QPushButton;
 
-#include "HAL/IMotionCard.h"
-#include "HAL/IAxisServo.h"
+#include "HAL/interfaces/IMotionCard.h"
+#include "HAL/interfaces/IAxisServo.h"
 
 class ManualControlPage : public QWidget
 {

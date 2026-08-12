@@ -131,6 +131,10 @@ tcpCalibration
 | `limitMin` | double | 软限位最小值。**已强制执行**：`MoveAbs/Go` 目标越界拒绝下发；点动到达边界自动停止；点动启动方向已在边界则拒绝。由 `HardwareManager` 实时读取本配置（`GetLimitMin`/`IsWithinSoftLimits`），在「电控与映射」中修改立即生效 |
 | `limitMax` | double | 软限位最大值。同 `limitMin`，单位与轴一致（旋转轴 °，直线轴 mm）。配置错误（`limitMin >= limitMax`）时视为不限制并打印警告 |
 | `homeOffset` | double | 原点偏移 |
+| `homeDir` | int | 回零搜索方向：1=正方向, 0=反方向（仅卡轴） |
+| `homeSns` | int | HOME 信号极性：`-1`=不修改(沿用卡默认)；`0`/`1`=调用 `MC_HomeSns` 设置该轴 HOME 高有效（触发电机反向搜索）。真机标定时用 ±1 对比确定搜索方向 |
+| `homeRapidVel` | double | 回零**快速段**速度，单位 **Pulse/ms**（SDK 单位，搜索段） |
+| `homeLocatVel` | double | 回零**定位段**速度，单位 **Pulse/ms**（碰 HOME 信号后精定位段） |
 | `sortOrder` | int | 界面显示排序序号，升序排列 |
 
 ### 传动与换算参数 (transmission)
@@ -150,6 +154,27 @@ tcpCalibration
 - `maxAngle` — 最大物理角度
 
 当前默认 `transmission` 值：`encoderResolution=131072`、`microSteps=512`、`gearRatio=50`、`lead=20.0`、`minPulse=500`、`maxPulse=2500`、`minAngle=0`、`maxAngle=180`。
+
+### 回零速度换算（Pulse/ms）
+
+`homeRapidVel` / `homeLocatVel` 单位是 **Pulse/ms**（BoPai SDK 中 `dHomeRapidVel`/`dHomeLocatVel` 的单位），与界面速度框（°/s 或 mm/s）不同，需要换算：
+
+```
+每度脉冲 PulsesPerDeg = (encoderResolution × microSteps) / (gearRatio × 360)    // 旋转轴
+每毫米脉冲 PulsesPerMm = (encoderResolution × microSteps) / (gearRatio × lead)  // 直线轴
+
+homeRapidVel (Pulse/ms) = 目标快速段速度 (°/s) × PulsesPerDeg / 1000
+homeLocatVel (Pulse/ms) = 目标定位段速度 (°/s) × PulsesPerDeg / 1000
+```
+
+**J1 实例**（encoderResolution=25600, microSteps=1, gearRatio=0.01, 旋转轴）：
+```
+PulsesPerDeg = (25600 × 1) / (0.01 × 360) = 7111.11 脉冲/度
+homeRapidVel(3°/s) = 3 × 7111.11 / 1000 ≈ 21.3 Pulse/ms
+homeLocatVel(1°/s) = 1 × 7111.11 / 1000 ≈ 7.1  Pulse/ms
+```
+
+**回零两段速度说明**：快速段用于从任意位置朝 HOME 信号大行程搜索（找得快）；碰到信号后卡降速到定位段缓慢重逼近/退出信号沿，消除惯性/间隙/滤波带来的触发位置漂移（停得准）。J1 当前 `ulHomeBackDis=0`（无反向退出），定位段仅在碰信号瞬间生效。
 
 ### 默认轴列表
 

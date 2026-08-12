@@ -38,6 +38,10 @@ struct AxisConfig
     int     microSteps    = 512;
     double  lead          = 20.0;  // 直线轴导程 (mm/rev)
     double  gearRatio     = 1.0;   // 电机每转时输出端转数 (从动/主动), 直线轴参与换算
+    int     homeDir       = 1;     // 回零搜索方向：1=正方向, 0=反方向（仅卡轴使用）
+    int     homeSns       = -1;    // HOME 信号极性：-1=不改(沿用卡默认), 0/1=设置有效电平（仅卡轴使用）
+    double  homeRapidVel  = 5.0;   // 回零快速段速度 (Pulse/ms，SDK 单位)，搜索段
+    double  homeLocatVel  = 1.0;   // 回零定位段速度 (Pulse/ms，SDK 单位)，碰信号后精定位
 };
 
 class IMotionCard

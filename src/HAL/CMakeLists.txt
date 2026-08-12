@@ -6,45 +6,49 @@ option(USE_BOPAI "Build BoPai motion card support" ON)
 option(USE_XRSERVO "Build XR serial servo support" ON)
 
 set(HAL_SOURCES
-    SimCard.cpp
-    SimServo.cpp
-    SimCamera.cpp
-    SimAlgo.cpp
-    CameraCaptureWorker.cpp
-    FrameSaver.cpp
-    FrameConverter.cpp
-    AxisConverter.cpp
-    HardwareManager.cpp
+    motioncard/SimCard.cpp
+    servo/SimServo.cpp
+    camera/SimCamera.cpp
+    algorithm/SimAlgo.cpp
+    camera/CameraManager.cpp
+    camera/CameraCaptureWorker.cpp
+    camera/FrameSaver.cpp
+    camera/FrameConverter.cpp
+    core/AxisConverter.cpp
+    core/AxisConfigService.cpp
+    core/HardwareManager.cpp
 )
 
 set(HAL_HEADERS
-    IMotionCard.h
-    SimCard.h
-    SimServo.h
-    SimCamera.h
-    SimAlgo.h
-    SimVision.h
-    CameraCaptureWorker.h
-    FrameSaver.h
-    FrameConverter.h
-    IAxisServo.h
-    IEndEffector.h
-    ICamera.h
-    IPuffAlgorithm.h
-    HALFactory.h
-    AxisConverter.h
-    AxisMap.h
-    HardwareManager.h
+    interfaces/IMotionCard.h
+    interfaces/IAxisServo.h
+    interfaces/IEndEffector.h
+    interfaces/ICamera.h
+    interfaces/IPuffAlgorithm.h
+    motioncard/SimCard.h
+    servo/SimServo.h
+    camera/SimCamera.h
+    algorithm/SimAlgo.h
+    camera/SimVision.h
+    camera/CameraManager.h
+    camera/CameraCaptureWorker.h
+    camera/FrameSaver.h
+    camera/FrameConverter.h
+    core/HALFactory.h
+    core/AxisConverter.h
+    core/AxisConfigService.h
+    core/AxisMap.h
+    core/HardwareManager.h
 )
 
 if(USE_BOPAI)
-    list(APPEND HAL_SOURCES BoPaiCard.cpp)
-    list(APPEND HAL_HEADERS BoPaiCard.h)
+    list(APPEND HAL_SOURCES motioncard/BoPaiCard.cpp)
+    list(APPEND HAL_HEADERS motioncard/BoPaiCard.h)
 endif()
 
 if(USE_XRSERVO)
-    list(APPEND HAL_SOURCES XRServo.cpp)
-    list(APPEND HAL_HEADERS XRServo.h)
+    list(APPEND HAL_SOURCES servo/XRServo.cpp)
+    list(APPEND HAL_HEADERS servo/XRServo.h)
 endif()
 
 add_library(HAL STATIC
@@ -54,6 +58,12 @@ add_library(HAL STATIC
 
 target_include_directories(HAL PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/interfaces
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/motioncard
+    ${CMAKE_CURRENT_SOURCE_DIR}/servo
+    ${CMAKE_CURRENT_SOURCE_DIR}/camera
+    ${CMAKE_CURRENT_SOURCE_DIR}/algorithm
     ${CMAKE_SOURCE_DIR}/src
 )
 

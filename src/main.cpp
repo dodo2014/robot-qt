@@ -1,4 +1,4 @@
-﻿#include <QApplication>
+#include <QApplication>
 #include <QDir>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -22,7 +22,7 @@
 #include <iomanip>
 
 #include "UI/MainWindow.h"
-#include "HAL/HardwareManager.h"
+#include "HAL/core/HardwareManager.h"
 
 // 控制台信号处理器：直接关闭 cmd 窗口（CTRL_CLOSE_EVENT）或 Ctrl+C/Ctrl+Break
 // 属于 Windows 强杀进程，不经过 Qt 事件循环，QCoreApplication::aboutToQuit
