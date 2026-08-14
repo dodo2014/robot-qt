@@ -56,6 +56,8 @@ public:
 private:
     void RefreshStatus();
     double PulsePerUnit(int axisId) const;
+    // 物理加速度 (°/s² 或 mm/s²) -> 卡端加速度单位 Pulse/ms²
+    double AccelToPulse(int axisId, double mmOrDegPerSec2) const;
     AxisConfig* Cfg(int axisId);
     const AxisConfig* Cfg(int axisId) const;
 

@@ -639,6 +639,7 @@ void ProcessPage::RefreshActionDetail(int idx)
 
 void ProcessPage::OnNewScheme()
 {
+    SPDLOG_INFO("[Process] 新增方案 clicked");
     auto& schemes = ProcessManager::instance().schemes();
     QString name = ProcessManager::generateUniqueSchemeName(schemes);
     SchemeData sd;
@@ -652,6 +653,7 @@ void ProcessPage::OnNewScheme()
 
 void ProcessPage::OnDeleteScheme()
 {
+    SPDLOG_INFO("[Process] 删除方案 clicked");
     const auto& schemes = ProcessManager::instance().schemes();
     if (m_currentSchemeIdx < 0 || schemes.isEmpty()) return;
 
@@ -681,6 +683,7 @@ void ProcessPage::OnDeleteScheme()
 void ProcessPage::OnConfirmSwitch()
 {
     int idx = m_schemeCombo->currentIndex();
+    SPDLOG_INFO("[Process] 确认切换方案 clicked idx={}", idx);
     const auto& schemes = ProcessManager::instance().schemes();
     if (idx < 0 || idx >= schemes.size()) return;
     if (idx == m_currentSchemeIdx) return;
@@ -702,6 +705,7 @@ void ProcessPage::OnConfirmSwitch()
 
 void ProcessPage::OnStepExecute()
 {
+    SPDLOG_INFO("[Process] 步进执行 clicked");
     if (m_currentSchemeIdx < 0) return;
     const auto& schemes = ProcessManager::instance().schemes();
     if (m_currentActionIdx < 0) {
@@ -717,6 +721,7 @@ void ProcessPage::OnStepExecute()
 
 void ProcessPage::OnNewAction()
 {
+    SPDLOG_INFO("[Process] 新增动作 clicked");
     if (m_currentSchemeIdx < 0) {
         QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先新增或选择一个方案"));
         return;
@@ -770,6 +775,7 @@ void ProcessPage::OnNewAction()
 
 void ProcessPage::OnEditAction()
 {
+    SPDLOG_INFO("[Process] 编辑动作 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) {
         QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先选择一个动作"));
         return;
@@ -828,6 +834,7 @@ void ProcessPage::OnEditAction()
 
 void ProcessPage::OnDeleteAction()
 {
+    SPDLOG_INFO("[Process] 删除动作 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
     if (m_currentActionIdx >= actions.size()) return;
@@ -855,6 +862,7 @@ void ProcessPage::OnDeleteAction()
 
 void ProcessPage::OnAddPoint()
 {
+    SPDLOG_INFO("[Process] 添加点位 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
     if (action.type != ActionType::Move) return;
@@ -868,6 +876,7 @@ void ProcessPage::OnAddPoint()
 
 void ProcessPage::OnDeletePoint()
 {
+    SPDLOG_INFO("[Process] 删除点位 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
     if (action.type != ActionType::Move) return;
@@ -887,6 +896,7 @@ void ProcessPage::OnDeletePoint()
 
 void ProcessPage::OnMoveUp()
 {
+    SPDLOG_INFO("[Process] 上移点位 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& pts = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx].points;
     int row = m_pointTable->currentRow();
@@ -899,6 +909,7 @@ void ProcessPage::OnMoveUp()
 
 void ProcessPage::OnMoveDown()
 {
+    SPDLOG_INFO("[Process] 下移点位 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& pts = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx].points;
     int row = m_pointTable->currentRow();
@@ -911,6 +922,7 @@ void ProcessPage::OnMoveDown()
 
 void ProcessPage::OnMoveActionUp()
 {
+    SPDLOG_INFO("[Process] 上移动作 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
     if (m_currentActionIdx <= 0) return;
@@ -922,6 +934,7 @@ void ProcessPage::OnMoveActionUp()
 
 void ProcessPage::OnMoveActionDown()
 {
+    SPDLOG_INFO("[Process] 下移动作 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
     auto& actions = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions;
     if (m_currentActionIdx < 0 || m_currentActionIdx >= actions.size() - 1) return;
@@ -938,6 +951,7 @@ void ProcessPage::OnTeachRead()
 
 void ProcessPage::OnSaveAction()
 {
+    SPDLOG_INFO("[Process] 保存动作 clicked");
     if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) {
         QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先选择一个动作"));
         return;

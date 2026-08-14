@@ -7,6 +7,7 @@
 #include "ToggleSwitch.h"
 
 #include "HAL/core/HardwareManager.h"
+#include "spdlog/spdlog.h"
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -402,12 +403,14 @@ void MainWindow::OnNavButtonClicked(int index)
     if (index >= 0 && index < stack_->count())
     {
         stack_->setCurrentIndex(index);
+        SPDLOG_INFO("[MainWindow] 导航切换到页面 {}", index);
         qDebug() << "[MainWindow] Navigated to page" << index;
     }
 }
 
 void MainWindow::OnModeToggled(bool autoMode)
 {
+    SPDLOG_INFO("[MainWindow] 模式切换为 {}", autoMode ? "自动" : "手动");
     qDebug() << "[全局] 模式切换为:" << (autoMode ? "自动" : "手动");
 }
 

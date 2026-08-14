@@ -7,6 +7,7 @@
 #include <QPushButton>
 #include <QDebug>
 #include <QSizePolicy>
+#include "spdlog/spdlog.h"
 
 AutoRunPage::AutoRunPage(QWidget* parent)
     : QWidget(parent)
@@ -245,25 +246,30 @@ void AutoRunPage::SetupUI()
 
 void AutoRunPage::OnStartClicked()
 {
+    SPDLOG_INFO("[AutoRun] 启动 clicked (stub)");
     qDebug() << "按钮被点击: 启动";
 }
 
 void AutoRunPage::OnResetClicked()
 {
+    SPDLOG_INFO("[AutoRun] 复位 clicked (stub)");
     qDebug() << "按钮被点击: 复位";
 }
 
 void AutoRunPage::OnStopClicked()
 {
+    SPDLOG_INFO("[AutoRun] 停止 clicked (stub)");
     qDebug() << "按钮被点击: 停止";
 }
 
 void AutoRunPage::OnInitClicked()
 {
+    SPDLOG_INFO("[AutoRun] 初始化 clicked (stub)");
     qDebug() << "按钮被点击: 初始化";
 }
 
 void AutoRunPage::OnEmergencyClicked()
 {
+    SPDLOG_INFO("[AutoRun] 急停 clicked (stub)");
     qDebug() << "按钮被点击: 急停";
 }

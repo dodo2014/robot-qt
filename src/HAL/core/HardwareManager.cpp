@@ -47,6 +47,25 @@ void EnsureConfigLoaded()
     SPDLOG_INFO("[HardwareManager] No config.json found, using defaults");
 }
 
+// 轴异常状态的可读描述（用于日志落盘；UI 侧各自组装 tooltip）
+QString DescribeAxisStatus(const MotorStatus& s)
+{
+    QString parts;
+    auto add = [&parts](const QString& t) {
+        if (!parts.isEmpty()) parts += QStringLiteral("、");
+        parts += t;
+    };
+    if (s.alarm)             add(QStringLiteral("驱动器报警"));
+    if (s.followError)       add(QStringLiteral("跟随误差(失步)"));
+    if (s.estop)             add(QStringLiteral("急停"));
+    if (s.limitPositive)     add(QStringLiteral("正硬限位"));
+    if (s.limitNegative)     add(QStringLiteral("负硬限位"));
+    if (s.softLimitPositive) add(QStringLiteral("正软限位"));
+    if (s.softLimitNegative) add(QStringLiteral("负软限位"));
+    if (s.homeFail)          add(QStringLiteral("回零失败"));
+    return parts.isEmpty() ? QStringLiteral("无") : parts;
+}
+
 } // namespace
 
 HardwareManager& HardwareManager::instance()
@@ -186,11 +205,19 @@ bool HardwareManager::Initialize()
     lastLimitPos_.fill(false, static_cast<int>(LogicalAxis::Count));
     lastLimitNeg_.fill(false, static_cast<int>(LogicalAxis::Count));
     lastSoftLimitHit_.fill(false, static_cast<int>(LogicalAxis::Count));
+    lastPollPos_.fill(0.0, static_cast<int>(LogicalAxis::Count));
+    lastAbnormalSig_.fill(0UL, static_cast<int>(LogicalAxis::Count));
     // 使能门禁：初始全轴未使能。使能必须手动触发（EnableAll），程序不自动使能。
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
     axisBusyUntilMs_.fill(0, static_cast<int>(LogicalAxis::Count));
     axisBusyNotified_.fill(false, static_cast<int>(LogicalAxis::Count));
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+    // 用真实位置初始化软限位方向判断基线，避免首轮 delta 以 0 为基准误判（上电位置非 0 时）
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        auto b = AxisMap::Get(static_cast<LogicalAxis>(i));
+        if (b.type == AxisBinding::Type::Card && i < lastPollPos_.size())
+            lastPollPos_[i] = GetPosition(static_cast<LogicalAxis>(i));
+    }
     pollTimer_->start();
 
     initialized_ = true;
@@ -280,6 +307,8 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         ac.homeSns      = cfg.getValue<int>(base + "homeSns", -1);
         ac.homeRapidVel = cfg.getValue<double>(base + "homeRapidVel", 5.0);
         ac.homeLocatVel = cfg.getValue<double>(base + "homeLocatVel", 1.0);
+        ac.homeBackDis  = static_cast<long>(cfg.getValue<double>(base + "homeBackDis", 0.0));
+        ac.homeMaxDis   = static_cast<long>(cfg.getValue<double>(base + "homeMaxDis", 0.0));
         // 换算公式（参考 bopai\puff\MotionController.cpp）：
         //   rotation: pulsesPerUnit = 每圈脉冲 / 360          (脉冲/度)
         //   linear:   pulsesPerUnit = 每圈脉冲 / (lead×gearRatio) (脉冲/mm)
@@ -352,6 +381,8 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
         double speedPulse = (speed > 0)
             ? AxisConverter::Instance().SpeedToPulse(ai, speed)
             : -1.0;
+        // 加速度实时读 config（与「电控与映射」编辑一致），运动前刷新卡内快照
+        motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
         bool ok = motionCard_->MoveAbs(binding.index, pulse, speedPulse);
         if (ok) {
             // 卡轴按速度估算到位时间用于 Go 按钮门禁（卡本身 running 态也由轮询驱动）
@@ -397,17 +428,18 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
     bool inv = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) && axisConfigs_[ai].inverted;
     int effDir = inv ? -direction : direction;
 
-    // 软限位校验：启动方向已在边界则拒绝
+    // 软限位校验：启动方向已在边界则拒绝（用「逻辑方向 direction」配「逻辑位置 current/lo/hi」。
+    // 不能用物理方向 effDir：inverted 轴上两者相反，会导致上下界逻辑颠倒——越界方向放行、回程方向误拦）
     double lo = GetLimitMin(axis);
     double hi = GetLimitMax(axis);
     if (lo < hi) {
         double current = GetPosition(axis);
-        if (effDir > 0 && current >= hi - 1e-6) {
+        if (direction > 0 && current >= hi - 1e-6) {
             emit softLimitTriggered(static_cast<int>(axis), true);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at max soft limit {:.1f}", static_cast<int>(axis), hi);
             return false;
         }
-        if (effDir < 0 && current <= lo + 1e-6) {
+        if (direction < 0 && current <= lo + 1e-6) {
             emit softLimitTriggered(static_cast<int>(axis), false);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at min soft limit {:.1f}", static_cast<int>(axis), lo);
             return false;
@@ -417,6 +449,8 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         double pulseSpeed = AxisConverter::Instance().SpeedToPulse(static_cast<int>(axis), mmOrDegPerSec);
+        // 加速度实时读 config（与「电控与映射」编辑一致），运动前刷新卡内快照
+        motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
         bool ok = motionCard_->MoveJog(binding.index, pulseSpeed, -1.0, effDir);
         if (ok) MarkAxisBusy(axis, 3600 * 1000);   // 点动视为忙
         return ok;
@@ -629,6 +663,14 @@ bool HardwareManager::DisableAll()
 
     // 断使能视为回零中止
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+    // 清除忙态时间戳，避免急停/断使能后 30s 内再回零/Go 被 IsAxisBusy 拒绝
+    for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
+        axisBusyUntilMs_[i] = 0;
+        if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
+            axisBusyNotified_[i] = true;
+            emit axisMoveFinished(i);
+        }
+    }
 
     bool ok = true;
     if (motionCard_) {
@@ -655,6 +697,14 @@ bool HardwareManager::EmergencyStop()
     // 急停后需重新手动使能才能继续点动/移动/回零
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+    // 清除忙态时间戳，避免急停后 30s 内再回零/Go 被 IsAxisBusy 拒绝
+    for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
+        axisBusyUntilMs_[i] = 0;
+        if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
+            axisBusyNotified_[i] = true;
+            emit axisMoveFinished(i);
+        }
+    }
     emit enableStateChanged();
     return true;
 }
@@ -705,6 +755,11 @@ double HardwareManager::GetJogSpeed(LogicalAxis axis) const
 double HardwareManager::GetMaxSpeed(LogicalAxis axis) const
 {
     return axisCfgSvc_ ? axisCfgSvc_->GetMaxSpeed(axis) : 150.0;
+}
+
+double HardwareManager::GetMaxAccel(LogicalAxis axis) const
+{
+    return axisCfgSvc_ ? axisCfgSvc_->GetMaxAccel(axis) : 500.0;
 }
 
 bool HardwareManager::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)
@@ -842,22 +897,35 @@ void HardwareManager::PollTick()
                         vec.push_back(st);
 
                         // 软限位：点动过程中到达边界 → 自动停止（只处理越界/到边界的轴）
-                        // 仅在“正在点动撞入边界”时标记并通知，静止停在边界（如 Z/夹爪/挤出的
-                        // 初始最小位置 0）不触发，避免启动即误报。
+                        // 仅在"正在点动撞入边界"时标记并通知，静止停在边界不触发。
+                        // 回零中的轴不拦截：回零由卡 HomeStart 自行控制终点，PollTick 停止会打断回零搜索
                         double lo = GetLimitMin(static_cast<LogicalAxis>(i));
                         double hi = GetLimitMax(static_cast<LogicalAxis>(i));
                         if (lo < hi && (st.position >= hi - 1e-6 || st.position <= lo + 1e-6)) {
                             bool positive = st.position >= hi;
-                            if (st.running) {
-                                motionCard_->StopJog(binding.index);
-                                if (i < lastSoftLimitHit_.size() && !lastSoftLimitHit_[i]) {
-                                    lastSoftLimitHit_[i] = true;
-                                    emit softLimitTriggered(i, positive);
+                            bool isHoming = (i < homingActive_.size() && homingActive_[i]);
+                            if (st.running && !isHoming) {
+                                // 按运动方向判断：仅拦截"仍朝越界方向运动"的轴（如惯性冲过边界后
+                                // 继续向外冲）；若已开始朝边界内运动（反向离开越界区，delta 反向），
+                                // 必须放行，否则出现"数值超界后持续反向点动无反应、只能一点点按"。
+                                // 曾只按 position 越界 + running 即 StopJog，导致夹爪惯性冲到 0.2 后
+                                // 按住"松开"每 50ms 被 StopJog 打断、Go 回界内也被立即停（与 J1 同源）。
+                                double prev = (i < lastPollPos_.size()) ? lastPollPos_[i] : st.position;
+                                double delta = st.position - prev;
+                                bool movingOut = positive ? (delta >= 0.0) : (delta <= 0.0);
+                                if (movingOut) {
+                                    motionCard_->StopJog(binding.index);
+                                    if (i < lastSoftLimitHit_.size() && !lastSoftLimitHit_[i]) {
+                                        lastSoftLimitHit_[i] = true;
+                                        emit softLimitTriggered(i, positive);
+                                    }
                                 }
                             }
                         } else if (i < lastSoftLimitHit_.size() && lastSoftLimitHit_[i]) {
                             lastSoftLimitHit_[i] = false;
                         }
+                        // 记录本轮逻辑位置，供下一轮 delta 方向判断
+                        if (i < lastPollPos_.size()) lastPollPos_[i] = st.position;
 
                         // 回零完成检测：HomeAxis 置位后，卡 running 复位 → 回零结束，释放门禁与忙态
                         if (i < homingActive_.size() && homingActive_[i] && !st.running) {
@@ -896,6 +964,27 @@ void HardwareManager::PollTick()
                     lastLimitNeg_[i] = s.limitNegative;
                     emit limitTriggered(i, lastLimitPos_[i], s.limitNegative);
                 }
+
+                // 异常签名（报警/跟随误差/急停/硬软限位组合）边沿变化 → 落盘完整状态字日志
+                // 仅边沿打印，正常运行时静默，避免 50ms 轮询刷爆日志
+                unsigned long sig = 0;
+                if (s.alarm)             sig |= 1UL << 0;
+                if (s.followError)       sig |= 1UL << 1;
+                if (s.estop)             sig |= 1UL << 2;
+                if (s.limitPositive)     sig |= 1UL << 3;
+                if (s.limitNegative)     sig |= 1UL << 4;
+                if (s.softLimitPositive) sig |= 1UL << 5;
+                if (s.softLimitNegative) sig |= 1UL << 6;
+                if (i < lastAbnormalSig_.size() && sig != lastAbnormalSig_[i]) {
+                    lastAbnormalSig_[i] = sig;
+                    QString desc = DescribeAxisStatus(s);
+                    if (sig != 0)
+                        SPDLOG_WARN("[HardwareManager] axis {} abnormal -> {} | statusWord=0x{:08x} (pos={:.2f})",
+                                    i, desc.toStdString(), s.statusWord, s.position);
+                    else
+                        SPDLOG_INFO("[HardwareManager] axis {} abnormal cleared -> {} | statusWord=0x{:08x}",
+                                    i, desc.toStdString(), s.statusWord);
+                }
                 break;
             }
         }
@@ -928,6 +1017,15 @@ void HardwareManager::ReconnectServos()
 {
     // 两个舵机共享同一串口句柄，必须一起断开（引用计数归零才会真正关闭）
     if (jogTimer_->isActive()) jogTimer_->stop();
+    // 重连=运动中被打断，同步解除回零门禁 + 忙态
+    homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+    for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
+        axisBusyUntilMs_[i] = 0;
+        if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
+            axisBusyNotified_[i] = true;
+            emit axisMoveFinished(i);
+        }
+    }
     // 重连后舵机扭矩归零（断电/拔线），使能状态复位，需重新手动使能
     for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
         auto binding = AxisMap::Get(static_cast<LogicalAxis>(i));

@@ -434,6 +434,7 @@ void VisionTestPage::UpdateCameraState()
 
 void VisionTestPage::OnOpenCamera()
 {
+    SPDLOG_INFO("[VisionTest] 打开相机 clicked");
     auto& hw = HardwareManager::instance();
     if (!hw.camera()) {
         SetStatus(QStringLiteral("相机未注册，无法打开"));
@@ -447,8 +448,10 @@ void VisionTestPage::OnOpenCamera()
 
     deviceIdEdit_->setText(QStringLiteral("CAM-SIM-001"));
     if (hw.CameraOpen(w, h, fps)) {
+        SPDLOG_INFO("[VisionTest] 打开相机 ok {} @ {}fps", res.toStdString(), fps);
         SetStatus(QStringLiteral("相机已打开 %1 @ %2fps").arg(res).arg(fps));
     } else {
+        SPDLOG_WARN("[VisionTest] 打开相机 failed");
         SetStatus(QStringLiteral("相机打开失败"));
     }
     UpdateCameraState();
@@ -456,6 +459,7 @@ void VisionTestPage::OnOpenCamera()
 
 void VisionTestPage::OnCloseCamera()
 {
+    SPDLOG_INFO("[VisionTest] 关闭相机 clicked");
     auto& hw = HardwareManager::instance();
     hw.CameraClose();
     streaming_ = false;
@@ -465,6 +469,7 @@ void VisionTestPage::OnCloseCamera()
 
 void VisionTestPage::OnStartStream()
 {
+    SPDLOG_INFO("[VisionTest] 开始采集 clicked");
     auto& hw = HardwareManager::instance();
     if (!hw.camera()) {
         SetStatus(QStringLiteral("相机未注册，无法采集"));
@@ -480,8 +485,10 @@ void VisionTestPage::OnStartStream()
     int fps = fpsCombo_->currentText().toInt();
     if (hw.StartCameraStream(fps)) {
         streaming_ = true;
+        SPDLOG_INFO("[VisionTest] 开始采集 ok @ {}fps", fps);
         SetStatus(QStringLiteral("开始采集 @ %1fps").arg(fps));
     } else {
+        SPDLOG_WARN("[VisionTest] 开始采集 failed");
         SetStatus(QStringLiteral("开始采集失败"));
     }
     UpdateCameraState();
@@ -489,6 +496,7 @@ void VisionTestPage::OnStartStream()
 
 void VisionTestPage::OnStopStream()
 {
+    SPDLOG_INFO("[VisionTest] 停止采集 clicked");
     auto& hw = HardwareManager::instance();
     hw.StopCameraStream();
     streaming_ = false;
@@ -508,6 +516,7 @@ void VisionTestPage::OnFrameReady(const CameraFrame& frame)
 
 void VisionTestPage::OnSingleDetect()
 {
+    SPDLOG_INFO("[VisionTest] 单次检测 clicked");
     if (!hasFrame_) {
         SetStatus(QStringLiteral("无画面可检测，请先开始采集或加载图片"));
         return;
@@ -560,17 +569,20 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results)
 void VisionTestPage::OnToggleContinuous()
 {
     continuous_ = continuousBtn_->isChecked();
+    SPDLOG_INFO("[VisionTest] 连续检测 {} clicked", continuous_ ? "开" : "关");
     SetStatus(continuous_ ? QStringLiteral("连续检测已开启") : QStringLiteral("连续检测已关闭"));
 }
 
 void VisionTestPage::OnToggleOverlay()
 {
     showOverlay_ = overlayBtn_->isChecked();
+    SPDLOG_INFO("[VisionTest] 叠加框 {} clicked", showOverlay_ ? "开" : "关");
     RenderLatest();
 }
 
 void VisionTestPage::OnShowRGB()
 {
+    SPDLOG_INFO("[VisionTest] 显示 RGB clicked");
     rgbBtn_->setChecked(true);
     depthBtn_->setChecked(false);
     depthView_ = false;
@@ -579,6 +591,7 @@ void VisionTestPage::OnShowRGB()
 
 void VisionTestPage::OnShowDepth()
 {
+    SPDLOG_INFO("[VisionTest] 显示深度 clicked");
     depthBtn_->setChecked(true);
     rgbBtn_->setChecked(false);
     depthView_ = true;
@@ -624,6 +637,7 @@ QImage VisionTestPage::BuildDisplayImage()
 
 void VisionTestPage::OnSnapshot()
 {
+    SPDLOG_INFO("[VisionTest] 保存截图 clicked");
     if (!hasFrame_) {
         SetStatus(QStringLiteral("当前无画面，无法保存截图"));
         return;
@@ -640,13 +654,16 @@ void VisionTestPage::OnSnapshot()
 
 void VisionTestPage::OnLoadImage()
 {
+    SPDLOG_INFO("[VisionTest] 加载离线图片 clicked");
     QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("选择离线图片"),
         QString(), QStringLiteral("图片 (*.png *.jpg *.jpeg *.bmp)"));
     if (path.isEmpty()) return;
+    SPDLOG_INFO("[VisionTest] 加载离线图片 path={}", path.toStdString());
 
     QImage raw(path);
     if (raw.isNull()) {
+        SPDLOG_WARN("[VisionTest] 加载离线图片 failed: {}", path.toStdString());
         SetStatus(QStringLiteral("无法加载图片: %1").arg(path));
         return;
     }

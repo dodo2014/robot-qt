@@ -71,6 +71,7 @@ public:
     // ---- 每轴速度/限位参数（加载自 config，供 UI 读取与修改） ----
     double GetJogSpeed(LogicalAxis axis) const;
     double GetMaxSpeed(LogicalAxis axis) const;
+    double GetMaxAccel(LogicalAxis axis) const;
     bool   SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec);
 
     // ---- 轴显示单位（rotation→"°"，linear→"mm"，舵机→"°"） ----
@@ -172,8 +173,13 @@ private:
     QVector<bool> lastAlarm_;
     QVector<bool> lastLimitPos_;
     QVector<bool> lastLimitNeg_;
+    // 每个逻辑轴的异常签名（报警/跟随误差/急停/硬限位/软限位组合），边沿变化时落盘日志
+    QVector<unsigned long> lastAbnormalSig_;
     // 每个逻辑轴的软限位撞限边沿（去重，避免轮询重复发信号）
     QVector<bool> lastSoftLimitHit_;
+    // 每个逻辑轴上一轮轮询位置（逻辑坐标），用于软限位拦截按运动方向判断：
+    // 仅拦截"仍朝越界方向运动"的轴，朝边界内运动（离开越界区）放行
+    QVector<double> lastPollPos_;
 
     // 每个逻辑轴的使能状态（先使能再运动的安全门禁唯一事实源）。
     // 仅 EnableAll() 手动置 true；DisableAll()/EmergencyStop()/热重连置 false。

@@ -11,11 +11,19 @@ struct MotorStatus
     double  velocity      = 0.0;   // 脉冲/s
     double  current       = 0.0;
     bool    enabled       = false;
-    bool    alarm         = false;
+    bool    alarm         = false;   // 驱动器报警（SV_ALARM 输入）
     bool    homeDone      = false;
     bool    running       = false;
-    bool    limitPositive = false;
-    bool    limitNegative = false;
+    bool    limitPositive = false;   // 正硬限位
+    bool    limitNegative = false;   // 负硬限位
+    bool    homeSwitch    = false;   // HOME 信号当前电平（回零诊断）
+    bool    homeFail      = false;   // 回零失败标志
+    bool    followError   = false;   // 跟随误差（规划位置 vs 编码器位置，需编码器闭环才有意义）
+    bool    estop         = false;   // 急停
+    bool    softLimitPositive = false; // 正软限位（卡端）
+    bool    softLimitNegative = false; // 负软限位（卡端）
+    bool    arrive        = false;   // 到位（规划停止且误差小于阈值）
+    unsigned long statusWord = 0;    // 原始 32 位轴状态字（诊断/日志用）
 };
 
 struct AxisConfig
@@ -42,6 +50,8 @@ struct AxisConfig
     int     homeSns       = -1;    // HOME 信号极性：-1=不改(沿用卡默认), 0/1=设置有效电平（仅卡轴使用）
     double  homeRapidVel  = 5.0;   // 回零快速段速度 (Pulse/ms，SDK 单位)，搜索段
     double  homeLocatVel  = 1.0;   // 回零定位段速度 (Pulse/ms，SDK 单位)，碰信号后精定位
+    long    homeBackDis   = 0;     // 回零反向退出距离 (Pulse)：碰信号后的精确定位回退量，0=不退出
+    long    homeMaxDis    = 0;     // 回零最大搜索距离 (Pulse)：0=不限制；设非零值确保卡实际搜索（部分卡 0 = 不搜）
 };
 
 class IMotionCard

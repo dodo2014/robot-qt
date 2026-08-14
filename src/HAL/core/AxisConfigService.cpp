@@ -46,6 +46,16 @@ double AxisConfigService::GetMaxSpeed(LogicalAxis axis) const
     return ConfigManager::instance().getValue<double>(path + ".maxSpeed", 150.0);
 }
 
+double AxisConfigService::GetMaxAccel(LogicalAxis axis) const
+{
+    // 实时读 config（axes.<key>.maxAccel），保证「电控与映射」改加速度后立即生效
+    int i = static_cast<int>(axis);
+    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return 500.0;
+    std::string path = AxisCfgPath(axis);
+    if (path.empty()) return 500.0;
+    return ConfigManager::instance().getValue<double>(path + ".maxAccel", 500.0);
+}
+
 bool AxisConfigService::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)
 {
     int i = static_cast<int>(axis);

@@ -2,6 +2,7 @@
 
 #include "HAL/core/HardwareManager.h"
 #include "HAL/core/AxisMap.h"
+#include "spdlog/spdlog.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -43,6 +44,7 @@ ManualControlPage::ManualControlPage(QWidget* parent)
     alarmState_.fill(false, count);
     limitState_.fill(false, count);
     softLimitDir_.fill(0, count);
+    alarmDetail_.fill(QString(), count);
     enabledState_.fill(false, count);
     runningState_.fill(false, count);
     homeDoneState_.fill(false, count);
@@ -146,6 +148,7 @@ void ManualControlPage::SetupUI()
     estopBtn->setStyleSheet("QPushButton { background: #d53a3a; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 15px; color: white; } QPushButton:hover { background: #ef4a4a; }");
     estopBtn->setCursor(Qt::PointingHandCursor);
     connect(estopBtn, &QPushButton::clicked, this, [this]() {
+        SPDLOG_INFO("[ManualControl] 急停 clicked");
         HardwareManager::instance().EmergencyStop();
         SetHint(QStringLiteral("已触发急停，所有轴立即停止"));
     });
@@ -237,7 +240,9 @@ void ManualControlPage::SetupUI()
     tableLayout->setSpacing(6);
 
     // 【核心修复1】：把固定宽度变成了“拉伸比例因子” (数值代表相对比例)
-    QVector<int> colStretches = { 85, 28, 80, 75, 90, 75, 85, 75, 60, 55, 34 };
+    // 列序：轴 / 类型图标 / 速度 / 点动- / 当前位置 / 点动+ / 目标位置 / Go / 停止 / 回零 / 状态
+    // 2026-08: 类型图标列 40（图标留白，与轴名同列对齐）；速度列 110、目标列 100（容纳数值+框外单位 mm/s、°/s）
+    QVector<int> colStretches = { 85, 40, 110, 75, 90, 75, 100, 75, 60, 55, 34 };
 
     // Header row
     auto* headerWidget = new QWidget();
@@ -261,6 +266,10 @@ void ManualControlPage::SetupUI()
     for (int i = 0; i < axes.size(); ++i)
     {
         const auto& axis = axes[i];
+
+        // 单位：速度 mm/s 或 °/s；位置 mm 或 °（由轴类型决定，与 AxisUnit 一致）
+        QString posUnit   = HardwareManager::instance().AxisUnit(static_cast<LogicalAxis>(i));
+        QString speedUnit = posUnit.isEmpty() ? QString() : posUnit + QStringLiteral("/s");
         auto* rowWidget = new QWidget();
         rowWidget->setStyleSheet("background: #1a2129; border-radius: 8px;");
 
@@ -280,7 +289,7 @@ void ManualControlPage::SetupUI()
         typeIcon->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         rowLayout->addWidget(typeIcon, colStretches[1]);
 
-        // Col 2: Speed
+        // Col 2: Speed（spin + 单位标签同列，单位在框外）
         auto* speedSpin = new QDoubleSpinBox();
         speedSpin->setRange(0, 99999.99);
         speedSpin->setDecimals(1);
@@ -289,7 +298,16 @@ void ManualControlPage::SetupUI()
         // 在 reparent/polish 时崩溃(Qt6 QSS 已知问题)。用 setFont 实现同等视觉效果。
         speedSpin->setFont([&](){ QFont f = speedSpin->font(); f.setPointSizeF(9.75); return f; }());
         speedSpin->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px; border-radius: 6px;");
-        speedSpin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        speedSpin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto* speedUnitLabel = new QLabel(speedUnit);
+        speedUnitLabel->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 500; background: transparent; border: none; padding: 0 2px;");
+        speedUnitLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        auto* speedCell = new QWidget();
+        auto* speedCellLay = new QHBoxLayout(speedCell);
+        speedCellLay->setContentsMargins(0, 0, 0, 0);
+        speedCellLay->setSpacing(4);
+        speedCellLay->addWidget(speedSpin, 1);
+        speedCellLay->addWidget(speedUnitLabel);
         speedSpins_.append(speedSpin);
         int speedIdx = i;
         connect(speedSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
@@ -308,7 +326,7 @@ void ManualControlPage::SetupUI()
                 HardwareManager::instance().SetJogSpeed(static_cast<LogicalAxis>(speedIdx), v);
             }
         });
-        rowLayout->addWidget(speedSpin, colStretches[2]);
+        rowLayout->addWidget(speedCell, colStretches[2]);
 
         // Col 3: Jog -
         auto* jogMinus = new QPushButton(axis.isExtrude ? QStringLiteral("\xE2\x88\x92 回抽") : (axis.isGripper ? QStringLiteral("\xE2\x88\x92 松开") : QStringLiteral("\xE2\x88\x92")));
@@ -339,16 +357,25 @@ void ManualControlPage::SetupUI()
         connect(jogPlus, &QPushButton::released, this, [this, axisIdx]() { OnJogStop(axisIdx); });
         rowLayout->addWidget(jogPlus, colStretches[5]);
 
-        // Col 6: Target position
+        // Col 6: Target position（spin + 单位标签同列，单位在框外）
         auto* targetSpin = new QDoubleSpinBox();
         targetSpin->setRange(-99999.99, 99999.99);
         targetSpin->setDecimals(1);
         targetSpin->setValue(axis.target);
         targetSpin->setFont([&](){ QFont f = targetSpin->font(); f.setPointSizeF(9.75); return f; }());
         targetSpin->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px; border-radius: 6px;");
-        targetSpin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        targetSpin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto* targetUnitLabel = new QLabel(posUnit);
+        targetUnitLabel->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 500; background: transparent; border: none; padding: 0 2px;");
+        targetUnitLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        auto* targetCell = new QWidget();
+        auto* targetCellLay = new QHBoxLayout(targetCell);
+        targetCellLay->setContentsMargins(0, 0, 0, 0);
+        targetCellLay->setSpacing(4);
+        targetCellLay->addWidget(targetSpin, 1);
+        targetCellLay->addWidget(targetUnitLabel);
         targetSpins_.append(targetSpin);
-        rowLayout->addWidget(targetSpin, colStretches[6]);
+        rowLayout->addWidget(targetCell, colStretches[6]);
 
         // Col 7: Go button
         auto* goBtn = new QPushButton(QStringLiteral("Go"));
@@ -404,9 +431,11 @@ void ManualControlPage::SetupUI()
 
 void ManualControlPage::OnGlobalEnable()
 {
+    SPDLOG_INFO("[ManualControl] 全局使能 clicked");
     bool connected = HardwareManager::instance().IsMotionCardConnected()
                      || HardwareManager::instance().IsServoConnected();
     bool ok = HardwareManager::instance().EnableAll();
+    SPDLOG_INFO("[ManualControl] 全局使能 result: ok={} connected={}", ok, connected);
     if (!connected) SetHint(QStringLiteral("未连接硬件，命令可能未生效"));
     else if (!ok)   SetHint(QStringLiteral("部分轴使能失败"));
     else            SetHint(QStringLiteral("全局轴使能完成"));
@@ -415,9 +444,11 @@ void ManualControlPage::OnGlobalEnable()
 
 void ManualControlPage::OnGlobalDisable()
 {
+    SPDLOG_INFO("[ManualControl] 全局断使能 clicked");
     bool connected = HardwareManager::instance().IsMotionCardConnected()
                      || HardwareManager::instance().IsServoConnected();
     bool ok = HardwareManager::instance().DisableAll();
+    SPDLOG_INFO("[ManualControl] 全局断使能 result: ok={} connected={}", ok, connected);
     if (!connected) SetHint(QStringLiteral("未连接硬件，命令可能未生效"));
     else if (!ok)   SetHint(QStringLiteral("部分轴断使能失败"));
     else            SetHint(QStringLiteral("全局断使能完成"));
@@ -426,14 +457,16 @@ void ManualControlPage::OnGlobalDisable()
 
 void ManualControlPage::OnGlobalHome()
 {
+    SPDLOG_INFO("[ManualControl] 一键回零 clicked");
     bool connected = HardwareManager::instance().IsMotionCardConnected()
                      || HardwareManager::instance().IsServoConnected();
     // 需求3：全局轴使能未执行 / 全局断使能执行后，不允许一键回零
     if (!HardwareManager::instance().IsGlobalEnabled()) {
+        SPDLOG_WARN("[ManualControl] 一键回零 rejected: 未全局使能");
         SetHint(QStringLiteral("请先执行全局轴使能，再进行一键回零"), "#e0a520");
         return;
     }
-    if (!connected) { SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
+    if (!connected) { SPDLOG_WARN("[ManualControl] 一键回零 rejected: 未连接硬件"); SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
     homingPending_ = true;
     HardwareManager::instance().HomeAll();
     SetHint(QStringLiteral("回零中..."));
@@ -446,6 +479,7 @@ void ManualControlPage::OnJogMinus(int axis)
     double speed = (axis < speedSpins_.size()) ? speedSpins_[axis]->value() : 20.0;
     double maxSpeed = HardwareManager::instance().GetMaxSpeed(static_cast<LogicalAxis>(axis));
     if (maxSpeed > 0.0 && speed > maxSpeed) speed = maxSpeed;
+    SPDLOG_INFO("[ManualControl] 点动- axis={} speed={}", axis, speed);
     if (HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, -1)) {
         runningState_[axis] = true;
         if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
@@ -470,6 +504,7 @@ void ManualControlPage::OnJogPlus(int axis)
     double speed = (axis < speedSpins_.size()) ? speedSpins_[axis]->value() : 20.0;
     double maxSpeed = HardwareManager::instance().GetMaxSpeed(static_cast<LogicalAxis>(axis));
     if (maxSpeed > 0.0 && speed > maxSpeed) speed = maxSpeed;
+    SPDLOG_INFO("[ManualControl] 点动+ axis={} speed={}", axis, speed);
     if (HardwareManager::instance().MoveJog(static_cast<LogicalAxis>(axis), speed, 1)) {
         runningState_[axis] = true;
         if (axis < softLimitDir_.size()) softLimitDir_[axis] = 0;
@@ -489,6 +524,7 @@ void ManualControlPage::OnJogPlus(int axis)
 void ManualControlPage::OnJogStop(int axis)
 {
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
+    SPDLOG_INFO("[ManualControl] 点动停止 axis={}", axis);
     HardwareManager::instance().StopJog(static_cast<LogicalAxis>(axis));
     runningState_[axis] = false;
     if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(true);
@@ -501,6 +537,7 @@ void ManualControlPage::OnGoClicked(int axis)
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
     if (axis < targetSpins_.size()) {
         double target = targetSpins_[axis]->value();
+        SPDLOG_INFO("[ManualControl] Go clicked axis={} target={}", axis, target);
         // 软限位：目标超出范围直接拒绝（HardwareManager::MoveAbs 也会再拦一道）
         double lo = HardwareManager::instance().GetLimitMin(static_cast<LogicalAxis>(axis));
         double hi = HardwareManager::instance().GetLimitMax(static_cast<LogicalAxis>(axis));
@@ -533,6 +570,7 @@ void ManualControlPage::OnGoClicked(int axis)
 void ManualControlPage::OnStopAxis(int axis)
 {
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
+    SPDLOG_INFO("[ManualControl] 停止 axis={}", axis);
     HardwareManager::instance().StopAxis(static_cast<LogicalAxis>(axis));
     runningState_[axis] = false;
     if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(true);
@@ -550,6 +588,7 @@ void ManualControlPage::OnAxisMoveFinished(int axis)
 void ManualControlPage::OnHomeAxis(int axis)
 {
     if (axis < 0 || axis >= static_cast<int>(LogicalAxis::Count)) return;
+    SPDLOG_INFO("[ManualControl] 回零 clicked axis={}", axis);
     if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis))) {
         SetHint(QStringLiteral("请先执行全局轴使能，再进行回零"), "#e0a520");
         return;
@@ -572,8 +611,20 @@ void ManualControlPage::OnStateUpdated(const QVector<MotorStatus>& axes)
             enabledState_[st.axisId]  = st.enabled;
             runningState_[st.axisId]  = st.running;
             homeDoneState_[st.axisId] = st.homeDone;
-            alarmState_[st.axisId]    = st.alarm;
-            limitState_[st.axisId]    = st.limitPositive || st.limitNegative;
+            // 告警 = 驱动器报警 / 跟随误差(失步) / 急停（硬软限位另算为"限位"）
+            alarmState_[st.axisId]    = st.alarm || st.followError || st.estop;
+            limitState_[st.axisId]    = st.limitPositive || st.limitNegative
+                                        || st.softLimitPositive || st.softLimitNegative;
+            // 组装告警详情 tooltip
+            QStringList reasons;
+            if (st.alarm)             reasons << QStringLiteral("驱动器报警");
+            if (st.followError)       reasons << QStringLiteral("跟随误差(失步)");
+            if (st.estop)             reasons << QStringLiteral("急停");
+            if (st.limitPositive)     reasons << QStringLiteral("正硬限位");
+            if (st.limitNegative)     reasons << QStringLiteral("负硬限位");
+            if (st.softLimitPositive) reasons << QStringLiteral("正软限位");
+            if (st.softLimitNegative) reasons << QStringLiteral("负软限位");
+            alarmDetail_[st.axisId]   = reasons.join(QStringLiteral("、"));
             RefreshStatusDot(st.axisId);
         }
     }
@@ -636,7 +687,11 @@ void ManualControlPage::RefreshStatusDot(int axis)
     QString color;
     QString tip;
     bool enabled = HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis));
-    if (alarmState_[axis])        { color = "#ff5f5f"; tip = QStringLiteral("报警"); }
+    if (alarmState_[axis]) {
+        color = "#ff5f5f";
+        QString detail = (axis < alarmDetail_.size()) ? alarmDetail_[axis] : QString();
+        tip = detail.isEmpty() ? QStringLiteral("报警") : detail;
+    }
     else if (limitState_[axis] || (axis < softLimitDir_.size() && softLimitDir_[axis] != 0))
                                   { color = "#ffb347"; tip = QStringLiteral("限位"); }
     else if (runningState_[axis]) { color = "#4fb3ff"; tip = QStringLiteral("运行中"); }

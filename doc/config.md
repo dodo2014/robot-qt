@@ -35,6 +35,8 @@
 
 当前已注册实现：`SimCard`（运动卡仿真）、`SimServo`（舵机仿真）、`Bopai`（博派运动卡）、`XRServo`（XR 串口舵机）。`ZMotion`/`Leisai` 为预留品牌（SDK 目录已建）。
 
+**当前配置**（`config/config.json`）：`motionCardType=Bopai`、`servoType=XRServo`、`cameraType=SimCamera`、`algorithmType=SimAlgo`、`enabled=true`（真机模式）。
+
 ---
 
 ## communication — 通信与连接
@@ -42,19 +44,20 @@
 ```
 communication
 ├── motionCard
-│   ├── ip       "192.168.1.100"   网口 IP
+│   ├── ip       "192.168.0.1"     运动控制卡网口 IP
+│   ├── pcIp     "192.168.0.100"   本机(PC) 网卡 IP（BoPai 网口连接需两端 IP，须与卡同网段）
 │   └── port     "60000"           端口 (string)
 ├── servo
 │   ├── port     "COM3"            舵机串口号
 │   └── baudRate "115200"          波特率
 ├── servos[0..1]                   舵机 ID 与限位（HardwareManager 喂给 XRServo）
 │   ├── name     "J2"/"R"          逻辑名称
-│   ├── id       1/2               串口总线舵机 ID
+│   ├── id       0/1               串口总线舵机 ID（真机实测 J2→id0、R→id1）
 │   ├── minAngle 0.0               最小角度 (°)
-│   ├── maxAngle 180.0             最大角度 (°)
+│   ├── maxAngle 180.0/120.0       最大角度 (°)
 │   └── speed    50.0              运行速度 (°/s)
 └── camera
-    └── sn       "336L"            奥比中光相机序列号
+    └── sn       "336L"            相机序列号
 ```
 
 > `motionCard.port`、`servo.baudRate`、`camera.sn` 均为字符串，配置界面直接以文本读写。
@@ -91,8 +94,8 @@ kinematics
 ```
 vision
 ├── confidenceThreshold  0.85      识别置信度阈值
-├── depthZMin            11        深度过滤 Z 最小值 (mm)
-└── depthZMax            135       深度过滤 Z 最大值 (mm)
+├── depthZMin            6.0       深度过滤 Z 最小值 (mm)
+└── depthZMax            496.0     深度过滤 Z 最大值 (mm)
 ```
 
 ---
@@ -124,17 +127,21 @@ tcpCalibration
 | `name` | string | 轴名称（独立命名） |
 | `hardwareType` | int | 0=运动控制卡, 1=串口总线舵机 |
 | `portId` | int | 物理端口 ID |
+| `axisType` | string | `"rotation"`(角度°)/`"linear"`(直线 mm)，仅卡轴（舵机轴无此字段）。换算用 360° 还是 导程×减速比 |
 | `direction` | int | 0=正向 Normal, 1=反向 Inverted |
-| `maxSpeed` | double | 最大速度 |
-| `maxAccel` | double | 最大加速度 |
-| `jogSpeed` | double | 点动 (JOG) 速度 |
-| `limitMin` | double | 软限位最小值。**已强制执行**：`MoveAbs/Go` 目标越界拒绝下发；点动到达边界自动停止；点动启动方向已在边界则拒绝。由 `HardwareManager` 实时读取本配置（`GetLimitMin`/`IsWithinSoftLimits`），在「电控与映射」中修改立即生效 |
+| `maxSpeed` | double | 最大速度，单位按轴类型：旋转轴 `°/s`、直线轴 `mm/s`（卡轴经 `AccelToPulse`/`SpeedToPulse` 换算下发） |
+| `maxAccel` | double | 最大加速度，单位按轴类型：旋转轴 `°/s²`、直线轴 `mm/s²`。**卡端 `TTrapPrm.acc` 为 Pulse/ms²**，BoPaiCard 内部经 `AccelToPulse = maxAccel×PulsePerUnit/1e6` 换算 |
+| `jogSpeed` | double | 点动 (JOG) 速度，单位按轴类型：旋转轴 `°/s`、直线轴 `mm/s` |
+| `calibrationPending` | bool | 换算参数待真机标定（仅部分卡轴） |
+| `limitMin` | double | 软限位最小值。**已强制执行**：`MoveAbs/Go` 目标越界拒绝下发；点动到达边界自动停止；点动启动方向已在边界则拒绝。由 `HardwareManager` 实时读取本配置（`GetLimitMin`/`IsWithinSoftLimits`），在「电控与映射」中修改立即生效。**拦截按运动方向区分**：仅停止"仍朝越界方向运动"的轴（惯性冲过边界后反向离开/Go 回界内均放行，见 `AGENTS.md`「拦截必须区分运动方向」） |
 | `limitMax` | double | 软限位最大值。同 `limitMin`，单位与轴一致（旋转轴 °，直线轴 mm）。配置错误（`limitMin >= limitMax`）时视为不限制并打印警告 |
 | `homeOffset` | double | 原点偏移 |
 | `homeDir` | int | 回零搜索方向：1=正方向, 0=反方向（仅卡轴） |
 | `homeSns` | int | HOME 信号极性：`-1`=不修改(沿用卡默认)；`0`/`1`=调用 `MC_HomeSns` 设置该轴 HOME 高有效（触发电机反向搜索）。真机标定时用 ±1 对比确定搜索方向 |
 | `homeRapidVel` | double | 回零**快速段**速度，单位 **Pulse/ms**（SDK 单位，搜索段） |
 | `homeLocatVel` | double | 回零**定位段**速度，单位 **Pulse/ms**（碰 HOME 信号后精定位段） |
+| `homeBackDis` | int | 碰信号后的反向退出脉冲数（`ulHomeBackDis`），用于精确定位：找到信号→反向退出→重逼近。0=不退出，直接停在信号沿 |
+| `homeMaxDis` | int | 最大搜索距离 Pulse（`ulHomeMaxDis`）。**须设非零值**：部分 BoPai 固件将 0 解释为"搜索 0 距离"而非"不限"，导致回零立即完成。J1 推设为全行程脉冲数的 2~3 倍（如 1,500,000≈211°×7111） |
 | `sortOrder` | int | 界面显示排序序号，升序排列 |
 
 ### 传动与换算参数 (transmission)
@@ -153,7 +160,20 @@ tcpCalibration
 - `minAngle` — 最小物理角度
 - `maxAngle` — 最大物理角度
 
-当前默认 `transmission` 值：`encoderResolution=131072`、`microSteps=512`、`gearRatio=50`、`lead=20.0`、`minPulse=500`、`maxPulse=2500`、`minAngle=0`、`maxAngle=180`。
+未显式配置时程序使用的默认 `transmission` 值：`encoderResolution=131072`、`microSteps=512`、`gearRatio=50`、`lead=20.0`、`minPulse=500`、`maxPulse=2500`、`minAngle=0`、`maxAngle=180`。
+
+**当前各轴实际参数**（`config/config.json`）：
+
+| Key | hardwareType | portId | direction | axisType | jogSpeed | maxSpeed | maxAccel | transmission |
+|---|---|---|---|---|---|---|---|---|
+| `Axis_J1` | 0 卡 | 0 | 1 反向 | rotation | 20.0 | 50.0 | 360.0 | 25600 / 1 / 0.01 / lead360（驱动器 25600 脉冲/圈 + 谐波减速 1:100） |
+| `Axis_J2` | 1 舵机 | 0 | 0 | – | 15.0 | 120.0 | 232.0 | minPulse500 / maxPulse2500 / minAngle0 / maxAngle180 |
+| `Axis_Z` | 0 卡 | 1 | 0 | linear | 5.0 | 500.0 | 100.0 | 32000 / 1 / 0.5 / lead5（皮带20:40 + 丝杆导程5mm；`calibrationPending`） |
+| `Axis_R` | 1 舵机 | 1 | 0 | – | 30.0 | 180.0 | 240.0 | minPulse500 / maxPulse2500 / minAngle0 / maxAngle180 |
+| `Axis_Gripper` | 0 卡 | 3 | 0 | linear | 1.0 | 10.0 | 50.0 | 40000 / 1 / 1 / lead2（驱动器 XINJE DP3L1-224 拨码 SW5-SW8 全 OFF=40000 Pulse/rev，已标定；lead 暂定 2mm） |
+| `Axis_Extruder` | 0 卡 | 2 | 0 | rotation | 1.0 | 20.0 | 100.0 | 32000 / 1 / 1 / lead10 |
+
+> transmission 列格式（卡轴）：`encoderResolution / microSteps / gearRatio / lead`。
 
 ### 回零速度换算（Pulse/ms）
 
@@ -174,18 +194,20 @@ homeRapidVel(3°/s) = 3 × 7111.11 / 1000 ≈ 21.3 Pulse/ms
 homeLocatVel(1°/s) = 1 × 7111.11 / 1000 ≈ 7.1  Pulse/ms
 ```
 
-**回零两段速度说明**：快速段用于从任意位置朝 HOME 信号大行程搜索（找得快）；碰到信号后卡降速到定位段缓慢重逼近/退出信号沿，消除惯性/间隙/滤波带来的触发位置漂移（停得准）。J1 当前 `ulHomeBackDis=0`（无反向退出），定位段仅在碰信号瞬间生效。
+**回零全部参数说明**：`homeDir`（搜索方向）、`homeSns`（信号极性，-1=不改/0=低有效/1=高有效）、`homeRapidVel`/`homeLocatVel`（速度）、`homeBackDis`（碰信号后反向退出精定位，0=不退出）、`homeMaxDis`（最大搜索距离，**须非零**）。J1 当前 `homeBackDis=0`（无反向退出），定位段仅在碰信号瞬间生效。
 
-### 默认轴列表
+### 默认轴列表（当前 config.json 实际值）
 
-| Key | 名称 | 硬件类型 | sortOrder | limitMin | limitMax | jogSpeed |
-|---|---|---|---|---|---|---|
-| `Axis_J1` | [1] 轴1 (大臂 J1) | 运动控制卡 | 0 | -180 | 182 | 150 |
-| `Axis_J2` | [2] 轴2 (小臂 J2) | 串口总线舵机 | 1 | -90 | 90 | 85 |
-| `Axis_Z` | [3] 轴3 (Z轴) | 运动控制卡 | 2 | 0 | 200 | 150 |
-| `Axis_R` | [4] 轴4 (翻转 R) | 串口总线舵机 | 3 | -180 | 180 | 100 |
-| `Axis_Gripper` | [5] 轴5 (夹爪) | 运动控制卡 | 4 | 0 | 100 | 155 |
-| `Axis_Extruder` | [6] 轴6 (挤出) | 运动控制卡 | 5 | 0 | 100 | 160 |
+| Key | 名称 | 硬件类型 | sortOrder | limitMin | limitMax | jogSpeed | 回零配置 |
+|---|---|---|---|---|---|---|---|
+| `Axis_J1` | [1] 轴1 (大臂 J1) | 运动控制卡 | 0 | -180 | 180 | 20.0 | homeDir=0, homeSns=0, homeRapidVel=21.3, homeLocatVel=7.1, homeBackDis=0, homeMaxDis=1,500,000 |
+| `Axis_J2` | [2] 轴2 (小臂 J2) | 串口总线舵机 | 1 | 0 | 180 | 15.0 | – |
+| `Axis_Z` | [3] 轴3 (Z轴) | 运动控制卡 | 2 | 0 | 200 | 5.0 | – |
+| `Axis_R` | [4] 轴4 (翻转 R) | 串口总线舵机 | 3 | 0 | 180 | 30.0 | – |
+| `Axis_Gripper` | [5] 轴5 (夹爪) | 运动控制卡 | 4 | -5 | 20 | 1.0 | – |
+| `Axis_Extruder` | [6] 轴6 (挤出) | 运动控制卡 | 5 | 0 | 100 | 1.0 | – |
+
+> 仅 `Axis_J1` 配置了回零参数（`homeDir/homeSns/homeRapidVel/homeLocatVel/homeBackDis/homeMaxDis`）；其余卡轴使用代码默认值（`homeDir=1`、`homeSns=-1`、`homeRapidVel=5.0`、`homeLocatVel=1.0`、`homeBackDis=0`、`homeMaxDis=0`）。**所有卡轴 `homeMaxDis` 均应设非零值**（见字段说明）。
 
 ---
 

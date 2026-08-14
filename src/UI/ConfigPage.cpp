@@ -737,7 +737,7 @@ QWidget* ConfigPage::CreateElecMapTab()
         return e;
     };
 
-    auto makeDoubleSpin = [](double min, double max, int width = 80) -> QDoubleSpinBox* {
+    auto makeDoubleSpin = [](double min, double max, int width = 100) -> QDoubleSpinBox* {
         auto* s = new QDoubleSpinBox();
         s->setRange(min, max);
         s->setFixedWidth(width);
@@ -838,12 +838,40 @@ QWidget* ConfigPage::CreateElecMapTab()
     auto* limitMaxSpin = makeDoubleSpin(0.0, 100000.0);
     auto* homeSpin = makeDoubleSpin(-100000.0, 100000.0);
 
-    g2g->addRow(makeLabel(QStringLiteral("最大速度 (Max Speed)")),   maxSpeedSpin);
-    g2g->addRow(makeLabel(QStringLiteral("最大加速度 (Max Accel)")), maxAccelSpin);
-    g2g->addRow(makeLabel(QStringLiteral("点动速度 (Jog Speed)")),   jogSpeedSpin);
-    g2g->addRow(makeLabel(QStringLiteral("软限位 Min (Limit Min)")), limitMinSpin);
-    g2g->addRow(makeLabel(QStringLiteral("软限位 Max (Limit Max)")), limitMaxSpin);
-    g2g->addRow(makeLabel(QStringLiteral("原点偏移 (Home Pos)")),    homeSpin);
+    // 单位标签（框外，spin 右侧），由 loadAxis / 轴类型切换动态 setText
+    auto makeUnitLabel = []() -> QLabel* {
+        auto* l = new QLabel(QStringLiteral("\u00B0"));
+        l->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+        l->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+        return l;
+    };
+    auto* maxSpeedUnit = makeUnitLabel();
+    auto* maxAccelUnit = makeUnitLabel();
+    auto* jogSpeedUnit = makeUnitLabel();
+    auto* limitMinUnit = makeUnitLabel();
+    auto* limitMaxUnit = makeUnitLabel();
+    auto* homeUnit     = makeUnitLabel();
+
+    // spin + 单位标签 打包成同一 field
+    auto makeUnitCell = [](QWidget* spin, QWidget* unit) -> QWidget* {
+        auto* cell = new QWidget();
+        auto* lay = new QHBoxLayout(cell);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(6);   // 稍微拉近一点输入框和单位的距离
+
+        lay->addWidget(spin); // 【核心修复 1】：去掉后面的 , 1 (取消拉伸因子)
+        lay->addWidget(unit);
+        lay->addStretch();    // 【核心修复 2】：在最右侧加一个弹簧，把它们往左边顶，紧贴 Label！
+
+        return cell;
+        };
+
+    g2g->addRow(makeLabel(QStringLiteral("最大速度 (Max Speed)")),   makeUnitCell(maxSpeedSpin, maxSpeedUnit));
+    g2g->addRow(makeLabel(QStringLiteral("最大加速度 (Max Accel)")), makeUnitCell(maxAccelSpin, maxAccelUnit));
+    g2g->addRow(makeLabel(QStringLiteral("点动速度 (Jog Speed)")),   makeUnitCell(jogSpeedSpin, jogSpeedUnit));
+    g2g->addRow(makeLabel(QStringLiteral("软限位 Min (Limit Min)")), makeUnitCell(limitMinSpin, limitMinUnit));
+    g2g->addRow(makeLabel(QStringLiteral("软限位 Max (Limit Max)")), makeUnitCell(limitMaxSpin, limitMaxUnit));
+    g2g->addRow(makeLabel(QStringLiteral("原点偏移 (Home Pos)")),    makeUnitCell(homeSpin, homeUnit));
 
     // Group 3: 传动与换算参数
     auto* grp3 = new QGroupBox(QStringLiteral("传动与换算参数"));
@@ -893,6 +921,7 @@ QWidget* ConfigPage::CreateElecMapTab()
     // ── Function to load axis data by key ───────────────────
     auto loadAxis = [this, hwTypeCombo, portSpin, dirCombo, maxSpeedSpin, maxAccelSpin,
                      jogSpeedSpin, limitMinSpin, limitMaxSpin, homeSpin, axisTypeCombo,
+                     maxSpeedUnit, maxAccelUnit, jogSpeedUnit, limitMinUnit, limitMaxUnit, homeUnit,
                      encoderEdit, microStepEdit, gearEdit, leadEdit, minPulseEdit, maxPulseEdit,
                      minAngleEdit, maxAngleEdit](const QString& key) {
         try {
@@ -959,6 +988,19 @@ QWidget* ConfigPage::CreateElecMapTab()
             maxAngleEdit->setText(QString::number(cfg.getValue<int>(tp + ".maxAngle", 180)));
 
             transStack_->setCurrentIndex(hwType);
+
+            // 单位符号（英文）：按轴类型动态设置（框外标签）
+            // rotation/舵机 -> °、°/s、°/s²；linear -> mm、mm/s、mm/s²
+            bool linear = cfg.getValue<std::string>(p + ".axisType", "rotation") == "linear";
+            QString posU = linear ? QStringLiteral("mm") : QStringLiteral("\u00B0");
+            QString velU = linear ? QStringLiteral("mm/s") : QStringLiteral("\u00B0/s");
+            QString accU = linear ? QStringLiteral("mm/s\u00B2") : QStringLiteral("\u00B0/s\u00B2");
+            maxSpeedUnit->setText(velU);
+            maxAccelUnit->setText(accU);
+            jogSpeedUnit->setText(velU);
+            limitMinUnit->setText(posU);
+            limitMaxUnit->setText(posU);
+            homeUnit->setText(posU);
 
             SPDLOG_INFO("[ElecMap] loadAxis key {} done", key.toStdString());
         } catch (const std::exception& e) {
@@ -1073,9 +1115,20 @@ QWidget* ConfigPage::CreateElecMapTab()
         });
     };
     connect(axisTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-        [this, pathFor](int idx) {
+        [this, pathFor, maxSpeedUnit, maxAccelUnit, jogSpeedUnit,
+         limitMinUnit, limitMaxUnit, homeUnit](int idx) {
         auto p = pathFor("axisType");
         if (!p.empty()) ConfigManager::instance().set(p, idx == 1 ? "linear" : "rotation");
+        // 轴类型切换 → 立即刷新单位标签
+        QString posU = (idx == 1) ? QStringLiteral("mm") : QStringLiteral("\u00B0");
+        QString velU = (idx == 1) ? QStringLiteral("mm/s") : QStringLiteral("\u00B0/s");
+        QString accU = (idx == 1) ? QStringLiteral("mm/s\u00B2") : QStringLiteral("\u00B0/s\u00B2");
+        maxSpeedUnit->setText(velU);
+        maxAccelUnit->setText(accU);
+        jogSpeedUnit->setText(velU);
+        limitMinUnit->setText(posU);
+        limitMaxUnit->setText(posU);
+        homeUnit->setText(posU);
     });
     connectTransEdit(encoderEdit, "transmission.encoderResolution");
     connectTransEdit(microStepEdit, "transmission.microSteps");

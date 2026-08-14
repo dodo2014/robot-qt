@@ -56,6 +56,7 @@ private:
     QVector<bool> alarmState_;
     QVector<bool> limitState_;
     QVector<int> softLimitDir_;   // 1=到达最大限位, -1=到达最小限位, 0=正常
+    QVector<QString> alarmDetail_; // 每轴告警详情（驱动器报警/跟随误差/急停/硬软限位），tooltip 用
     QVector<bool> enabledState_;
     QVector<bool> runningState_;
     QVector<bool> homeDoneState_;

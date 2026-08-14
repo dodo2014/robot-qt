@@ -20,8 +20,15 @@ constexpr unsigned long kStatusAlarm        = AXIS_STATUS_SV_ALARM;      // 0x00
 constexpr unsigned long kStatusEnable       = AXIS_STATUS_ENABLE;        // 0x00000200
 constexpr unsigned long kStatusRunning      = AXIS_STATUS_RUNNING;       // 0x00000400
 constexpr unsigned long kStatusHomeSuccess  = AXIS_STATUS_HOME_SUCESS;   // 0x00002000
+constexpr unsigned long kStatusHomeSwitch   = AXIS_STATUS_HOME_SWITCH;   // 0x00004000
+constexpr unsigned long kStatusHomeFail     = AXIS_STATUS_HOME_FAIL;     // 0x00400000
 constexpr unsigned long kStatusPosHardLimit = AXIS_STATUS_POS_HARD_LIMIT;// 0x00000020
 constexpr unsigned long kStatusNegHardLimit = AXIS_STATUS_NEG_HARD_LIMIT;// 0x00000040
+constexpr unsigned long kStatusEstop        = AXIS_STATUS_ESTOP;         // 0x00000001
+constexpr unsigned long kStatusPosSoftLimit = AXIS_STATUS_POS_SOFT_LIMIT;// 0x00000004
+constexpr unsigned long kStatusNegSoftLimit = AXIS_STATUS_NEG_SOFT_LIMIT;// 0x00000008
+constexpr unsigned long kStatusFollowErr    = AXIS_STATUS_FOLLOW_ERR;    // 0x00000010
+constexpr unsigned long kStatusArrive       = AXIS_STATUS_ARRIVE;        // 0x00000800
 
 } // namespace
 
@@ -121,6 +128,11 @@ double BoPaiCard::PulsePerUnit(int axisId) const
         double mmPerRev = c.lead * c.gearRatio;
         denom = (mmPerRev > 0) ? mmPerRev : 1.0;
     } else {
+        // 旋转轴：减速比补偿（gearRatio = 输出端转数/电机转数，1:100 谐波 → 0.01）。
+        // 必须与 AxisConverter::PhysicalPerPulse 保持一致（steps /= gearRatio），
+        // 否则 PulsePerUnit 少算 1/gearRatio 倍 → AccelToPulse 加速度低估 → 点动/Go 几乎不动。
+        double gear = (c.gearRatio > 0) ? c.gearRatio : 1.0;
+        steps /= gear;
         denom = 360.0;
     }
     return steps / denom; // 脉冲/物理单位
@@ -138,6 +150,14 @@ const AxisConfig* BoPaiCard::Cfg(int axisId) const
     return (it != configs_.end()) ? &it->second : nullptr;
 }
 
+double BoPaiCard::AccelToPulse(int axisId, double mmOrDegPerSec2) const
+{
+    // 物理加速度 (°/s² 或 mm/s²) -> 卡端加速度单位 Pulse/ms²
+    // 每秒速度变化(mm或°/s) × 每物理单位脉冲数 = 脉冲/s²；再 /1e6 得脉冲/ms²
+    if (mmOrDegPerSec2 <= 0.0) return 0.0;
+    return mmOrDegPerSec2 * PulsePerUnit(axisId) / 1000000.0;
+}
+
 // ============================================================
 // 状态回读 — MC_GetAllSysStatusSX
 // ============================================================
@@ -152,12 +172,20 @@ void BoPaiCard::RefreshStatus()
         unsigned long st = impl_->sysStatus.lAxisStatus[axisId];
         MotorStatus s;
         s.axisId        = axisId;
-        s.enabled       = (st & kStatusEnable) != 0;
+        s.statusWord    = st;   // 保留原始 32 位状态字（诊断）
         s.alarm         = (st & kStatusAlarm) != 0;
+        s.enabled       = (st & kStatusEnable) != 0;
         s.running       = (st & kStatusRunning) != 0;
         s.homeDone      = (st & kStatusHomeSuccess) != 0;
         s.limitPositive = (st & kStatusPosHardLimit) != 0;
         s.limitNegative = (st & kStatusNegHardLimit) != 0;
+        s.homeSwitch    = (st & kStatusHomeSwitch) != 0;
+        s.homeFail      = (st & kStatusHomeFail) != 0;
+        s.estop         = (st & kStatusEstop) != 0;
+        s.softLimitPositive = (st & kStatusPosSoftLimit) != 0;
+        s.softLimitNegative = (st & kStatusNegSoftLimit) != 0;
+        s.followError   = (st & kStatusFollowErr) != 0;
+        s.arrive        = (st & kStatusArrive) != 0;
 
         // 状态回读：直接回读卡内位置寄存器（脉冲），与 IMotionCard「脉冲单位」契约一致；
         // 物理换算统一由 HardwareManager/AxisConverter 完成。
@@ -202,6 +230,8 @@ bool BoPaiCard::HomeAxis(int axisId)
         int homeSns = Cfg(axisId)->homeSns;   // config: axes.<key>.homeSns, -1=不改 0/1=有效电平
         double homeRapidVel = Cfg(axisId)->homeRapidVel;   // Pulse/ms
         double homeLocatVel = Cfg(axisId)->homeLocatVel;   // Pulse/ms
+        long   homeBackDis  = Cfg(axisId)->homeBackDis;    // Pulse，碰信号后反向退出距离
+        long   homeMaxDis   = Cfg(axisId)->homeMaxDis;     // Pulse，最大搜索距离（0=不限制）
         TAxisHomePrm prm{};
         prm.nHomeMode = 1;
         prm.nHomeDir = homeDir;
@@ -211,18 +241,28 @@ bool BoPaiCard::HomeAxis(int axisId)
         prm.dHomeIndexVel = 1.0;
         prm.dHomeAcc = 1.0;
         prm.ulHomeIndexDis = 0;
-        prm.ulHomeBackDis = 0;
+        prm.ulHomeBackDis = (homeBackDis > 0) ? homeBackDis : 0;
         prm.nDelayTimeBeforeZero = 1000;
-        prm.ulHomeMaxDis = 0;
+        prm.ulHomeMaxDis = static_cast<unsigned long>(homeMaxDis);
         short ch = static_cast<short>(axisId + 1);
         int ecSns = 0;
         if (homeSns >= 0) {
-            ecSns = impl_->card.MC_HomeSns(static_cast<unsigned long>(1 << axisId));
-            SPDLOG_INFO("[BoPaiCard] Home axis {} set HOME sense={} mask=0x{:x} ret={}",
-                        axisId, homeSns, 1 << axisId, ecSns);
+            // MC_HomeSns 参数是全局位掩码（每 bit 对应一轴），homeSns=1→置位(高有效)、0→清零(低有效)
+            unsigned long curSense = 0;
+            impl_->card.MC_GetHomeSns(&curSense);
+            if (homeSns != 0)
+                curSense |= (1UL << axisId);
+            else
+                curSense &= ~(1UL << axisId);
+            ecSns = impl_->card.MC_HomeSns(curSense);
+            SPDLOG_INFO("[BoPaiCard] Home axis {} set HOME sense={} senseReg=0x{:x} ret={}",
+                        axisId, homeSns, curSense, ecSns);
         }
         // 前置清理：HomeStart 需要轴就绪（使能 + 静止），未使能先重新使能
         RefreshStatus();
+        MotorStatus st0 = lastStatus_.count(axisId) ? lastStatus_[axisId] : MotorStatus{};
+        SPDLOG_INFO("[BoPaiCard] Home axis {} pre-start: pos={:.0f}p running={} homeDone={} homeSwitch={} homeFail={} enabled={}",
+                    axisId, st0.position, st0.running, st0.homeDone, st0.homeSwitch, st0.homeFail, st0.enabled);
         if (lastStatus_.count(axisId) && !lastStatus_[axisId].enabled) {
             int ecOn = impl_->card.MC_AxisOn(ch);
             SPDLOG_INFO("[BoPaiCard] Home axis {} re-enable before home ret={}", axisId, ecOn);
@@ -242,20 +282,25 @@ bool BoPaiCard::HomeAxis(int axisId)
             std::this_thread::sleep_for(std::chrono::milliseconds(150));
         }
         SPDLOG_INFO("[BoPaiCard] Home axis {} started mode={} dir={} offset={} rapid={} locat={} "
-                    "maxDis={} | sns={} set={} stop={} start={}",
+                    "backDis={} maxDis={} | sns={} set={} stop={} start={}",
                     axisId, prm.nHomeMode, prm.nHomeDir, prm.lOffset,
-                    prm.dHomeRapidVel, prm.dHomeLocatVel, prm.ulHomeMaxDis,
+                    prm.dHomeRapidVel, prm.dHomeLocatVel, prm.ulHomeBackDis, prm.ulHomeMaxDis,
                     ecSns, ec0, ecStop0, ec2);
         if (ec0 != 0 || ec2 != 0) {
             SPDLOG_WARN("[BoPaiCard] Home axis {} failed: set={} start={}", axisId, ec0, ec2);
             return false;
         }
         // 启动后验证（持锁内直接读 lastStatus_，避免 GetAxisStatus 二次加锁死锁）：
-        // running=false 说明回零立即结束（常见于 HOME 信号极性反导致卡认为已在原点）
+        // running=false + homeDone=false 说明回零立即结束且未成功：常见于 HOME 信号当前已有效
+        // （homeSwitch=true → 卡认为已在原点），或回零方向/极性配置问题
         RefreshStatus();
         MotorStatus st = lastStatus_.count(axisId) ? lastStatus_[axisId] : MotorStatus{};
-        SPDLOG_INFO("[BoPaiCard] Home axis {} post-start: running={} homeDone={} alarm={} enabled={}",
-                    axisId, st.running, st.homeDone, st.alarm, st.enabled);
+        SPDLOG_INFO("[BoPaiCard] Home axis {} post-start: running={} homeDone={} homeSwitch={} homeFail={} alarm={} enabled={}",
+                    axisId, st.running, st.homeDone, st.homeSwitch, st.homeFail, st.alarm, st.enabled);
+        if (!st.running && !st.homeDone)
+            SPDLOG_WARN("[BoPaiCard] Home axis {} finished immediately WITHOUT success: homeSwitch={} homeFail={} "
+                        "(HOME 信号当前有效? 检查机械挡块/接线极性, 或手动点动离开信号区后重试)",
+                        axisId, st.homeSwitch, st.homeFail);
     }
     return true;
 }
@@ -284,8 +329,13 @@ bool BoPaiCard::StopAll()
 bool BoPaiCard::EmergencyStop()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (impl_->useHardware)
+    if (impl_->useHardware) {
+        // 先退出所有轴的 HOME 状态机，再全轴停止：仅 MC_Stop 可能无法退出卡端 HOME 状态机，
+        // 导致急停后该轴 Jog/Trap（点动/Go）被卡拒绝（与 StopAxis 同语义）
+        for (const auto& [axisId, cfg] : configs_)
+            impl_->card.MC_HomeStop(static_cast<short>(axisId + 1));
         impl_->card.MC_Stop(0xFFFFFFFF, 0xFFFFFFFF);
+    }
     SPDLOG_WARN("[BoPaiCard] EMERGENCY STOP");
     return true;
 }
@@ -300,8 +350,8 @@ bool BoPaiCard::MoveAbs(int axisId, double position, double speed)
     long posPulse = static_cast<long>(position);
 
     TTrapPrm trapPrm{};
-    trapPrm.acc = (cfg && cfg->maxAccel > 0) ? cfg->maxAccel : 200.0;
-    trapPrm.dec = (cfg && cfg->maxDecel > 0) ? cfg->maxDecel : trapPrm.acc;
+    trapPrm.acc = (cfg && cfg->maxAccel > 0) ? AccelToPulse(axisId, cfg->maxAccel) : 200.0;
+    trapPrm.dec = (cfg && cfg->maxDecel > 0) ? AccelToPulse(axisId, cfg->maxDecel) : trapPrm.acc;
     trapPrm.velStart = 0;
     trapPrm.smoothTime = 0;
 
@@ -314,7 +364,7 @@ bool BoPaiCard::MoveAbs(int axisId, double position, double speed)
     impl_->card.MC_SetVel(static_cast<short>(axisId + 1), vel);
     impl_->card.MC_Update(0x0001 << axisId);
 
-    SPDLOG_INFO("[BoPaiCard] Axis {} MoveAbs: {} pulses, vel={:.2f} p/ms", axisId, posPulse, vel);
+    SPDLOG_INFO("[BoPaiCard] Axis {} MoveAbs: {} pulses, vel={:.2f} p/ms, acc={:.6f} p/ms2", axisId, posPulse, vel, trapPrm.acc);
     RefreshStatus();
     return true;
 }
@@ -331,8 +381,8 @@ bool BoPaiCard::MoveRel(int axisId, double distance, double speed)
     long targetPulse = curPos + distPulse;
 
     TTrapPrm trapPrm{};
-    trapPrm.acc = (cfg && cfg->maxAccel > 0) ? cfg->maxAccel : 200.0;
-    trapPrm.dec = (cfg && cfg->maxDecel > 0) ? cfg->maxDecel : trapPrm.acc;
+    trapPrm.acc = (cfg && cfg->maxAccel > 0) ? AccelToPulse(axisId, cfg->maxAccel) : 200.0;
+    trapPrm.dec = (cfg && cfg->maxDecel > 0) ? AccelToPulse(axisId, cfg->maxDecel) : trapPrm.acc;
     trapPrm.velStart = 0;
     trapPrm.smoothTime = 0;
 
@@ -367,8 +417,8 @@ bool BoPaiCard::MoveJog(int axisId, double speedPulsesPerSec, double accel, int 
     velDir = velDir / 1000.0; // Pulse/ms
 
     TJogPrm jogPrm{};
-    jogPrm.dAcc = (cfg && cfg->maxAccel > 0) ? cfg->maxAccel : 200.0;
-    jogPrm.dDec = (cfg && cfg->maxDecel > 0) ? cfg->maxDecel : jogPrm.dAcc;
+    jogPrm.dAcc = (cfg && cfg->maxAccel > 0) ? AccelToPulse(axisId, cfg->maxAccel) : 200.0;
+    jogPrm.dDec = (cfg && cfg->maxDecel > 0) ? AccelToPulse(axisId, cfg->maxDecel) : jogPrm.dAcc;
     jogPrm.dSmooth = 100;
 
     short ch = static_cast<short>(axisId + 1);
