@@ -8,7 +8,7 @@
                     "extrudeAmount": 0.0,
                     "extrudeSpeed": 0.0,
                     "isGripperOpen": false,
-                    "name": "移动到：安全上方点",
+                    "name": "移动到：初始位置",
                     "points": [
                         {
                             "coord": {

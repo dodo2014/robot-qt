@@ -56,11 +56,11 @@
             "homeDir": 1,
             "homeLocatVel": 7.1,
             "homeMaxDis": 1500000,
-            "homeOffset": 0.0,
+            "homeOffset": 102.0,
             "homeRapidVel": 21.3,
             "homeSns": 0,
             "jogSpeed": 30.0,
-            "limitMax": 90.0,
+            "limitMax": 110.0,
             "limitMin": 0.0,
             "maxAccel": 50.0,
             "maxSpeed": 50.0,
@@ -77,7 +77,7 @@
         "Axis_J2": {
             "direction": 0,
             "hardwareType": 1,
-            "homeOffset": 0.0,
+            "homeOffset": 28.0,
             "jogSpeed": 15.0,
             "limitMax": 180.0,
             "limitMin": 0.0,
@@ -186,9 +186,9 @@
             }
         ],
         "links": {
-            "l1": 286.0,
-            "l2": 216.0,
-            "z0": 45.0
+            "l1": 174.35,
+            "l2": 166.86,
+            "z0": 0.0
         }
     },
     "simulation": {
@@ -217,9 +217,9 @@
             0,
             1
         ],
-        "toolOffsetX": 12.5,
-        "toolOffsetY": -3.2,
-        "toolOffsetZ": 45.0
+        "toolOffsetX": 53.0,
+        "toolOffsetY": 0.0,
+        "toolOffsetZ": -130.0
     },
     "version": "1.0.0",
     "vision": {
