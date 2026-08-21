@@ -60,8 +60,8 @@
             "homeRapidVel": 21.3,
             "homeSns": 0,
             "jogSpeed": 30.0,
-            "limitMax": 110.0,
-            "limitMin": 0.0,
+            "limitMax": 8.0,
+            "limitMin": -102.0,
             "maxAccel": 50.0,
             "maxSpeed": 50.0,
             "name": "[1] 轴1 (大臂 J1)",
@@ -79,8 +79,8 @@
             "hardwareType": 1,
             "homeOffset": 28.0,
             "jogSpeed": 15.0,
-            "limitMax": 180.0,
-            "limitMin": 0.0,
+            "limitMax": 152.0,
+            "limitMin": -28.0,
             "maxAccel": 232.0,
             "maxSpeed": 120.0,
             "name": "[2] 轴2 (小臂 J2)",
@@ -186,9 +186,10 @@
             }
         ],
         "links": {
-            "l1": 174.35,
+            "l1": 138.83,
             "l2": 166.86,
-            "z0": 0.0
+            "z0": 0.0,
+            "h1": 0.0
         }
     },
     "simulation": {

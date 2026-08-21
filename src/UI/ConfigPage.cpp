@@ -336,9 +336,10 @@ QWidget* ConfigPage::CreateTab2Kinematics()
 
         struct KinParam { QString label; const char* path; double def; };
         QVector<KinParam> params = {
-            { QStringLiteral("L1 (大臂)"), "kinematics.links.l1", 285.0 },
+            { QStringLiteral("L1 (大臂)"), "kinematics.links.l1", 138.83 },
             { QStringLiteral("L2 (小臂)"), "kinematics.links.l2", 215.0 },
             { QStringLiteral("Z0 基准"),   "kinematics.links.z0",  45.0 },
+            { QStringLiteral("h1 (大臂落差)"), "kinematics.links.h1", 0.0 },
         };
 
         for (const auto& p : params)
@@ -349,10 +350,10 @@ QWidget* ConfigPage::CreateTab2Kinematics()
             auto* input = new QLineEdit(QString::number(dVal(p.path, p.def)));
             input->setFixedWidth(70);
             input->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px;");
-            QObject::connect(input, &QLineEdit::editingFinished, [input, p = std::string(p.path)]() {
+            QObject::connect(input, &QLineEdit::editingFinished, [this, input, p = std::string(p.path)]() {
                 bool ok = false;
                 double v = input->text().toDouble(&ok);
-                if (ok) ConfigManager::instance().set(p, v);
+                if (ok) { ConfigManager::instance().set(p, v); emit paramsChanged(); }
             });
 
             rl->addWidget(label);
@@ -534,7 +535,7 @@ QWidget* ConfigPage::CreateTab4TCP()
         l->setStyleSheet("color: #b8cce3; min-width: 90px; font-size: 13px; background: transparent; border: none;");
         return l;
     };
-    auto makeCoordWidget = [](const QString& coord, const char* path, double def) -> QWidget* {
+    auto makeCoordWidget = [this](const QString& coord, const char* path, double def) -> QWidget* {
         auto* w = new QWidget();
         auto* l = new QHBoxLayout(w);
         l->setContentsMargins(0, 0, 0, 0);
@@ -546,9 +547,9 @@ QWidget* ConfigPage::CreateTab4TCP()
         auto* input = new QLineEdit(QString::number(dVal(path, def)));
         input->setFixedWidth(60);
         input->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px;");
-        QObject::connect(input, &QLineEdit::editingFinished, [input, p = std::string(path)]() {
+        QObject::connect(input, &QLineEdit::editingFinished, [this, input, p = std::string(path)]() {
             bool ok = false; double v = input->text().toDouble(&ok);
-            if (ok) ConfigManager::instance().set(p, v);
+            if (ok) { ConfigManager::instance().set(p, v); emit paramsChanged(); }
         });
 
         l->addWidget(lbl);
@@ -1093,12 +1094,12 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     connect(limitMinSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
         auto p = pathFor("limitMin");
-        if (!p.empty()) ConfigManager::instance().set(p, v);
+        if (!p.empty()) { ConfigManager::instance().set(p, v); emit paramsChanged(); }
     });
 
     connect(limitMaxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
         auto p = pathFor("limitMax");
-        if (!p.empty()) ConfigManager::instance().set(p, v);
+        if (!p.empty()) { ConfigManager::instance().set(p, v); emit paramsChanged(); }
     });
 
     connect(homeSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {

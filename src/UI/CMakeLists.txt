@@ -19,6 +19,7 @@ set(UI_HEADERS
     VisionTestPage.h
     ConfigPage.h
     ToggleSwitch.h
+    KinematicsHelper.h
 )
 
 add_library(UI STATIC

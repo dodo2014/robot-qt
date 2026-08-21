@@ -335,6 +335,14 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         auto binding = AxisMap::Get(static_cast<LogicalAxis>(i));
         if (binding.type == AxisBinding::Type::Card && motionCard_) {
             ac.axisId = binding.index;
+            // Home Offset 落地：卡端软限位按机械角度注入（SimCard 脉冲域夹紧基于机械位置）。
+            // inverted 轴机械方向反转，min/max 对调；HardwareManager 自身软限位判断
+            // 仍用 GetLimitMin/Max 读 config 的逻辑坐标，不受此处影响。
+            double off = ac.homePos;
+            double mechMin = ac.inverted ? -(ac.limitMax + off) : (ac.limitMin + off);
+            double mechMax = ac.inverted ? -(ac.limitMin + off) : (ac.limitMax + off);
+            ac.limitMin = mechMin;
+            ac.limitMax = mechMax;
             motionCard_->SetAxisConfig(binding.index, ac);
         }
     }
@@ -363,9 +371,12 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
         return false;
     }
 
-    // 方向反转（config direction=反向）：下发用物理目标；界面/软限位按逻辑坐标
+    // 方向反转（config direction=反向）+ Home Offset（机械零点→逻辑零点）：
+    // 逻辑角度 = 机械角度 - homeOffset，故下发目标机械角度 = 逻辑 + homeOffset；
+    // inverted 轴在机械方向坐标上再取反。界面/软限位恒用逻辑坐标。
     bool inv = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) && axisConfigs_[ai].inverted;
-    double targetPhys = inv ? -mmOrDeg : mmOrDeg;
+    double off = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) ? axisConfigs_[ai].homePos : 0.0;
+    double targetPhys = inv ? -(mmOrDeg + off) : (mmOrDeg + off);
 
     // 软限位校验（逻辑坐标，与界面显示一致）：目标位置超出 [limitMin, limitMax] 直接拒绝
     if (!IsWithinSoftLimits(axis, mmOrDeg)) {
@@ -434,12 +445,14 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
     double hi = GetLimitMax(axis);
     if (lo < hi) {
         double current = GetPosition(axis);
-        if (direction > 0 && current >= hi - 1e-6) {
+        // 容差 0.01：覆盖撞界自动停止后位置略低于边界的浮点夹紧舍入（实测 7.99996875），
+        // 否则边界上重复点动会被放行（1e-6 太紧）
+        if (direction > 0 && current >= hi - 0.01) {
             emit softLimitTriggered(static_cast<int>(axis), true);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at max soft limit {:.1f}", static_cast<int>(axis), hi);
             return false;
         }
-        if (direction < 0 && current <= lo + 1e-6) {
+        if (direction < 0 && current <= lo + 0.01) {
             emit softLimitTriggered(static_cast<int>(axis), false);
             SPDLOG_WARN("[HardwareManager] MoveJog rejected: axis {} at min soft limit {:.1f}", static_cast<int>(axis), lo);
             return false;
@@ -460,7 +473,9 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
         if (servo) {
             // 记录点动起点与起始时刻；JogTick 按时间累积推进目标，保证
             // 目标速度 = jogSpeed_（不再每 tick 查询/递增，避免抖动）
-            double start = servo->ReadAngle();
+            // ReadAngle 为机械角度，点动起点/目标用逻辑坐标（= 机械 - homeOffset）
+            double off = (ai >= 0 && ai < static_cast<int>(axisConfigs_.size())) ? axisConfigs_[ai].homePos : 0.0;
+            double start = servo->ReadAngle() - off;
             jogAxis_       = axis;
             jogDir_        = effDir;
             jogSpeed_      = mmOrDegPerSec;
@@ -728,17 +743,18 @@ double HardwareManager::GetPosition(LogicalAxis axis) const
 {
     int i = static_cast<int>(axis);
     bool inv = (i >= 0 && i < static_cast<int>(axisConfigs_.size())) && axisConfigs_[i].inverted;
+    double off = (i >= 0 && i < static_cast<int>(axisConfigs_.size())) ? axisConfigs_[i].homePos : 0.0;
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         long pulse = static_cast<long>(motionCard_->GetPosition(binding.index));
         double phys = AxisConverter::Instance().ToPhysical(i, pulse);
-        return inv ? -phys : phys;
+        return (inv ? -phys : phys) - off;   // 逻辑角度 = 机械角度 - homeOffset
     }
     if (binding.type == AxisBinding::Type::Servo) {
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
         if (servo) {
             double ang = servo->ReadAngle();
-            return inv ? -ang : ang;
+            return (inv ? -ang : ang) - off;  // 逻辑角度 = 机械角度 - homeOffset
         }
     }
     return 0.0;
@@ -817,6 +833,10 @@ void HardwareManager::JogTick()
     IAxisServo* servo = (static_cast<int>(jogAxis_) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
     if (!servo) return;
 
+    // JogTick 的目标是逻辑坐标（起点/速度/软限位均为逻辑），下发舵机须转回机械角度（+homeOffset）
+    int jai = static_cast<int>(jogAxis_);
+    double off = (jai >= 0 && jai < static_cast<int>(axisConfigs_.size())) ? axisConfigs_[jai].homePos : 0.0;
+
     // 目标 = 起点 + 方向 × 速度 × 已用时（时间累积模型，目标推进速度即设定速度）
     double elapsed = (QDateTime::currentMSecsSinceEpoch() - jogStartMs_) / 1000.0;
     double target = jogStartPos_ + jogDir_ * jogSpeed_ * elapsed;
@@ -828,7 +848,7 @@ void HardwareManager::JogTick()
         ((jogDir_ > 0 && target >= hi - 1e-6) || (jogDir_ < 0 && target <= lo + 1e-6));
     if (hit) {
         target = (jogDir_ > 0) ? hi : lo;
-        servo->MoveToAngle(target, 0);
+        servo->MoveToAngle(target + off, 0);
         servo->Stop();
         jogTimer_->stop();
         int idx = static_cast<int>(jogAxis_);
@@ -861,7 +881,7 @@ void HardwareManager::JogTick()
         int intervalMs = static_cast<int>((std::fabs(step) / jogSpeed_) * 1000.0);
         if (intervalMs < 50) intervalMs = 50;
         if (intervalMs > 30000) intervalMs = 30000;
-        bool ok = servo->MoveToAngle(target, intervalMs);
+        bool ok = servo->MoveToAngle(target + off, intervalMs);
         lastJogTarget_ = target;
         SPDLOG_INFO("[HardwareManager] JogTick axis={} target={:.1f} step={:.2f} interval={}ms elapsed={:.2f}s -> {}",
                     (int)jogAxis_, target, step, intervalMs, elapsed, ok);
@@ -891,9 +911,10 @@ void HardwareManager::PollTick()
                     if (s.axisId == binding.index) {
                         MotorStatus st = s;
                         st.axisId   = i;  // 映射为逻辑轴索引
-                        st.position = AxisConverter::Instance().ToPhysical(i, static_cast<long>(s.position));
-                        if (i >= 0 && i < axisConfigs_.size() && axisConfigs_[i].inverted)
-                            st.position = -st.position;  // 界面按逻辑坐标显示
+                        double phys = AxisConverter::Instance().ToPhysical(i, static_cast<long>(s.position));
+                        double off  = (i >= 0 && i < static_cast<int>(axisConfigs_.size()))
+                                          ? axisConfigs_[i].homePos : 0.0;
+                        st.position = (axisConfigs_[i].inverted ? -phys : phys) - off;  // 界面按逻辑坐标显示
                         vec.push_back(st);
 
                         // 软限位：点动过程中到达边界 → 自动停止（只处理越界/到边界的轴）
@@ -994,8 +1015,15 @@ void HardwareManager::PollTick()
         // 串口事务在 UI 线程执行，降频到每 5 tick（250ms）查询一次
         if (++servoPollCounter_ % 5 == 0) {
             QVector<ServoTelemetry> servos;
-            if (servoJ2_) servos.push_back(servoJ2_->ReadTelemetry());
-            if (servoJ3_) servos.push_back(servoJ3_->ReadTelemetry());
+            auto toLogicalAngle = [this](LogicalAxis axis, ServoTelemetry t) {
+                int idx = static_cast<int>(axis);
+                double off = (idx >= 0 && idx < static_cast<int>(axisConfigs_.size()))
+                                 ? axisConfigs_[idx].homePos : 0.0;
+                t.angleDeg -= off;   // 界面统一显示逻辑角度 = 机械角度 - homeOffset
+                return t;
+            };
+            if (servoJ2_) servos.push_back(toLogicalAngle(LogicalAxis::J2, servoJ2_->ReadTelemetry()));
+            if (servoJ3_) servos.push_back(toLogicalAngle(LogicalAxis::R,  servoJ3_->ReadTelemetry()));
             emit servoStateUpdated(servos);
 
             // 热重连：任一舵机持续离线达到阈值（约 1s）→ 重连共享串口

@@ -38,12 +38,12 @@ cmd /c "call vcvars64.bat && ninja CreamPuffRobot"
 
 | 编号 | 动作 | 期望结果 |
 |---|---|---|
-| K01 | 随机多组 joints → `Forward` → `Inverse`（同构型） | 往返还原，误差 < 1e-6 度/mm |
-| K02 | 目标距离 > L1+L2（如 (400,0)） | 返回 false + `SPDLOG_WARN`，不崩溃 |
-| K03 | 目标点靠近原点（r<0.001） | 返回原点解（J1=J2=0） |
-| K04 | 同一腕点 elbow_up/elbow_down 双解均返回；`InverseSmart` 按当前 J2 就近选解 | 双解有效；就近解正确、无大甩臂 |
-| K05 | 任意 wrist.r（如 90/-90） | out.r 完全透传，不被 J1/J2 改变 |
-| K06 | `ApplyTCPOffset((x,y,z,r),(53,0,-130))` | 腕点 = (x-53, y, z+130)；TCP 与 IK 无耦合（换 offset 只改外层） |
+| K01 | 随机多组 joints → `Forward` → `Inverse`（同构型，含 TCP） | 往返还原，误差 < 1e-6 度/mm |
+| K02 | 目标距离 > L1+L2_eff（如 (400,0)） | 返回 false + `SPDLOG_WARN`，不崩溃 |
+| K03 | 目标落入甜甜圈内孔（r < \|L1−L2_eff\|，含原点） | 返回 false + `SPDLOG_WARN`（原点物理不可达，已删旧"原点解"逻辑） |
+| K04 | 同一目标 elbow_up/elbow_down 双解均返回；`InverseSmart` 按当前 J2 就近选解 | 双解有效；就近解正确、无大甩臂 |
+| K05 | 任意 target.r（如 90/-90） | out.r 完全透传，不被 J1/J2 改变 |
+| K06 | `SetTCP(53,0,-130)` 后正逆解 | l2_eff = L2+53；Z = 电机高度+z0−h1−tcpDown；TCP 内化，不再有外部 ApplyTCPOffset |
 | K07 | 目标超出逻辑限位 | 返回 false 并提示，不崩溃 |
 
 ### C. 小脑 — CoordTransform
@@ -65,7 +65,7 @@ cmd /c "call vcvars64.bat && ninja CreamPuffRobot"
 | H05 | inverted 轴（J1 direction=1）点动/Go/回读 | 方向、显示、限位判断仍一致（逻辑坐标取反语义不变） |
 | H06 | linear 轴（Z/夹爪/挤出，offset=0）点动/Go | 与落地前完全一致（无偏移叠加） |
 | H07 | 回零流程回归 | 撞限归 0（机械）→ 显示逻辑偏移角；回零中禁止点动并提示 |
-| H08 | **J1 限位范围配置核对** | 回零逻辑点 -102 与 config `limitMin=0/limitMax=110` 的允许区间一致；若 -102 不在区间内，记录现象并提请现场调整 limitMin（预期：回零后仅可向正方向点动回界内） |
+| H08 | **J1 限位范围配置核对** | 回零逻辑点 -102 与 config `limitMin=-102/limitMax=8` 的允许区间一致（-102 恰为下限）；逻辑 8 允许、9/-103 拒绝 |
 
 ### E. 大脑 — SequenceWorker
 

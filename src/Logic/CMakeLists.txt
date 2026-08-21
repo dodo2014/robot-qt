@@ -4,10 +4,12 @@
 # ============================================================
 set(LOGIC_SOURCES
     PickCycleController.cpp
+    SequenceWorker.cpp
 )
 
 set(LOGIC_HEADERS
     PickCycleController.h
+    SequenceWorker.h
 )
 
 add_library(Logic STATIC

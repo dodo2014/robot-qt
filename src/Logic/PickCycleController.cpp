@@ -7,39 +7,23 @@
 #include <cmath>
 
 #include "HAL/core/HardwareManager.h"
+#include "HAL/core/AxisMap.h"
 
 class PickCycleController::Impl
 {
 public:
-    IMotionCard*    motionCard  = nullptr;
-    IAxisServo*     servoJ2     = nullptr;
-    IAxisServo*     servoJ3     = nullptr;
-    IEndEffector*   gripper     = nullptr;
-    ICamera*        camera      = nullptr;
-    IPuffAlgorithm* algorithm   = nullptr;
-
     PickCycleState  state       = PickCycleState::Idle;
     std::atomic<bool> running   {false};
     std::atomic<bool> paused    {false};
 
-    Pose3D pickPosition;
-    Pose3D placePosition;
+    Pose pickPosition;
+    Pose placePosition;
     double safeHeight = 100.0;
 
     StateCallback callback;
 
     Kinematics      kinematics;
     CoordTransform  coordTransform;
-
-    bool ValidateHardware()
-    {
-        if (!motionCard || !servoJ2 || !servoJ3 || !gripper || !camera || !algorithm)
-        {
-            SPDLOG_ERROR("[PickCycle] Hardware not fully set");
-            return false;
-        }
-        return true;
-    }
 
     void SetState(PickCycleState newState, const std::string& msg)
     {
@@ -67,56 +51,59 @@ public:
         return "Unknown";
     }
 
-    // SCARA 分步运动：J2/J3 舵机先动 → 轮询到位 → J1 再动
-    bool MoveJointsSequential(const JointAngles& target, double speed)
+    // 硬件访问：全部走 HardwareManager 门面（物理单位 mm/度，内部含 Home Offset
+    // 与方向反转换算），不直接持有 IMotionCard/IAxisServo 指针。
+    // 注：底层同步阻塞调用（含舵机串口事务），UI 线程调用会短暂卡顿，后续可移入
+    // 独立线程（与 SequenceWorker 同模式）。
+    bool MoveJointsSequential(const Joints& target, double speed)
     {
-        // Step 1: 读取当前关节
-        JointAngles current;
-        current.angles[0] = motionCard->GetPosition(0);
-        current.angles[1] = servoJ2->ReadAngle();
-        current.angles[2] = motionCard->GetPosition(2);
-        current.angles[3] = motionCard->GetPosition(3);
+        auto& hw = HardwareManager::instance();
+
+        // Step 1: 读取当前关节（逻辑坐标，门面已换算）
+        Joints current;
+        current.j1 = hw.GetPosition(LogicalAxis::J1);
+        current.j2 = hw.GetPosition(LogicalAxis::J2);
+        current.z  = hw.GetPosition(LogicalAxis::Z);
+        current.r  = hw.GetPosition(LogicalAxis::R);
 
         SPDLOG_INFO("[PickCycle] Moving from J({:.1f}, {:.1f}, {:.1f}, {:.1f}) → "
                      "J({:.1f}, {:.1f}, {:.1f}, {:.1f})",
-                     current.angles[0], current.angles[1],
-                     current.angles[2], current.angles[3],
-                     target.angles[0], target.angles[1],
-                     target.angles[2], target.angles[3]);
+                     current.j1, current.j2, current.z, current.r,
+                     target.j1, target.j2, target.z, target.r);
 
-        // Step 2: J2 舵机先动 (J2 是大臂, 先调整姿态)
-        int moveTimeMs = static_cast<int>(std::abs(target.angles[1] - current.angles[1]) / speed * 1000.0);
-        if (moveTimeMs < 100) moveTimeMs = 100;
-        if (moveTimeMs > 3000) moveTimeMs = 3000;
-
-        if (!servoJ2->MoveToAngle(target.angles[1], moveTimeMs))
-        {
+        // Step 2: 舵机先动（J2 小臂 → R 翻转），再卡轴（J1 大臂 → Z 升降），避免机械干涉
+        if (!hw.MoveAbs(LogicalAxis::J2, target.j2, speed)) {
             SPDLOG_ERROR("[PickCycle] Servo J2 move failed");
             return false;
         }
-
-        // Step 3: J3 舵机同时动
-        if (!servoJ3->MoveToAngle(target.angles[2], moveTimeMs))
-        {
-            SPDLOG_ERROR("[PickCycle] Servo J3 move failed");
+        if (!hw.MoveAbs(LogicalAxis::R, target.r, speed)) {
+            SPDLOG_ERROR("[PickCycle] Servo R move failed");
+            return false;
+        }
+        if (!hw.MoveAbs(LogicalAxis::J1, target.j1, speed)) {
+            SPDLOG_ERROR("[PickCycle] J1 move failed");
+            return false;
+        }
+        if (!hw.MoveAbs(LogicalAxis::Z, target.z, speed)) {
+            SPDLOG_ERROR("[PickCycle] Z move failed");
             return false;
         }
 
-        // Step 4: 等待 J2/J3 到位
-        std::this_thread::sleep_for(std::chrono::milliseconds(moveTimeMs + 50));
-
-        // Step 5: J1 (伺服电机) 运动
-        if (!motionCard->MoveAbs(0, target.angles[0], speed))
-        {
-            SPDLOG_ERROR("[PickCycle] Motion card J1 move failed");
-            return false;
-        }
-
-        // Step 6: J3 (线性轴)
-        if (!motionCard->MoveAbs(2, target.angles[2], speed))
-        {
-            SPDLOG_ERROR("[PickCycle] Motion card J3 (linear) move failed");
-            return false;
+        // Step 3: 等待全部轴到位（IsAxisBusy 时间戳轮询，30s 兜底）
+        const int timeoutMs = 30000;
+        auto waitStart = std::chrono::steady_clock::now();
+        for (;;) {
+            if (!running.load() || paused.load()) return false;
+            bool done = true;
+            for (LogicalAxis a : { LogicalAxis::J1, LogicalAxis::J2, LogicalAxis::Z, LogicalAxis::R }) {
+                if (hw.IsAxisBusy(a)) { done = false; break; }
+            }
+            if (done) break;
+            if (std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(timeoutMs)) {
+                SPDLOG_ERROR("[PickCycle] Move wait timeout");
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
 
         return true;
@@ -124,17 +111,23 @@ public:
 
     bool ExecuteOneCycle()
     {
-        if (!ValidateHardware())
-        {
-            SetState(PickCycleState::Error, "Hardware not ready");
+        auto& hw = HardwareManager::instance();
+
+        // 使能门禁：自动循环与手动界面共用同一安全门禁（先使能再运动）
+        if (!hw.IsGlobalEnabled()) {
+            SetState(PickCycleState::Error, "Axes not enabled, enable first");
             return false;
         }
 
         SetState(PickCycleState::Capturing, "Capturing camera frame...");
-        CameraFrame frame = camera->CaptureFrame();
+        if (!hw.camera() || !hw.algorithm()) {
+            SetState(PickCycleState::Error, "Camera or algorithm not available");
+            return false;
+        }
+        CameraFrame frame = hw.camera()->CaptureFrame();
 
         SetState(PickCycleState::Detecting, "Detecting puff position...");
-        PuffResult puff = algorithm->LocateBest(frame);
+        PuffResult puff = hw.algorithm()->LocateBest(frame);
         if (puff.confidence < 0.5)
         {
             SetState(PickCycleState::Error, "Low confidence detection");
@@ -144,28 +137,28 @@ public:
                      puff.x, puff.y, puff.z, puff.confidence);
 
         // 计算抓取位姿
-        JointAngles currentJoints;
-        currentJoints.angles[0] = motionCard->GetPosition(0);
-        currentJoints.angles[1] = servoJ2->ReadAngle();
-        currentJoints.angles[2] = motionCard->GetPosition(2);
-        currentJoints.angles[3] = motionCard->GetPosition(3);
+        Joints currentJoints;
+        currentJoints.j1 = hw.GetPosition(LogicalAxis::J1);
+        currentJoints.j2 = hw.GetPosition(LogicalAxis::J2);
+        currentJoints.z  = hw.GetPosition(LogicalAxis::Z);
+        currentJoints.r  = hw.GetPosition(LogicalAxis::R);
 
-        Pose3D pickPose;
+        Pose pickPose;
         pickPose.x = puff.x;
         pickPose.y = puff.y;
         pickPose.z = puff.z;
-        pickPose.yaw = puff.yaw;
+        pickPose.r = puff.yaw;
 
-        JointAngles pickJoints;
-        if (!kinematics.Inverse(pickPose, pickJoints, currentJoints))
+        Joints pickJoints;
+        if (!kinematics.InverseSmart(pickPose, pickJoints, currentJoints.j2))
         {
             SetState(PickCycleState::Error, "IK no solution for pick position");
             return false;
         }
 
         // 上方安全点 (Z 提升)
-        JointAngles approachJoints = pickJoints;
-        approachJoints.angles[2] = pickJoints.angles[2] + safeHeight;
+        Joints approachJoints = pickJoints;
+        approachJoints.z = pickJoints.z + safeHeight;
 
         SetState(PickCycleState::Approaching, "Moving above puff...");
         if (!MoveJointsSequential(approachJoints, 50.0))
@@ -182,7 +175,11 @@ public:
         }
 
         SetState(PickCycleState::Gripping, "Closing gripper...");
-        if (!gripper->Close())
+        if (!hw.gripper()) {
+            SetState(PickCycleState::Error, "Gripper not available");
+            return false;
+        }
+        if (!hw.gripper()->Close())
         {
             SetState(PickCycleState::Error, "Gripper close failed");
             return false;
@@ -190,8 +187,8 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
         SetState(PickCycleState::Lifting, "Lifting puff...");
-        JointAngles liftJoints = pickJoints;
-        liftJoints.angles[2] = pickJoints.angles[2] + safeHeight;
+        Joints liftJoints = pickJoints;
+        liftJoints.z = pickJoints.z + safeHeight;
         if (!MoveJointsSequential(liftJoints, 30.0))
         {
             SetState(PickCycleState::Error, "Lift move failed");
@@ -199,8 +196,8 @@ public:
         }
 
         SetState(PickCycleState::Placing, "Moving to place position...");
-        JointAngles placeJoints;
-        if (!kinematics.Inverse(placePosition, placeJoints, liftJoints))
+        Joints placeJoints;
+        if (!kinematics.InverseSmart(placePosition, placeJoints, liftJoints.j2))
         {
             SetState(PickCycleState::Error, "IK no solution for place position");
             return false;
@@ -212,7 +209,7 @@ public:
         }
 
         SetState(PickCycleState::Releasing, "Opening gripper...");
-        if (!gripper->Open())
+        if (!hw.gripper()->Open())
         {
             SetState(PickCycleState::Error, "Gripper open failed");
             return false;
@@ -231,18 +228,6 @@ PickCycleController::PickCycleController()
 }
 
 PickCycleController::~PickCycleController() = default;
-
-void PickCycleController::SetHardware(IMotionCard* motion, IAxisServo* j2, IAxisServo* j3,
-                                       IEndEffector* gripper, ICamera* camera, IPuffAlgorithm* algo)
-{
-    impl_->motionCard = motion;
-    impl_->servoJ2    = j2;
-    impl_->servoJ3    = j3;
-    impl_->gripper    = gripper;
-    impl_->camera     = camera;
-    impl_->algorithm  = algo;
-    SPDLOG_INFO("[PickCycleController] Hardware set");
-}
 
 bool PickCycleController::StartCycle()
 {
@@ -290,19 +275,19 @@ std::string PickCycleController::GetStateName() const
     return Impl::GetStateName(impl_->state);
 }
 
-bool PickCycleController::SetPickPosition(const Pose3D& pos)
+bool PickCycleController::SetPickPosition(const Pose& pos)
 {
     impl_->pickPosition = pos;
     SPDLOG_INFO("[PickCycleController] Pick position set: ({:.1f}, {:.1f}, {:.1f})",
-                 pos.x, pos.y, pos.z);
+                pos.x, pos.y, pos.z);
     return true;
 }
 
-bool PickCycleController::SetPlacePosition(const Pose3D& pos)
+bool PickCycleController::SetPlacePosition(const Pose& pos)
 {
     impl_->placePosition = pos;
     SPDLOG_INFO("[PickCycleController] Place position set: ({:.1f}, {:.1f}, {:.1f})",
-                 pos.x, pos.y, pos.z);
+                pos.x, pos.y, pos.z);
     return true;
 }
 

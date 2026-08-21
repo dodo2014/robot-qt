@@ -6,12 +6,14 @@
 #include <QTimer>
 #include <QButtonGroup>
 #include <QPushButton>
+#include <QThread>
 
 class AutoRunPage;
 class ManualControlPage;
 class ProcessPage;
 class VisionTestPage;
 class ConfigPage;
+class SequenceWorker;
 
 class MainWindow : public QMainWindow
 {
@@ -31,6 +33,7 @@ private:
     QWidget* CreateTopBar();
     QWidget* CreateNavSidebar();
     void ApplyGlobalStyle();
+    void ShutdownWorker();
 
     QLabel*              clockLabel_     = nullptr;
     QLabel*              modeLabelLeft_  = nullptr;
@@ -44,4 +47,8 @@ private:
     ProcessPage*         processPage_    = nullptr;
     VisionTestPage*      visionTestPage_ = nullptr;
     ConfigPage*          configPage_     = nullptr;
+
+    SequenceWorker*      sequenceWorker_ = nullptr;
+    QThread*             workerThread_   = nullptr;
+    bool                 workerShutdown_ = false;
 };

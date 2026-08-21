@@ -2,14 +2,10 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 #include "Core/Kinematics.h"
 #include "Core/CoordTransform.h"
-#include "HAL/interfaces/IMotionCard.h"
-#include "HAL/interfaces/IAxisServo.h"
-#include "HAL/interfaces/IEndEffector.h"
-#include "HAL/interfaces/ICamera.h"
-#include "HAL/interfaces/IPuffAlgorithm.h"
 
 enum class PickCycleState
 {
@@ -31,9 +27,6 @@ public:
     PickCycleController();
     ~PickCycleController();
 
-    void SetHardware(IMotionCard* motion, IAxisServo* j2, IAxisServo* j3,
-                     IEndEffector* gripper, ICamera* camera, IPuffAlgorithm* algo);
-
     bool StartCycle();
     bool StopCycle();
     bool PauseCycle();
@@ -42,8 +35,8 @@ public:
     PickCycleState GetState() const;
     std::string GetStateName() const;
 
-    bool SetPickPosition(const Pose3D& pos);
-    bool SetPlacePosition(const Pose3D& pos);
+    bool SetPickPosition(const Pose& pos);
+    bool SetPlacePosition(const Pose& pos);
     bool SetSafeHeight(double heightMm);
 
     using StateCallback = std::function<void(PickCycleState, const std::string&)>;

@@ -7,6 +7,8 @@
 #include "ToggleSwitch.h"
 
 #include "HAL/core/HardwareManager.h"
+#include "SequenceWorker.h"
+#include "ProcessManager.h"
 #include "spdlog/spdlog.h"
 
 #include <QApplication>
@@ -14,6 +16,7 @@
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QDebug>
+#include <QElapsedTimer>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -22,6 +25,9 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1480, 980);
     setMinimumSize(1200, 700);
     ApplyGlobalStyle();
+
+    // 方案数据必须在页面构造前加载，否则 AutoRunPage 的方案下拉拿到空列表
+    ProcessManager::instance().load();
     SetupUI();
 
     // 初始化硬件（仿真/真实卡自动按 config 组装）
@@ -32,10 +38,57 @@ MainWindow::MainWindow(QWidget* parent)
     clockTimer_->start(1000);
     UpdateClock();
 
+    // 创建 SequenceWorker 独立线程（大脑执行引擎）
+    workerThread_ = new QThread(this);
+    workerThread_->setObjectName(QStringLiteral("SequenceWorkerThread"));
+    sequenceWorker_ = new SequenceWorker();
+    sequenceWorker_->moveToThread(workerThread_);
+    connect(workerThread_, &QThread::finished, sequenceWorker_, &QObject::deleteLater);
+    workerThread_->start();
+    sequenceWorker_->ReloadFromConfig();
+    autoRunPage_->SetSequenceWorker(sequenceWorker_);
+    connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
+        sequenceWorker_->ReloadFromConfig();
+    });
+    SPDLOG_INFO("[MainWindow] SequenceWorker thread started");
+
     qDebug() << "[MainWindow] UI initialized";
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    SPDLOG_INFO("[MainWindow] destructor: shutting down worker");
+    ShutdownWorker();
+}
+
+// 安全关闭 worker 线程：先置 cancel 让 worker 退出等待循环，再等待线程结束。
+// 用 wait(20) 短轮询 + processEvents 保持主线程事件分发，否则 worker 的
+// BlockingQueuedConnection（InMainThread）会因主线程不再跑事件循环而永久阻塞 → 挂死。
+void MainWindow::ShutdownWorker()
+{
+    if (workerShutdown_ || !workerThread_) return;
+    workerShutdown_ = true;
+
+    if (sequenceWorker_) {
+        sequenceWorker_->Stop();   // 置 cancel，打断 WaitForCancelOrTime/WaitForAxes
+    }
+
+    workerThread_->quit();
+
+    const qint64 kMaxWaitMs = 3000;
+    QElapsedTimer timer;
+    timer.start();
+    while (workerThread_->isRunning() && timer.elapsed() < kMaxWaitMs) {
+        workerThread_->wait(20);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    if (workerThread_->isRunning()) {
+        SPDLOG_WARN("[MainWindow] SequenceWorker thread did not exit in {}ms, forcing terminate", kMaxWaitMs);
+        workerThread_->terminate();
+        workerThread_->wait(1000);
+    }
+    SPDLOG_INFO("[MainWindow] worker thread stopped");
+}
 
 void MainWindow::ApplyGlobalStyle()
 {

@@ -1,12 +1,25 @@
-// AutoRunPage.cpp
 #include "AutoRunPage.h"
+#include "SequenceWorker.h"
+#include "ProcessManager.h"
+
+#include "HAL/core/HardwareManager.h"
+#include "HAL/interfaces/ICamera.h"
+#include "HAL/camera/FrameConverter.h"
+#include "Core/Kinematics.h"
+#include "Config/ConfigManager.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QDebug>
+#include <QComboBox>
+#include <QTextEdit>
 #include <QSizePolicy>
+#include <QScrollBar>
+#include <QPixmap>
+#include <QImage>
+#include <QDateTime>
+#include <QShowEvent>
 #include "spdlog/spdlog.h"
 
 AutoRunPage::AutoRunPage(QWidget* parent)
@@ -15,24 +28,40 @@ AutoRunPage::AutoRunPage(QWidget* parent)
     SetupUI();
 }
 
+void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
+{
+    m_worker = worker;
+    if (!m_worker) return;
+
+    connect(m_worker, &SequenceWorker::logMessage, this, &AutoRunPage::OnLogMessage);
+    connect(m_worker, &SequenceWorker::actionStarted, this, &AutoRunPage::OnActionStarted);
+    connect(m_worker, &SequenceWorker::schemeFinished, this, &AutoRunPage::OnSchemeFinished);
+    connect(m_worker, &SequenceWorker::interrupted, this, &AutoRunPage::OnInterrupted);
+    connect(m_worker, &SequenceWorker::errorOccurred, this, &AutoRunPage::OnError);
+
+    connect(&HardwareManager::instance(), &HardwareManager::stateUpdated,
+            this, &AutoRunPage::OnStateUpdated);
+    connect(&HardwareManager::instance(), &HardwareManager::servoStateUpdated,
+            this, &AutoRunPage::OnServoStateUpdated);
+    connect(&HardwareManager::instance(), &HardwareManager::frameReady,
+            this, &AutoRunPage::OnFrameReady);
+}
+
 void AutoRunPage::SetupUI()
 {
     setStyleSheet("background: #262c34;");
 
-    // ==== 主布局: 左右比例 6:4 ====
     auto* mainLayout = new QHBoxLayout(this);
     mainLayout->setContentsMargins(14, 14, 14, 14);
     mainLayout->setSpacing(16);
 
     // ---- 左侧 (60%) ----
     auto* leftSide = new QWidget();
-    // 关键: 设置 sizePolicy 使拉伸因子生效
     leftSide->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     auto* leftLayout = new QVBoxLayout(leftSide);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(10);
 
-    // 相机样式
     const QString cameraStyle = R"(
         QWidget {
             background: #0b0d0f;
@@ -40,53 +69,21 @@ void AutoRunPage::SetupUI()
             border: 1px solid #3a424e;
         }
     )";
-    const QString crossStyle = R"(
-        QLabel {
-            color: #1eff7a;
-            font-size: 40px;
-            opacity: 0.5;
-            background: transparent;
-            border: none;
-        }
-    )";
-    const QString placeholderStyle = R"(
-        QLabel {
-            color: #556677;
-            font-size: 16px;
-            background: transparent;
-            border: none;
-        }
-    )";
 
-    // 两个相机画面各占 50% 高度
-    QStringList placeholders = {
-        QStringLiteral("RGB 相机画面 (3D)"),
-        QStringLiteral("识别结果叠加图")
-    };
+    m_cameraRgbLabel = new QLabel(QStringLiteral("RGB 相机画面 (3D)"));
+    m_cameraRgbLabel->setAlignment(Qt::AlignCenter);
+    m_cameraRgbLabel->setStyleSheet(cameraStyle);
+    m_cameraRgbLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_cameraRgbLabel->setScaledContents(true);
 
-    for (int i = 0; i < placeholders.size(); ++i)
-    {
-        auto* camBox = new QWidget();
-        camBox->setStyleSheet(cameraStyle);
-        camBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_cameraOverlayLabel = new QLabel(QStringLiteral("识别结果叠加图"));
+    m_cameraOverlayLabel->setAlignment(Qt::AlignCenter);
+    m_cameraOverlayLabel->setStyleSheet(cameraStyle);
+    m_cameraOverlayLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_cameraOverlayLabel->setScaledContents(true);
 
-        auto* camLayout = new QVBoxLayout(camBox);
-        camLayout->setAlignment(Qt::AlignCenter);
-        camLayout->setSpacing(2);
-
-        auto* cross = new QLabel(QStringLiteral("\xE2\x9C\x9B"));  // ✛
-        cross->setStyleSheet(crossStyle);
-        cross->setAlignment(Qt::AlignCenter);
-
-        auto* placeholder = new QLabel(placeholders[i]);
-        placeholder->setStyleSheet(placeholderStyle);
-        placeholder->setAlignment(Qt::AlignCenter);
-
-        camLayout->addWidget(cross);
-        camLayout->addWidget(placeholder);
-
-        leftLayout->addWidget(camBox, 1);  // 两个各占 50%
-    }
+    leftLayout->addWidget(m_cameraRgbLabel, 1);
+    leftLayout->addWidget(m_cameraOverlayLabel, 1);
 
     // ---- 右侧 (40%) ----
     auto* rightSide = new QWidget();
@@ -95,109 +92,94 @@ void AutoRunPage::SetupUI()
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(10);
 
-    // ---- LCD 行 (节拍 + 产量) ----
+    // LCD 行
     auto* lcdRow = new QHBoxLayout();
     lcdRow->setSpacing(16);
-
     struct LcdItem { QString label; QString value; };
     QVector<LcdItem> lcds = {
         { QStringLiteral("当前节拍 CT"), QStringLiteral("2.4s") },
         { QStringLiteral("今日产量"),    QStringLiteral("1,286") },
     };
-
     for (const auto& item : lcds)
     {
         auto* lcdWidget = new QWidget();
         lcdWidget->setStyleSheet("background: #0d1219; border-radius: 10px; padding: 10px;");
         lcdWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
         auto* lcdLayout = new QVBoxLayout(lcdWidget);
         lcdLayout->setAlignment(Qt::AlignCenter);
         lcdLayout->setSpacing(4);
-
         auto* lbl = new QLabel(item.label);
         lbl->setStyleSheet("color: #7c8a9e; font-size: 13px; background: transparent; border: none;");
         lbl->setAlignment(Qt::AlignCenter);
-
         auto* val = new QLabel(item.value);
-        val->setStyleSheet(R"(
-            font-size: 32px; font-weight: 700; color: #cde2ff;
-            font-family: 'Consolas', monospace;
-            background: transparent; border: none;
-        )");
+        val->setStyleSheet("font-size: 32px; font-weight: 700; color: #cde2ff; font-family: 'Consolas', monospace; background: transparent; border: none;");
         val->setAlignment(Qt::AlignCenter);
-
         lcdLayout->addWidget(lbl);
         lcdLayout->addWidget(val);
         lcdRow->addWidget(lcdWidget);
     }
-
     rightLayout->addLayout(lcdRow);
 
-    // ---- 状态标签 ----
-    m_statusLabel = new QLabel(QStringLiteral("\xE2\x96\xB6 运行中"));
-    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+    // 状态标签
+    m_statusLabel = new QLabel(QStringLiteral("⏸ 待机"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #8da3bb; padding: 6px 0; background: transparent; border: none;");
     rightLayout->addWidget(m_statusLabel);
 
-    // ---- 坐标面板 ----
-    auto* coordPanel = new QWidget();
-    coordPanel->setStyleSheet("background: #0d141c; border-radius: 10px; padding: 8px 16px; border: 1px solid #2f7fb5;");
-    coordPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    // 坐标面板
+    m_coordPanel = new QLabel(QStringLiteral("X: 0.00 mm  Y: 0.00 mm  Z: 0.00 mm  R: 0.00°"));
+    m_coordPanel->setStyleSheet("background: #0d141c; border-radius: 10px; padding: 8px 16px; border: 1px solid #2f7fb5; color: #7ed6ff; font-size: 16px; font-weight: 600; font-family: 'Consolas', monospace;");
+    m_coordPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_coordPanel->setFixedHeight(44);
+    rightLayout->addWidget(m_coordPanel);
 
-    auto* coordLayout = new QHBoxLayout(coordPanel);
-    coordLayout->setSpacing(20);
+    // 日志框
+    m_logTextEdit = new QTextEdit();
+    m_logTextEdit->setReadOnly(true);
+    m_logTextEdit->document()->setMaximumBlockCount(1000);   // 日志行数上限，防长期运行内存膨胀
+    m_logTextEdit->setStyleSheet(R"(
+        QTextEdit {
+            background: #12161c; border: 1px solid #3a424e; border-radius: 10px;
+            color: #b8cce3; font-size: 12px; font-family: 'Consolas', monospace;
+            padding: 8px 12px;
+        }
+        QScrollBar:vertical {
+            background: #1b1f26; width: 8px; border-radius: 4px;
+        }
+        QScrollBar::handle:vertical {
+            background: #3a424e; border-radius: 4px; min-height: 30px;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+    )");
+    m_logTextEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    rightLayout->addWidget(m_logTextEdit, 1);
 
-    struct Coord { QString name; double value; QString unit; };
-    QVector<Coord> coords = {
-        { QStringLiteral("X"), 145.23, QStringLiteral("mm") },
-        { QStringLiteral("Y"), 87.46,  QStringLiteral("mm") },
-        { QStringLiteral("Z"), 32.81,  QStringLiteral("mm") },
-        { QStringLiteral("R"), 12.50,  QStringLiteral("\xC2\xB0") },
-    };
+    // 方案下拉
+    auto* schemeRow = new QWidget();
+    schemeRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* schemeLayout = new QHBoxLayout(schemeRow);
+    schemeLayout->setContentsMargins(0, 0, 0, 0);
+    schemeLayout->setSpacing(8);
 
-    for (const auto& c : coords)
-    {
-        auto* coordLabel = new QLabel(
-            QStringLiteral("<span style='color:#7c9fc0;font-weight:400;'>%1: </span>"
-                "<span style='color:#7ed6ff;font-weight:700;'>%2</span> %3")
-            .arg(c.name).arg(c.value, 0, 'f', 2).arg(c.unit));
-        coordLabel->setStyleSheet("font-weight: 600; font-size: 18px; color: #b7d6ff; background: transparent; border: none;");
-        coordLayout->addWidget(coordLabel);
-    }
+    auto* schemeLabel = new QLabel(QStringLiteral("运行方案:"));
+    schemeLabel->setStyleSheet("color: #b8cce3; font-size: 14px; font-weight: 600; background: transparent; border: none;");
 
-    rightLayout->addWidget(coordPanel);
+    m_schemeCombo = new QComboBox();
+    m_schemeCombo->setStyleSheet(R"(
+        QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 24px 4px 8px; border-radius: 6px; font-size: 13px; min-height: 22px; }
+        QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 18px; border: none; }
+        QComboBox::down-arrow { width: 0; height: 0; border-top: 5px solid #8da3bb; border-left: 4px solid transparent; border-right: 4px solid transparent; margin-right: 3px; }
+        QComboBox QAbstractItemView { background: #1a2129; color: #dbe6f0; border: none; outline: 1px solid #3f4e5e; selection-background-color: #2f6f9f; }
+    )");
+    m_schemeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_schemeCombo->setFixedHeight(32);
 
-    // ---- 日志框 ----
-    m_logBox = new QWidget();
-    m_logBox->setStyleSheet("background: #12161c; border-radius: 10px; padding: 8px 12px; border: 1px solid #3a424e;");
-    m_logBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    RefreshSchemeCombo();
 
-    auto* logLayout = new QVBoxLayout(m_logBox);
-    logLayout->setSpacing(2);
+    schemeLayout->addWidget(schemeLabel);
+    schemeLayout->addWidget(m_schemeCombo, 1);
+    rightLayout->addWidget(schemeRow);
 
-    struct LogLine { QString text; QString color; };
-    QVector<LogLine> logs = {
-        { QStringLiteral("[10:23:15] 视觉定位完成"),    QStringLiteral("#8fcbff") },
-        { QStringLiteral("[10:23:20] 灌装压力稳定"),    QStringLiteral("#f7c948") },
-        { QStringLiteral("[10:22:50] 料盘到位超时"),    QStringLiteral("#ff5e6b") },
-        { QStringLiteral("[10:23:40] 抓取放置成功"),    QStringLiteral("#8fcbff") },
-    };
-
-    for (const auto& log : logs)
-    {
-        auto* logLabel = new QLabel(log.text);
-        logLabel->setStyleSheet(QStringLiteral(
-            "color: %1; font-size: 13px; font-family: 'Consolas', monospace; "
-            "background: transparent; border: none;"
-        ).arg(log.color));
-        logLayout->addWidget(logLabel);
-    }
-
-    logLayout->addStretch();
-
-    rightLayout->addWidget(m_logBox, 1);  // 日志区域可伸缩
-
-    // ---- 按钮行 ----
+    // 按钮行
     auto* btnRow = new QWidget();
     btnRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* btnLayout = new QHBoxLayout(btnRow);
@@ -206,21 +188,18 @@ void AutoRunPage::SetupUI()
 
     struct BtnDef { QString text; QString bg; QString hover; QString extra; };
     QVector<BtnDef> btns = {
-        { QStringLiteral("\xE2\x96\xB6 启动"),   QStringLiteral("#1f9d4a"), QStringLiteral("#28b85a"), QString() },
-        { QStringLiteral("\xE2\x86\xBA 复位"),   QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"), QStringLiteral("color: #1a1e24;") },
-        { QStringLiteral("\xE2\x8F\xB9 停止"),   QStringLiteral("#b13a3a"), QStringLiteral("#d14444"), QString() },
-        { QStringLiteral("\xE2\x9F\xB3 初始化"), QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"), QString() },
-        { QStringLiteral("\xE2\x9B\x94 急停"),   QStringLiteral("#cc2222"), QStringLiteral("#ee3333"), QString() },
+        { QStringLiteral("▶ 启动"),   QStringLiteral("#1f9d4a"), QStringLiteral("#28b85a"), QString() },
+        { QStringLiteral("↺ 复位"),   QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"), QStringLiteral("color: #1a1e24;") },
+        { QStringLiteral("⏹ 停止"),   QStringLiteral("#b13a3a"), QStringLiteral("#d14444"), QString() },
+        { QStringLiteral("⟳ 初始化"), QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"), QString() },
+        { QStringLiteral("⚔ 急停"),   QStringLiteral("#cc2222"), QStringLiteral("#ee3333"), QString() },
     };
 
     for (const auto& b : btns)
     {
         auto* btn = new QPushButton(b.text);
         QString style = QStringLiteral(
-            "QPushButton {"
-            "  background: %1; border: none; border-radius: 8px;"
-            "  font-weight: 700; font-size: 13px; padding: 0 4px; min-width: 0; color: white; %2"
-            "}"
+            "QPushButton { background: %1; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; padding: 0 4px; min-width: 0; color: white; %2 }"
             "QPushButton:hover { background: %3; }"
         ).arg(b.bg, b.extra, b.hover);
         btn->setStyleSheet(style);
@@ -228,48 +207,226 @@ void AutoRunPage::SetupUI()
         btn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         btn->setFixedHeight(46);
 
-        if (b.text.contains("启动"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartClicked);
+        if (b.text.contains("启动")) {
+            m_btnStart = btn;
+            connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartClicked);
+        }
         else if (b.text.contains("复位"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnResetClicked);
         else if (b.text.contains("停止"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStopClicked);
         else if (b.text.contains("初始化")) connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked);
         else                                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnEmergencyClicked);
 
-        btnLayout->addWidget(btn, 1);  // 等宽分配，最小化时不互相挤压
+        btnLayout->addWidget(btn, 1);
     }
-
     rightLayout->addWidget(btnRow);
 
-    // ==== 组装主布局: 严格按照 6:4 比例 ====
+    // 底部提示
+    m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));
+    m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none; padding: 2px 0;");
+    rightLayout->addWidget(m_hintLabel);
+
+    // 组装主布局
     mainLayout->addWidget(leftSide, 6);
     mainLayout->addWidget(rightSide, 4);
 }
 
+void AutoRunPage::RefreshCoordPanel()
+{
+    double l1, l2, z0, h1, tcpX, tcpY, tcpZ;
+    KinematicsHelper::ReadConfigParams(l1, l2, z0, h1, tcpX, tcpY, tcpZ);
+
+    // 运动学参数仅在变化时重建一次，避免每 50ms 构造 Kinematics 刷日志
+    if (!m_kinParamsLoaded || l1 != m_kinL1 || l2 != m_kinL2 || z0 != m_kinZ0 || h1 != m_kinH1
+        || tcpX != m_kinTcpX || tcpY != m_kinTcpY || tcpZ != m_kinTcpZ) {
+        m_kin = KinematicsHelper::FromConfig();
+        m_kinL1 = l1; m_kinL2 = l2; m_kinZ0 = z0; m_kinH1 = h1;
+        m_kinTcpX = tcpX; m_kinTcpY = tcpY; m_kinTcpZ = tcpZ;
+        m_kinParamsLoaded = true;
+    }
+
+    Joints joints{m_j1, m_j2, m_z, m_r};
+    Pose pose = m_kin.Forward(joints);
+
+    QString text = QStringLiteral("X: %1 mm  Y: %2 mm  Z: %3 mm  R: %4°")
+        .arg(pose.x, 0, 'f', 2).arg(pose.y, 0, 'f', 2)
+        .arg(pose.z, 0, 'f', 2).arg(pose.r, 0, 'f', 2);
+    if (text != m_lastCoordText) {
+        m_coordPanel->setText(text);
+        m_lastCoordText = text;
+    }
+}
+
+void AutoRunPage::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    RefreshSchemeCombo();   // ProcessPage 增删改方案后，切回本页时下拉同步
+}
+
+void AutoRunPage::RefreshSchemeCombo()
+{
+    if (!m_schemeCombo) return;
+    QString cur = m_schemeCombo->currentText();
+    m_schemeCombo->clear();
+    const auto& schemes = ProcessManager::instance().schemes();
+    for (const auto& s : schemes)
+        m_schemeCombo->addItem(s.schemeName);
+    if (m_schemeCombo->count() == 0)
+        m_schemeCombo->addItem(QStringLiteral("（无方案）"));
+    if (!cur.isEmpty()) {
+        int idx = m_schemeCombo->findText(cur);
+        if (idx >= 0) m_schemeCombo->setCurrentIndex(idx);
+    }
+}
+
 void AutoRunPage::OnStartClicked()
 {
-    SPDLOG_INFO("[AutoRun] 启动 clicked (stub)");
-    qDebug() << "按钮被点击: 启动";
+    if (!m_worker) {
+        m_hintLabel->setText(QStringLiteral("错误：执行引擎未初始化"));
+        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+        return;
+    }
+    if (!HardwareManager::instance().IsGlobalEnabled()) {
+        m_hintLabel->setText(QStringLiteral("请先使能所有轴（手动页点击「全部使能」）"));
+        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+        return;
+    }
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (schemes.isEmpty()) {
+        m_hintLabel->setText(QStringLiteral("尚无方案，请先在「工艺流程」页创建方案"));
+        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+        return;
+    }
+    if (m_schemeCombo->currentIndex() < 0 || m_schemeCombo->currentText() == QStringLiteral("（无方案）")) return;
+    int idx = m_schemeCombo->currentIndex();
+    if (idx >= schemes.size()) return;
+
+    m_worker->ReloadFromConfig();
+    bool ok = m_worker->RunSequence(schemes[idx]);
+    if (ok) {
+        m_btnStart->setEnabled(false);
+        m_statusLabel->setText(QStringLiteral("▶ 运行中"));
+        m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+        m_hintLabel->setText(QStringLiteral("方案执行中..."));
+        m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none;");
+    } else {
+        m_hintLabel->setText(QStringLiteral("启动失败：已在运行中"));
+        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+    }
 }
 
 void AutoRunPage::OnResetClicked()
 {
-    SPDLOG_INFO("[AutoRun] 复位 clicked (stub)");
-    qDebug() << "按钮被点击: 复位";
+    auto& hw = HardwareManager::instance();
+    if (!hw.IsGlobalEnabled()) {
+        m_hintLabel->setText(QStringLiteral("请先使能所有轴"));
+        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+        return;
+    }
+    bool ok = hw.HomeAll();
+    if (ok) {
+        m_logTextEdit->append(QStringLiteral("[%1] 复位（回零）开始").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+    } else {
+        m_hintLabel->setText(QStringLiteral("复位失败：请检查轴连接/回零配置"));
+        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+    }
 }
 
 void AutoRunPage::OnStopClicked()
 {
-    SPDLOG_INFO("[AutoRun] 停止 clicked (stub)");
-    qDebug() << "按钮被点击: 停止";
+    if (m_worker) m_worker->Stop();
+    m_btnStart->setEnabled(true);
+    m_statusLabel->setText(QStringLiteral("⏸ 已停止"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #f7c948; padding: 6px 0; background: transparent; border: none;");
 }
 
 void AutoRunPage::OnInitClicked()
 {
-    SPDLOG_INFO("[AutoRun] 初始化 clicked (stub)");
-    qDebug() << "按钮被点击: 初始化";
+    auto& hw = HardwareManager::instance();
+    bool ok = hw.Initialize();
+    if (ok) {
+        m_logTextEdit->append(QStringLiteral("[%1] 初始化完成").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+    } else {
+        m_hintLabel->setText(QStringLiteral("初始化失败：请检查硬件连接与配置"));
+        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+    }
 }
 
 void AutoRunPage::OnEmergencyClicked()
 {
-    SPDLOG_INFO("[AutoRun] 急停 clicked (stub)");
-    qDebug() << "按钮被点击: 急停";
+    // 安全关键：急停必须无条件触发硬件断使能，不依赖 worker 是否存在
+    HardwareManager::instance().EmergencyStop();
+    if (m_worker) m_worker->EmergencyStop();
+    m_btnStart->setEnabled(true);
+    m_statusLabel->setText(QStringLiteral("⛔ 急停"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #ff5e6b; padding: 6px 0; background: transparent; border: none;");
+    m_logTextEdit->append(QStringLiteral("[%1] 急停触发").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+}
+
+void AutoRunPage::OnFrameReady(const CameraFrame& frame)
+{
+    QImage rgbImg = FrameConverter::ColorToQImage(frame);
+    if (rgbImg.isNull()) return;
+
+    QPixmap rgbPm = QPixmap::fromImage(rgbImg);
+    m_cameraRgbLabel->setPixmap(rgbPm);
+
+    // 无检测结果时不再整幅深拷贝 + 空跑 DrawOverlays，两个标签共享同一 QPixmap
+    m_cameraOverlayLabel->setPixmap(rgbPm);
+}
+
+void AutoRunPage::OnLogMessage(const QString& msg)
+{
+    m_logTextEdit->append(QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), msg));
+    QScrollBar* sb = m_logTextEdit->verticalScrollBar();
+    if (sb) sb->setValue(sb->maximum());
+}
+
+void AutoRunPage::OnStateUpdated(const QVector<MotorStatus>& axes)
+{
+    // stateUpdated 已含每轴逻辑位置（卡轴），直接复用，避免 50ms 实时 GetPosition 读卡
+    for (const auto& st : axes) {
+        if (st.axisId == static_cast<int>(LogicalAxis::J1)) m_j1 = st.position;
+        else if (st.axisId == static_cast<int>(LogicalAxis::Z)) m_z = st.position;
+    }
+    RefreshCoordPanel();
+}
+
+void AutoRunPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servos)
+{
+    // servos[0]=J2, servos[1]=R（HardwareManager 已把角度转为逻辑坐标）
+    if (servos.size() > 0) m_j2 = servos[0].angleDeg;
+    if (servos.size() > 1) m_r  = servos[1].angleDeg;
+    RefreshCoordPanel();
+}
+
+void AutoRunPage::OnActionStarted(int /*index*/, const QString& name)
+{
+    m_statusLabel->setText(QStringLiteral("▶ %1").arg(name));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+}
+
+void AutoRunPage::OnSchemeFinished()
+{
+    m_btnStart->setEnabled(true);
+    m_statusLabel->setText(QStringLiteral("✅ 完成"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+    m_hintLabel->setText(QStringLiteral("方案执行完成"));
+    m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none;");
+}
+
+void AutoRunPage::OnInterrupted(const QString& reason)
+{
+    m_btnStart->setEnabled(true);
+    m_statusLabel->setText(QStringLiteral("⏸ 中断"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #f7c948; padding: 6px 0; background: transparent; border: none;");
+    m_logTextEdit->append(QStringLiteral("[%1] 中断: %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), reason));
+}
+
+void AutoRunPage::OnError(const QString& message)
+{
+    m_logTextEdit->append(QStringLiteral("[%1] 错误: %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), message));
+    // 方案失败后恢复启动按钮与状态标签（否则永久置灰）
+    if (m_btnStart) m_btnStart->setEnabled(true);
+    m_statusLabel->setText(QStringLiteral("⛔ 错误"));
+    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #ff5e6b; padding: 6px 0; background: transparent; border: none;");
 }

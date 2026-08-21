@@ -1,5 +1,7 @@
 #include "ProcessPage.h"
 #include "ProcessManager.h"
+#include "KinematicsHelper.h"
+#include "HAL/core/HardwareManager.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -946,7 +948,46 @@ void ProcessPage::OnMoveActionDown()
 
 void ProcessPage::OnTeachRead()
 {
-    SPDLOG_INFO("[Process] Teach read - stub");
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) {
+        QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("请先选择「移动」动作"));
+        return;
+    }
+    auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
+    if (action.type != ActionType::Move) {
+        QMessageBox::information(this, QStringLiteral("提示"), QStringLiteral("示教读取仅适用于「移动」动作"));
+        return;
+    }
+
+    auto& hw = HardwareManager::instance();
+    if (!hw.IsGlobalEnabled()) {
+        QMessageBox::information(this, QStringLiteral("提示"),
+            QStringLiteral("请先在手动页使能并回零，再执行示教读取"));
+        return;
+    }
+
+    Joints cur{ hw.GetPosition(LogicalAxis::J1),
+                hw.GetPosition(LogicalAxis::J2),
+                hw.GetPosition(LogicalAxis::Z),
+                hw.GetPosition(LogicalAxis::R) };
+
+    Kinematics kin = KinematicsHelper::FromConfig();
+    Pose pose = kin.Forward(cur);
+
+    PointData pt;
+    pt.name = QStringLiteral("点_%1").arg(action.points.size() + 1, 3, 10, QLatin1Char('0'));
+    pt.x = pose.x;
+    pt.y = pose.y;
+    pt.z = pose.z;
+    pt.r = cur.r;
+    pt.posture = QStringLiteral("elbow_up");
+    action.points.push_back(pt);
+
+    RefreshActionDetail(m_currentActionIdx);
+    m_pointTable->selectRow(m_pointTable->rowCount() - 1);
+    ProcessManager::instance().save();
+
+    SPDLOG_INFO("[Process] Teach read: J({:.2f},{:.2f},{:.2f},{:.2f}) -> P({:.2f},{:.2f},{:.2f})",
+        cur.j1, cur.j2, cur.z, cur.r, pose.x, pose.y, pose.z);
 }
 
 void ProcessPage::OnSaveAction()

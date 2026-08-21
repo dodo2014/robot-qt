@@ -30,8 +30,8 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
 CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
 ├─ src/Config/  — Configuration management (ConfigManager, ProcessManager)
 ├─ src/HAL/     — Hardware Abstraction Layer（interfaces/core/motioncard/servo/camera/algorithm 六子目录）
-├─ src/Core/    — Kinematics, CoordTransform, Trajectory
-├─ src/Logic/   — PickCycleController (state machine)
+├─ src/Core/    — Kinematics, CoordTransform, Trajectory（2026-08 重构：`Pose{x,y,z,r}`/`Joints{j1,j2,z,r}`，2D SCARA L1=138.83/L2=166.86，R 独立透传；`Forward/Inverse/InverseSmart/SetTCP`；**TCP 已内化为等效小臂**（`l2_eff = L2 + tcpForward_`，Z 扣 `tcpDown_`，旧 `ApplyTCPOffset/AddTCPOffset` 已删除）；**甜甜圈工作空间校验**（`rInner=|L1−L2_eff|`，原点不可达）；`CoordTransform` 为 Eigen 4×4 手眼矩阵；旧 `Pose3D`/`JointAngles` 已删除。**L1 大臂水平投影 2026-08 重测：174.35 → 138.83**）
+├─ src/Logic/   — PickCycleController (视觉抓取单周期模板) + SequenceWorker（大脑执行引擎，2026-08-20 新增）
 └─ src/UI/      — MainWindow + 5 pages + ToggleSwitch
 ```
 
@@ -89,6 +89,15 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **回零门禁 `homingActive_`**（HardwareManager）：`HomeAxis` 置位，`MoveAbs/MoveJog` 入口拒绝回零中的运动请求；`PollTick` 检测 `running` 复位或 `StopAxis/StopJog/DisableAll/EmergencyStop` 时清除。**不能用 `IsAxisBusy` 替代**（点动按钮 `autoRepeat` 每 100ms 触发，busy 会挡掉连续点动）。
   - **回零配置字段汇总**：`homeDir`（搜索方向 0/1）、`homeSns`（-1/0/1 极性）、`homeRapidVel`/`homeLocatVel`（Pulse/ms）、`homeBackDis`（碰信号后精定位反向退出脉冲数，0=不退出）、`homeMaxDis`（最大搜索距离 Pulse，0=不限制，**实际须设非零**）。
   - **完整回零分析报告**：现象/三个根因/关联问题/修复对照表/排查顺序/新轴 Checklist 见 `doc/test/homing_debug_report.md`，后续轴调试优先参考。
+
+### Home Offset（逻辑零点机制，2026-08 阶段 1 落地）
+
+- **语义**：`逻辑角度 = 机械角度 - homeOffset`（机械零点=回零位置，逻辑零点=工艺示教零点）。J1 offset=102°、J2 offset=28°、其余 0。**所有界面/软限位/运动学统一使用逻辑坐标**。
+- **实现位置（方案 Y，只改门面）**：全部落在 `HardwareManager` 层，`AxisConverter` 保持纯"机械方向坐标↔脉冲"不感知偏移。落地点：`MoveAbs` 下发 `目标机械 = inv ? -(逻辑+off) : (逻辑+off)`（`HardwareManager.cpp:375`）；`MoveJog` Servo 分支起点 `jogStartPos_=start-off`；`JogTick` 下发/夹紧 `MoveToAngle(逻辑+off)`；`GetPosition` Card/Servo 分支 `(inv?-phys:phys)-off`；`PollTick` Card 回读、Servo 遥测（`angleDeg -= off`）同样减 offset。**只有门面一个转换点，不得在别处再加减偏移**。
+- **限位按逻辑坐标校验**：J1 物理 0~110° → 逻辑 `limitMin:-102 / limitMax:8`；J2 物理 0~180 → `limitMin:-28 / limitMax:152`。回零后逻辑位置为 **-offset**（机械归 0），H08 用例已核对区间。`MoveAbs/MoveJog` 入口校验、PollTick 撞界夹紧、UI 提示全部用逻辑坐标。
+- **舵机（J2/R）HomeAxis**：归机械 0° 后逻辑自动 = -offset；Servo 分支限位夹紧目标 `MoveToAngle(逻辑+off)` 即机械角度。
+- **已自测（TEST_RECORD.md）**：驱动测试 24/24 通过（2026-08-19），含回零→-102/-28、Go 逻辑 5→机械 -107（inverted）、点动撞界自动停、越界拒绝/反向放行。
+- **曾修两个隐藏 bug**：① `SimCard::SetAxisConfig` rotation 分支漏 `gearRatio`（ppu 错 100 倍 → 点动撞界夹紧失效），`denom=360*cfg.gearRatio`；② `MoveJog` 启动边界检查容差 1e-6 太紧（撞界停止后位置 7.99996875 浮点舍入），改 0.01。
 
 ## Continuous QA & Testing（防回归硬规约）
 
@@ -215,6 +224,16 @@ HAL 多品牌硬件接入全部完成：
 
 - **HAL 目录重组 + HardwareManager 拆分（已完成，编译+冒烟通过）**：`src/HAL/` 拆六子目录（interfaces/core/motioncard/servo/camera/algorithm）；相机生命周期拆出 `CameraManager`（HardwareManager 保留 `CameraOpen/Close/Start/Stop/IsStreaming` 转发与 `frameReady` 信号）；每轴速度/单位/软限位查询拆出 `AxisConfigService`（HardwareManager 保留转发方法，UI 层零改动）。**对外 API 不变**，Debug/Release 编译通过、仿真启动存活。经验：拆分共享 `HardwareManager.h/.cpp` 与 `CMakeLists.txt` 的模块**不能并行**；外部 include 用 `HAL/<子目录>/Xxx.h`，HAL 内部平铺靠 include dir 追加子目录解析。
 
-**下一步**：**真机电机轴（轴1 J1 / 轴3 Z / 轴5 夹爪）手动功能测试**（config 已切 `Bopai`，测试计划见 `doc/test/card_axis_test.md`，各轴回零/标定参考 `doc/test/homing_debug_report.md` 的排查顺序与 Checklist）——J1 已测通换算/方向/回零/停止；待测：Z/夹爪 `calibrationPending` 每圈脉冲标定、Go 定位精度、遥测、拔网线异常。**自动流程遗留**：`PickCycleController` 仍硬编码卡轴号（0/2/3），与新 `portId` 映射不一致，手动测试完成后需改为走 `HardwareManager`/`AxisMap` 接口再接自动流程。随后 ZMotion/Leisai 品牌接入（SDK 目录已预留）；AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；状态机实现。
+### SequenceWorker 大脑执行引擎（2026-08-20 阶段 2 轮 A 落地，引擎层自测通过）
+
+- **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 未接线（T7–T10 阶段 2 轮 B）。
+- **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
+- **线程模型**：`moveToThread` 到独立 QThread（worker 线程执行循环），**全部 HardwareManager 调用经 `InMainThread` 辅助用 `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` 回主线程执行**，与 PollTick 串行避免数据竞争；`RunSequence` 内 `invokeMethod("StartExecution", QueuedConnection)` 排队到 worker 线程。主线程只短暂执行硬件操作，UI 不卡（S08 已验）。
+- **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=打开取 `GetLimitMax`/闭合取 `GetLimitMin`。
+- **中断语义**：`cancel_` 原子标志 + 等待循环（`WaitForCancelOrTime`/`WaitForAxes`/`WaitForStep`）20ms 轮询退出 → `ExecuteActions` 检测后发 `interrupted("用户停止")`。
+- **参数来源**：`ReloadFromConfig()` 从 config 实时读 `kinematics.links.*`/`tcpCalibration.*`/`axes.*.limit*` 喂入 Kinematics/CoordTransform，与 ConfigPage 编辑一致。
+- **自测**：临时驱动 17/17 通过（2026-08-20，仿真 Sim 全家桶）：S01 完整方案 5 动作、S03 Vision 闭环（基座 8.6,-0.8,55.0 conf=1.00）、S04 单步 5 次 NextStep、S05 Stop、S06 EmergencyStop、S07 未使能拒绝、S08 线程不卡。测试驱动已清理。
+
+**下一步**：**UI 接线 + 参数接入（阶段 2 轮 B，T7–T10）**——MainWindow 创建 SequenceWorker+QThread（T7）；AutoRunPage 5 按钮接线（启动=运行页内方案下拉选中方案 / 复位=HomeAll / 停止=Stop / 初始化=Initialize / 急停=EmergencyStop）+ 坐标面板随 stateUpdated 实时 FK 刷新 + 日志框接 logMessage + 两相机框接 frameReady（T8）；ProcessPage「示教读取」用当前关节 FK 填充点位（T9）；ConfigPage 运动学/TCP 标定参数喂入 Kinematics::SetParams/SetTCP/CoordTransform（T10）。随后 AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；真机电机轴（轴1 J1 / 轴3 Z / 轴5 夹爪）剩余手动功能测试（Z/夹爪 `calibrationPending` 每圈脉冲标定、Go 定位精度、遥测、拔网线异常）。自动流程中 `PickCycleController` 视觉抓取单周期模板后续作为 SequenceWorker Vision 动作的委托实现。
 
 其余未接线部分（`qDebug()`/`SPDLOG` 桩）：AutoRunPage 的 启动/复位/停止/初始化/急停；ProcessPage 的"示教读取"；ConfigPage 的"九点标定"。

@@ -14,6 +14,9 @@ class ConfigPage : public QWidget
 public:
     explicit ConfigPage(QWidget* parent = nullptr);
 
+signals:
+    void paramsChanged();
+
 private slots:
     void OnTabClicked(int index);
 

@@ -33,6 +33,7 @@
 ### 阶段 1 — 小脑核心库（无 UI 依赖，先行）
 
 **T1. 重写 `src/Core/Kinematics.h/.cpp`**（核心）
+
 - 新结构体 `Pose{x,y,z,r}`、`Joints{j1,j2,z,r}`；删除旧 `Pose3D`/`JointAngles`。
 - `void SetParams(double l1xy, double l2, double z0)`（参数由上层从 config 读取喂入）。
 - `Pose ApplyTCPOffset(const Pose& target, double dx, double dy, double dz)`：TCP→腕点（抓取朝下时平移减法）。
@@ -41,12 +42,14 @@
 - 双解就近选择：`InverseSmart(wrist, out, currentJ2)`（elbow_up/down + 按当前 J2 就近，避免大甩臂）。
 
 **T2. 重构 `src/Core/CoordTransform.h/.cpp`**
+
 - Eigen 手眼矩阵（数据源 `config.tcpCalibration.handEyeMatrix`，已存在）。
 - `Pose PixelToRobot(u,v,depth)`：内参 → 相机坐标 → 手眼 → 基座。
 - `Pose CameraToRobot(xc,yc,zc)`：手眼一步（`PuffResult` 输出相机系物理坐标，直接可用）。
 - 删除旧 `camRotation+gripOffset` 平面逻辑。
 
 **T3. Home Offset 落地**
+
 - Card 轴：`AxisConverter::ToPulse` 加 offset、`ToPhysical` 减 offset（逻辑=机械-offset，`AxisConfig.homePos` 已注入）。
 - Servo 轴：`HardwareManager` MoveAbs/MoveJog/JogTick/GetPosition 的 Servo 分支同样做 offset 换算（逻辑+offset 下发、ReadAngle-offset 回读）——**Home Offset 不只 AxisConverter，Servo 分支必须同步**。
 - 回归核对：MoveAbs 下发、MoveJog、GetPosition、PollTick 回读、软限位（逻辑坐标语义不变）、inverted 方向轴、夹爪/挤出 linear 轴（offset=0 无影响）。
@@ -56,6 +59,7 @@
 ### 阶段 2 — 大脑执行引擎（新增）
 
 **T5. 新增 `src/Logic/SequenceWorker.h/.cpp`**（QObject）
+
 - 可移入 `QThread`，禁止直接操作 UI；`QWaitCondition+QMutex` 单步模式。
 - `RunSequence(const SchemeData&)` 遍历 `actions`，switch-case 分发：
   - Move：逐点 `ApplyTCPOffset → Inverse → HardwareManager::MoveAbs(J1/J2/Z/R)`；`speedPercent` 换算速度；逐点到位等待（`IsAxisBusy`/`axisMoveFinished`）。
@@ -68,6 +72,7 @@
 - 入口使能门禁 `IsGlobalEnabled()`（复用现有安全门禁）。
 
 **T6. 重构 `PickCycleController` 为预置模板**
+
 - 删除硬编码卡轴号 0/2/3，全部走 `HardwareManager::MoveAbs(LogicalAxis,...)`。
 - 改用新 Kinematics：`Detect → CameraToRobot → ApplyTCPOffset → Inverse`。
 - 保留使能门禁；作为"视觉抓取单周期"模板供 SequenceWorker/后续复用。

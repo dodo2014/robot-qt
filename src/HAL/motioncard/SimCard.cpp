@@ -208,7 +208,11 @@ bool SimCard::SetAxisConfig(int axisId, const AxisConfig& cfg)
         double mmPerRev = cfg.lead * cfg.gearRatio;
         denom = (mmPerRev > 0) ? mmPerRev : 1.0;
     } else {
-        denom = 360.0;
+        // rotation 分支必须除 gearRatio（谐波减速后电机多转、输出转少），
+        // 与 AxisConverter::PhysicalPerPulse / BoPaiCard::PulsePerUnit 同一公式。
+        // 曾漏算（denom=360），J1 的 7111.11 脉冲/度被误算为 71.11 → 软限位脉冲
+        // 值错 100 倍，点动撞界夹紧失效。
+        denom = 360.0 * cfg.gearRatio;
     }
     double ppu = steps / denom;
     if (cfg.limitMin < cfg.limitMax) {
