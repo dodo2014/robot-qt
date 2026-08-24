@@ -599,6 +599,7 @@ void HardwareManager::CheckAxisBusy()
         if (axisBusyUntilMs_[i] == 0) continue;
         if (now >= axisBusyUntilMs_[i]) {
             axisBusyUntilMs_[i] = 0;
+            if (i < homingActive_.size()) homingActive_[i] = false;  // 回零超时兜底，舵机/无开关卡轴
             if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
                 axisBusyNotified_[i] = true;
                 emit axisMoveFinished(i);
