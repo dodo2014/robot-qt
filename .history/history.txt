@@ -1,40 +1,54 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-08-21T10:48:27.958+08:00
+最后更新时间：2026-08-24T13:46:47.974+08:00
 
 # 项目概述
 
-- CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机调试与核心库重构并行阶段。
-- 2026-08 重大演进方向：重构 C++ 运动学与 TCP 核心库（小脑）+ 开发自动工艺流程执行引擎（大脑）。重构后核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
-- L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86（原 174.35 为旧测量值）。
-- 项目采用 Continuous QA 测试台账机制（根目录 TEST_RECORD.md）：修复或完成功能后强制记账，重构前必先读台账推演回归风险。
+- CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机联调验收阶段。
+- 2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 开发自动工艺流程执行引擎（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
+- L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
+- Continuous QA 测试台账机制（根目录 TEST_RECORD.md）：修复或完成功能后强制记账，重构前必先读台账推演回归风险。
 
 # 迭代进度与工作计划跟踪
 
-- 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；2026-08-21 用户要求梳理该文件中已完成、有变更、未完成的项并同步更新文档。
-- 阶段 1（小脑核心库 T1/T2/T3/T4）编码完成并用 B/C/D 组测试用例自行验证通过后，2026-08-20 用户确认进入阶段 2 开发。
-- 阶段 2 轮 A（SequenceWorker 大脑执行引擎）2026-08-20 落地并通过引擎层自测；UI 接线 + 参数接入（轮 B，T7–T10）待做。
-- 工作流惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志手动记录到 doc/worklog/YYYY-MM-DD.md（2026-08-19、2026-08-20 均已记录）。
+- 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；2026-08-21 用户要求梳理已完成、有变更、未完成的项并同步更新文档。
+- 工作流惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志手动记录到 doc/worklog/YYYY-MM-DD.md。
+- 阶段 1（小脑核心库 T1/T2/T3/T4）编码完成并用 B/C/D 组测试用例自行验证通过；阶段 2 轮 A（SequenceWorker 大脑执行引擎）2026-08-20 落地并通过引擎层自测。
+- 阶段 3（T7-T10 UI 接线）2026-08-21 上午由其他模型（deepseek v4 flash / SenseNova）完成编码；期间曾因该模型请求限制导致任务受阻，后重新规划执行。
+- 2026-08-21 对 T7-T10 成果组织六维度只读代码评审，随后将发现的 D6-D17 缺陷一并集中修复并同步更新文档（用户明确要求修完更新文档）。
+- kinematics_sequenceworker_plan.md 所列计划的代码部分 2026-08-21 已全部完成，下一步转入真机联调。
+
+# 真机联调计划与验收进度
+
+- 真机调试计划已按要求落盘到 doc 目录（real_machine_plan_phase2.md）。
+- 2026-08-24 用户开始按 real_machine_plan_phase2.md 执行测试验收，首先进行阶段 1：连接 + 使能 + Home Offset 首验（计划 1 天）。
+
+# T7-T10 UI 接线评审要点（2026-08-21）
+
+- 六维度并行只读评审：模型契约与功能完整性、线程安全、所有权与生命周期、错误处理与验证、API/命名/C++ 正确性、性能与代码质量；输出格式为置信度>80 确认发现 + 60-79 待调查，每条含 文件:行号/类别/置信度/问题描述/追踪过程/缓解建议。
+- 关键确认缺陷（列入 D6-D17 清单修复）：errorOccurred 路径不恢复 m_btnStart——ExecuteAction 失败（非 cancel）时只 emit errorOccurred、不发射 schemeFinished，AutoRunPage::OnError 仅记日志，方案失败时启动按钮永久置灰。
+- 线程安全关注点：SequenceWorker::ReloadFromConfig 在主线程直接改 impl_->kin/coord/scheme 且无锁，方案运行中编辑 ConfigPage（paramsChanged）与 worker 线程读取存在数据竞争窗口（非原子 double 成员 = UB）；另关注 QueuedConnection 对 impl_->scheme 的 happens-before 保证、MainWindow 析构 quit+wait 与 BlockingQueuedConnection 的潜在死锁。
+- 性能关注点：RefreshCoordPanel 每 50ms（stateUpdated 周期）构造临时 Kinematics + 6 次 ConfigManager::getValue 点号路径解析 + SetParams/SetTCP + Forward；FK 参数读取代码与 ProcessPage::OnTeachRead 几乎重复，建议抽取公共辅助或缓存实例仅参数变化时重建（对照 ReloadFromConfig 模式）。
+- 其余核对项结论方向：MotorStatus/CameraFrame 必须跨线程 qRegisterMetaType 注册；5 按钮映射 启动=RunSequence(页内选中方案)/复位=HomeAll/停止=Stop/初始化=Initialize/急停=EmergencyStop；stateChanged 信号未连接 UI；OnResetClicked 未检查 HomeAll()/Initialize() 返回值；AutoRunPage 方案下拉构造时一次性填充、ProcessPage 新增方案后不刷新；ConfigPage paramsChanged 只覆盖 Tab2 运动学 + Tab4 TCP，Tab5 电控映射轴参数（限位）修改未触发 SequenceWorker::ReloadFromConfig；日志框高频 append 无行数上限。
 
 # Kinematics 重构原则（2026-08-20）
 
-- 原则 1 等效小臂模型与强语义 TCP：物理模型已通过严密验证，彻底重写 Kinematics.h/.cpp。夹爪直接安装在 J4 前方并朝下。
-- 保留外部配置接口 void SetTCP(double offsetX, double offsetY, double offsetZ) 以便与 config.json 联动。类内部删除 dx_/dy_/dz_，改用 tcpForward_ = 0.0（沿小臂 L2 向前）、tcpDown_ = 0.0（竖直向下物理距离，绝对正数）。
-- SetTCP 映射：tcpForward_ = offsetX；tcpDown_ = -offsetZ（假设传入 offsetZ 为负表示向下）；若 offsetY != 0 用 SPDLOG_WARN 打印「当前模型忽略 Y 向 TCP 偏移」。正逆解中小臂有效长度 l2_eff = l2_ + tcpForward_。
-- 原则 2 甜甜圈工作空间校验（Annulus Workspace）：l2_eff 可能大于 l1_，工作空间为中空圆环。ikSolve 必须双向边界检查：r > (l1_ + l2_eff) + 0.001 或 r < fabs(l1_ - l2_eff) - 0.001 时目标不可达，打印警告并返回 false。彻底删除原 if (r < kEpsilon) 原点奇点处理（原点物理上不可达）。
-- 原则 3 Z 轴正逆解高度推导：Z0 为撞顶时大臂上表面绝对高度；h1 为大臂向下倾斜固定垂直落差；tcpDown_ 为夹爪向下延伸长度。SetParams(double l1xy, double l2, double z0, double h1)。
-- 正解：夹爪尖端真实高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解：电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_。（早期表述无 tcpDown_ 项，以含 tcpDown_ 推导为准。）
+- 原则 1 等效小臂模型与强语义 TCP：物理模型已严密验证后彻底重写 Kinematics.h/.cpp，夹爪直接安装在 J4 前方并朝下。保留外部配置接口 SetTCP(offsetX, offsetY, offsetZ) 与 config.json 联动；类内部删除 dx_/dy_/dz_，改用 tcpForward_=0.0（沿小臂 L2 向前）、tcpDown_=0.0（竖直向下物理距离，绝对正数）。
+- SetTCP 映射：tcpForward_=offsetX；tcpDown_=-offsetZ（传入 offsetZ 为负表示向下）；offsetY != 0 时 SPDLOG_WARN「当前模型忽略 Y 向 TCP 偏移」。正逆解中小臂有效长度 l2_eff = l2_ + tcpForward_。
+- 原则 2 甜甜圈工作空间校验（Annulus Workspace）：l2_eff 可能大于 l1_，工作空间为中空圆环。ikSolve 双向边界检查：r > (l1_+l2_eff)+0.001 或 r < fabs(l1_-l2_eff)-0.001 时目标不可达，打印警告返回 false；彻底删除原 if(r<kEpsilon) 原点奇点处理（原点物理上不可达）。
+- 原则 3 Z 轴高度推导：Z0 为撞顶时大臂上表面绝对高度，h1 为大臂向下倾斜固定垂直落差，tcpDown_ 为夹爪向下延伸长度；SetParams(l1xy, l2, z0, h1)。
+- 正解：夹爪尖端真实高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解：电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_（早期无 tcpDown_ 项的表述作废，以此为准）。
 
-# ConfigPage 运动学参数 Tab 新增 h1 输入框（2026-08-20）
+# ConfigPage 运动学参数 Tab h1 输入框（2026-08-20）
 
-- 大臂向下倾斜产生固定垂直落差 h1，正逆解 Z 轴计算必须包含 h1。
-- ConfigPage.cpp【运动学参数】Tab 在 L1、L2、Z0 旁追加 h1（大臂落差）输入框，并与 config.json 的 kinematics.links.h1 双向绑定。
+- 大臂向下倾斜产生固定垂直落差 h1，正逆解 Z 轴计算必须包含。
+- ConfigPage.cpp【运动学参数】Tab 在 L1、L2、Z0 旁追加 h1（大臂落差）输入框，与 config.json 的 kinematics.links.h1 双向绑定。
 
 # HomeOffset 逻辑零点机制（关键决策，2026-08-19 阶段 1 落地）
 
 - 语义：逻辑角度 = 机械角度 - homeOffset（机械零点=回零位置，逻辑零点=工艺示教零点）。J1 offset=102°、J2 offset=28°、其余轴 0。所有界面/软限位/运动学统一使用逻辑坐标。
-- 软限位随 HomeOffset 同步偏移（用户明确要求）：J1 物理 0~110° → 逻辑 limitMin:-102.0 / limitMax:8.0；J2 物理 0~180° → 逻辑 limitMin:-28 / limitMax:152。config.json 默认值已同步更新。
+- 软限位随 HomeOffset 同步偏移（用户明确要求）：J1 物理 0~110° → 逻辑 limitMin:-102.0/limitMax:8.0；J2 物理 0~180° → 逻辑 limitMin:-28/limitMax:152。config.json 默认值已同步更新。
 - 回零后逻辑位置为 -offset；所有逻辑坐标经硬件层单点转换（MoveAbs 下发 机械=inv?-(逻辑+off):(逻辑+off)、GetPosition 回读减 offset），不得在别处再加减偏移。实现全部落在 HardwareManager 门面层，AxisConverter 保持纯机械坐标↔脉冲不感知偏移。
 - 已自测验证（驱动测试 24/24 通过，2026-08-19）：回零→逻辑 -102/-28、Go 逻辑 5→机械 -107（inverted）、点动撞界自动停、越界拒绝/反向放行。
 - 期间修复两个隐藏 bug：SimCard::SetAxisConfig rotation 分支漏 gearRatio（ppu 错 100 倍 → 点动撞界夹紧失效）；MoveJog 启动边界检查容差太紧（浮点舍入 7.99996875），改 0.01。
@@ -78,6 +92,6 @@
 
 # 待确认问题
 
-- Kinematics 重构 prompt 示例使用大臂 l1_=174.35、l2=215，与项目已重测/配置值（L1=138.83、L2=166.86）不一致——需确认示例数字仅为示意，重构时以 config.json 实际值及新测值为准。
+- Kinematics 重构 prompt 示例曾使用大臂 l1_=174.35、l2=215，与项目已重测/配置值（L1=138.83、L2=166.86）不一致——已确认重构以 config.json 实际值及新测值为准。
 - TEST_RECORD.md 放项目根目录的位置是否合适、doc/ 下文档是否需拆分子目录——待确认。
 - 方向约定等未决问题（见业务边界与方向约定）维持现状继续测试。

@@ -11,6 +11,10 @@
 | 坐标变换（CoordTransform） | C01 单位阵退化 / C02 平移矩阵 / C03 PixelToRobot 内参链路 | 输出=输入；输出=输入+平移(12.3,-5.7,38.1)；像素+深度两步转换正确 | 🟢 已通过 | 手眼矩阵 4×4 row-major；未设内参返回零位（2026-08-19） |
 | Home Offset（HardwareManager） | H01 J1 回零 → 逻辑 -102°；J2 回零 → -28°；H02 Go 逻辑 5 → 机械 -107（inverted）→ 回读 5；H03 J2 舵机 Go 5 → 机械 33 → 回读 5；H08 限位区间核对 | 逻辑=机械-offset 全链路一致；限位恒用逻辑坐标 | 🟢 已通过 | 驱动测试 24/24 通过（2026-08-19）。Servo HomeAxis 归机械 0 → 逻辑自动为 -offset |
 | Home Offset（软限位回归） | H04 点动撞界自动停、Go 越界拒绝、反向放行 | 撞界停在 8 并 StopJog；Go 20 拒绝；Go -50 放行 | 🟢 已通过 | 两个坑：① **SimCard::SetAxisConfig rotation 分支漏 gearRatio**（ppu 错 100 倍，软限位脉冲值错→点动撞界失效），已修 `denom=360*gearRatio`；② **MoveJog 启动边界容差 1e-6 太紧**（撞界停止后位置 7.99996875 浮点舍入），改 0.01 |
+| Home Offset 真机（阶段1，2026-08-21） | 1.1 连接+使能；1.3 J1 回零 | 状态点绿、无 Connect failed；J1 回零显示 -102° | 🟢 已通过 | 连接/使能/J1 回零 Home Offset 生效 |
+| Home Offset 真机（1.2 位置显示） | 未回零位置显示 | 卡轴 J1 逻辑=机械规划位(0)−102=-102°；J2/R 舵机=遥测真实机械角−offset（显示上电实际角） | 🟢 已通过 | **原测试预期"显示 0"写错已修正**。卡轴未回零=规划位 0→显示 -offset；舵机绝对编码器无回零概念 |
+| Home Offset 真机（1.4 J2 回零精度） | J2 回零多次 | 显示 -27.4/-27.2/-27.3（机械停 0.6~0.7°，期望 -28） | 🟡 待复测 | 舵机重复精度+机械负载；金属套松动可能放大，**先紧固复测**。已确认暂不软件补偿（0.6°≈末端 1.7mm 可接受） |
+| Home Offset 真机（1.5 R 回零） | R 回零多次 | 显示 0.2°（重复性极好=系统性偏差） | 🟡 待复测 | 可能需紧固后评估加 homeOffset 补偿；暂不处理 |
 | SequenceWorker（T5 引擎层） | S01 完整方案 [Move(3点,50%)→Gripper→Vision→Delay→Extrude] 自动运行 | 逐步 actionStarted/Finished 日志、IK 正确、schemeFinished 发出、方案结束仍保持使能 | 🟢 已通过 | 临时驱动测试 17/17 通过（2026-08-20）。Move 逐点 MoveAbs 走 HardwareManager 门面（物理单位+Home Offset 已内化）；Extrude 挤出/回抽按绝对目标位置；Gripper 打开/闭合取限位 Max/Min |
 | SequenceWorker（S03 Vision 闭环） | Vision 动作走 SimCamera 采帧 + SimAlgo 检测 + CoordTransform 手眼换算 | 输出基座坐标（含手眼平移 12.3,-5.7,38.1）与置信度，日志打印 | 🟢 已通过 | 临时驱动测试验证：采帧→检测→CameraToRobot 链路完整（2026-08-20） |
 | SequenceWorker（S04 单步） | SetStepMode(true) 后运行，每动作完成后挂起，NextStep 唤醒 | 执行完首动作后 IsPaused=true；5 次 NextStep 后全部执行完毕 | 🟢 已通过 | 5 个动作需 5 次 NextStep 释放（2026-08-20） |
