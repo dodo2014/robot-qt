@@ -60,5 +60,5 @@ private:
     QVector<bool> enabledState_;
     QVector<bool> runningState_;
     QVector<bool> homeDoneState_;
-    bool homingPending_ = false;
+    QVector<bool> homingAxes_;   // 每轴回零进行中标记：OnHomeAxis/OnGlobalHome 置位，OnAxisMoveFinished(超时/到位) 或 OnStopAxis 清除
 };

@@ -48,6 +48,7 @@ ManualControlPage::ManualControlPage(QWidget* parent)
     enabledState_.fill(false, count);
     runningState_.fill(false, count);
     homeDoneState_.fill(false, count);
+    homingAxes_.fill(false, count);
 
     // 初始连接状态
     OnConnectionChanged();
@@ -467,9 +468,16 @@ void ManualControlPage::OnGlobalHome()
         return;
     }
     if (!connected) { SPDLOG_WARN("[ManualControl] 一键回零 rejected: 未连接硬件"); SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
-    homingPending_ = true;
-    HardwareManager::instance().HomeAll();
-    SetHint(QStringLiteral("回零中..."));
+    // 逐轴发起回零（HomeAll 的使能门禁已在上文校验），仅对真正启动回零的轴标记 homingAxes_
+    bool anyStarted = false;
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        if (HardwareManager::instance().HomeAxis(static_cast<LogicalAxis>(i))) {
+            if (i < homingAxes_.size()) homingAxes_[i] = true;
+            anyStarted = true;
+        }
+    }
+    SetHint(anyStarted ? QStringLiteral("回零中...") : QStringLiteral("回零被拒（请先使能或检查轴状态）"),
+            anyStarted ? QString() : QStringLiteral("#e0a520"));
     qDebug() << "一键回零";
 }
 
@@ -574,6 +582,15 @@ void ManualControlPage::OnStopAxis(int axis)
     HardwareManager::instance().StopAxis(static_cast<LogicalAxis>(axis));
     runningState_[axis] = false;
     if (axis < goButtons_.size()) goButtons_[axis]->setEnabled(true);
+    // 停止也可能中止回零：清除本轴回零标记，避免提示一直卡在"回零中"
+    if (axis >= 0 && axis < homingAxes_.size() && homingAxes_[axis]) {
+        homingAxes_[axis] = false;
+        bool anyRemaining = false;
+        for (int i = 0; i < homingAxes_.size(); ++i) {
+            if (homingAxes_[i]) { anyRemaining = true; break; }
+        }
+        SetHint(anyRemaining ? QStringLiteral("回零中...") : QStringLiteral("回零已停止"));
+    }
     RefreshStatusDot(axis);
     qDebug() << "停止 轴" << axis;
 }
@@ -583,6 +600,16 @@ void ManualControlPage::OnAxisMoveFinished(int axis)
     // Go 到位（或被打断/停止）→ 恢复 Go 按钮
     if (axis >= 0 && axis < goButtons_.size())
         goButtons_[axis]->setEnabled(true);
+    // 回零完成：axisMoveFinished 由 HardwareManager 在回零超时/到位时发出（卡轴与舵机轴统一经此信号）。
+    // 清除本轴回零标记；全部轴完成后提示"回零完成"，否则保持"回零中..."
+    if (axis >= 0 && axis < homingAxes_.size() && homingAxes_[axis]) {
+        homingAxes_[axis] = false;
+        bool anyRemaining = false;
+        for (int i = 0; i < homingAxes_.size(); ++i) {
+            if (homingAxes_[i]) { anyRemaining = true; break; }
+        }
+        SetHint(anyRemaining ? QStringLiteral("回零中...") : QStringLiteral("回零完成"));
+    }
 }
 
 void ManualControlPage::OnHomeAxis(int axis)
@@ -595,9 +622,13 @@ void ManualControlPage::OnHomeAxis(int axis)
     }
     runningState_[axis] = false;
     homeDoneState_[axis] = false;
+    bool ok = HardwareManager::instance().HomeAxis(static_cast<LogicalAxis>(axis));
+    if (axis < homingAxes_.size()) homingAxes_[axis] = ok;
+    if (ok)
+        SetHint(QStringLiteral("轴%1 回零中...").arg(axis + 1));
+    else
+        SetHint(QStringLiteral("轴%1 回零被拒（请先使能或检查轴状态）").arg(axis + 1), "#e0a520");
     RefreshStatusDot(axis);
-    HardwareManager::instance().HomeAxis(static_cast<LogicalAxis>(axis));
-    SetHint(QStringLiteral("轴%1 回零中...").arg(axis + 1));
     qDebug() << "回零 轴" << axis;
 }
 
@@ -626,20 +657,6 @@ void ManualControlPage::OnStateUpdated(const QVector<MotorStatus>& axes)
             if (st.softLimitNegative) reasons << QStringLiteral("负软限位");
             alarmDetail_[st.axisId]   = reasons.join(QStringLiteral("、"));
             RefreshStatusDot(st.axisId);
-        }
-    }
-
-    if (homingPending_) {
-        bool allHome = true;
-        for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
-            auto binding = AxisMap::Get(static_cast<LogicalAxis>(i));
-            if (binding.type == AxisBinding::Type::Card && i < homeDoneState_.size()) {
-                if (!homeDoneState_[i]) { allHome = false; break; }
-            }
-        }
-        if (allHome) {
-            homingPending_ = false;
-            SetHint(QStringLiteral("回零完成"));
         }
     }
 }
@@ -694,6 +711,8 @@ void ManualControlPage::RefreshStatusDot(int axis)
     }
     else if (limitState_[axis] || (axis < softLimitDir_.size() && softLimitDir_[axis] != 0))
                                   { color = "#ffb347"; tip = QStringLiteral("限位"); }
+    else if (axis < homingAxes_.size() && homingAxes_[axis])
+                                  { color = "#c08cff"; tip = QStringLiteral("回零中"); }
     else if (runningState_[axis]) { color = "#4fb3ff"; tip = QStringLiteral("运行中"); }
     else if (enabled)             { color = "#3bff7b"; tip = QStringLiteral("已使能"); }
     else                          { color = "#5a6a7a"; tip = QStringLiteral("未使能"); }
