@@ -136,7 +136,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **轴换算参数**（`axes.<key>.axisType` + `transmission`）: `axisType` = `"rotation"`(角度)/`"linear"`(直线 mm)，**废除曾用 `hardwareType` 兼任旋转/直线的推断**。换算公式（`AxisConverter::PhysicalPerPulse` 与 `BoPaiCard::PulsePerUnit` 必须一致，**参考工程 `bopai\puff` 漏了 gearRatio 勿照抄**）:
     - rotation: `pulsesPerUnit = pulsesPerRev×microSteps / (gearRatio×360)`（脉冲/度）
     - linear: `pulsesPerUnit = pulsesPerRev×microSteps / (lead×gearRatio)`（脉冲/mm）；`gearRatio`=电机每转的输出端转数（从动/主动，皮带 20/40 → 0.5）
-  - **真实机械参数**（信捷 MP3-57H023 步进，`3rdparty` 外参考）：**J1=驱动器拨码 25600 Pulse/rev + 谐波减速比 1:100** → rotation `encoderResolution=25600`、`gearRatio=0.01`（7111.11 脉冲/度；曾误填 32000/gear1"无减速"，显示偏大 100 倍）；Z=32000/1/lead5/gear0.5（皮带20:40 + 丝杆导程5mm → 电机每圈 2.5mm）；夹爪=40000/1/lead2/gear1（电机轴丝杆状，金属环行程~20mm；驱动器为信捷 XINJE DP3L1-224，拨码 SW5-SW8 全 OFF=40000 Pulse/rev，**已据此标定**，`calibrationPending:false`）；J2/R=串口舵机（minPulse500/maxPulse2500/minAngle0/maxAngle180）。**Z 每圈脉冲 32000 仍为初值、待真机标定**（`calibrationPending:true`），用低速点动实测反推；夹爪软限位 [-5, 0]mm 为目测值待实测修正
+  - **真实机械参数**（信捷 MP3-57H023 步进，`3rdparty` 外参考）：**J1=驱动器拨码 25600 Pulse/rev + 谐波减速比 1:100** → rotation `encoderResolution=25600`、`gearRatio=0.01`（7111.11 脉冲/度；曾误填 32000/gear1"无减速"，显示偏大 100 倍）；Z=25600/1/lead5/gear0.5（皮带20:40 + 丝杆导程5mm → 电机每圈 2.5mm，10240 脉冲/mm；**2026-08-26 阶段 3 已真机标定与理论一致**，config `calibrationPending` 仍 true 未置 false）；夹爪=40000/1/lead2/gear1（电机轴丝杆状，金属环行程~20mm；驱动器为信捷 XINJE DP3L1-224，拨码 SW5-SW8 全 OFF=40000 Pulse/rev，**已据此标定**，`calibrationPending:false`）；J2/R=串口舵机（minPulse500/maxPulse2500/minAngle0/maxAngle180）。夹爪软限位 [-5, 0]mm 为目测值待实测修正
   - `communication.motionCard` 含 `pcIp`（本机网卡 IP，需与卡同网段）；`communication.servo.baudRate` 与 `port` 一样**存为字符串**，读取须 `getValue<std::string>` 再 `stoi`
 
 ### ConfigManager (src/Config/ConfigManager.h/.cpp)
@@ -267,3 +267,11 @@ HAL 多品牌硬件接入全部完成：
 - **通过项**：2.1 J1 点动撞 +8 自动停/状态点橙/底部提示/反向放行；2.2 J1 Go 逻辑 5°→机械 107°→回读 5°（H02）；2.3 越界拒绝（H08）；2.5 J2 Go 逻辑 5°→机械 33°→回读 5°；2.6 R offset=0 与旧版一致；2.7 夹爪点动方向正确。**Home Offset 逻辑坐标全链路真机验证完成**。
 - **遗留三项**：① Z 轴待硬件调试后测（阶段 3）；② J2 点动顿挫依然存在（用户决定暂不处理，疑点动节流阈值/匀速模式与负载匹配，专项排查时从 `kServoJogSendThreshold` 与 FSUS_PARAM_ACCEL_SWITCH 入手）；③ J2 位置显示小误差（可接受）。
 - 实测记录见 `doc/test/real_machine_plan_phase2.md` 阶段 2 表格下方。
+
+### 基线复位事件（2026-08-26 晚，务必知悉）
+
+- 因对"切换其他模型后产生的未提交修改"信任存疑，执行 `git reset --hard` 到 **`b9c7ed3`**（"config: add Axis_Z home params"），**丢弃了全部未提交工作区修改**（hard reset 无法用 git 找回）。当前基线 = `b9c7ed3`。
+- **b9c7ed3 已固化**：舵机协议/热重连/指数退避/Ping 门卫、连接状态分段着色、手动页 FK 接线、软限位、Home Offset、回零完成检测保护期（`homeStartedMs_`）、Z 回零 home 参数 + BoPaiCard post-start 检测（当前仅 WARN 不 reject）。
+- **被丢弃的真机验证代码修复（须重做并真机复测）**：① 回零中点动误中断门禁 `jogInProgress_`（卡轴+舵机统一）；② 急停状态残留 `ResetAxisStates`（急停后轴1/3 误显示"限位"而非"未使能"）；③ post-start 竞态（一键回零后 J1/Z/夹爪/挤出全部没反应）；④ Z 回零 reject 分支 + UI"轴X 未启动"提示。**根因链与修复方案完整记录在 `doc/worklog/2026-08-26.md`**（未跟踪文件，未被 reset 影响，权威参考）。
+- **文档状态**：`AGENTS.md`/`TEST_RECORD.md`/`doc/config.md`/`doc/test/real_machine_plan_phase2.md` 均为 b9c7ed3 版本；`doc/worklog/2026-08-24/25/26.md` 为独立未跟踪文件，保留全部真机记录。**阶段 4（回零回归 + 停止/急停）实际处于"待重做"状态**（与本节上方"下一步"自洽；worklog 中阶段 4 曾全部真机验证通过，代码已被 reset 回退）。
+- config `Axis_Z.calibrationPending` 仍为 `true`（阶段 3 已标定、真机验证通过，b9c7ed3 未置 false，可置 false）。
