@@ -15,6 +15,7 @@
 #include <QThread>
 
 #include <spdlog/spdlog.h>
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -210,6 +211,7 @@ bool HardwareManager::Initialize()
     // 使能门禁：初始全轴未使能。使能必须手动触发（EnableAll），程序不自动使能。
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
     axisBusyUntilMs_.fill(0, static_cast<int>(LogicalAxis::Count));
+    homeStartedMs_.fill(0, static_cast<int>(LogicalAxis::Count));
     axisBusyNotified_.fill(false, static_cast<int>(LogicalAxis::Count));
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     // 用真实位置初始化软限位方向判断基线，避免首轮 delta 以 0 为基准误判（上电位置非 0 时）
@@ -540,6 +542,8 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
         bool ok = motionCard_->HomeAxis(binding.index);
         if (ok) {
             if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;   // 回零门禁
+            if (ai >= 0 && ai < homeStartedMs_.size())
+                homeStartedMs_[ai] = QDateTime::currentMSecsSinceEpoch();   // 完成检测保护期基准
             MarkAxisBusy(axis, 30000);   // 回零最长 30s，超时后 CheckAxisBusy 自动释放忙态
         }
         return ok;
@@ -639,6 +643,13 @@ bool HardwareManager::HomeAll()
 
 bool HardwareManager::EnableAll()
 {
+    // 连接门禁：运动卡/舵机 COM 任一未连接，全局使能视为无效操作
+    // （直接拒绝，axisEnabled_ 保持全 false，状态灯显示未使能）
+    if (!IsMotionCardConnected() || !IsServoConnected()) {
+        SPDLOG_WARN("[HardwareManager] EnableAll rejected: motionCard={} servo={}",
+                    IsMotionCardConnected(), IsServoConnected());
+        return false;
+    }
     bool ok = true;
     // 逐轴记录使能结果，用于更新门禁状态（任一轴失败则该轴保持未使能）
     QVector<bool> axisOk(static_cast<int>(LogicalAxis::Count), false);
@@ -949,8 +960,14 @@ void HardwareManager::PollTick()
                         // 记录本轮逻辑位置，供下一轮 delta 方向判断
                         if (i < lastPollPos_.size()) lastPollPos_[i] = st.position;
 
-                        // 回零完成检测：HomeAxis 置位后，卡 running 复位 → 回零结束，释放门禁与忙态
-                        if (i < homingActive_.size() && homingActive_[i] && !st.running) {
+                        // 回零完成检测：HomeAxis 置位后，卡 running 复位 → 回零结束，释放门禁与忙态。
+                        // 必须已过最短保护期（发起后 1s）：MC_HomeStart 到卡端 running 置位存在启动间隙
+                        // （含 Start 返回 1 的 HomeStop+重试窗口），间隙内单拍判定会误清 homingActive_，
+                        // 随后真正的回零搜索被软限位 StopJog 误杀——J1 未回零压界 -102==limitMin 且
+                        // inverted 搜索方向恰朝越界侧，必然触发（曾报"轴1到达软限位"且未碰原点开关）
+                        if (i < homingActive_.size() && homingActive_[i] && !st.running
+                            && i < homeStartedMs_.size()
+                            && QDateTime::currentMSecsSinceEpoch() - homeStartedMs_[i] > 1000) {
                             homingActive_[i] = false;
                             if (i < axisBusyUntilMs_.size()) {
                                 axisBusyUntilMs_[i] = 0;
@@ -1027,16 +1044,37 @@ void HardwareManager::PollTick()
             if (servoJ3_) servos.push_back(toLogicalAngle(LogicalAxis::R,  servoJ3_->ReadTelemetry()));
             emit servoStateUpdated(servos);
 
-            // 热重连：任一舵机持续离线达到阈值（约 1s）→ 重连共享串口
+            // 热重连：任一舵机离线 → 先 Ping 确认再重连共享串口。
+            // 指数退避（2s→4s→…→30s cap）：瞬时坏帧/超时被 ReadTelemetry 重试吸收；
+            // 真离线（含 Open port failed 的 USB 不可用期）用退避重试，避免刷爆日志。
             bool anyOffline = (servoJ2_ && !servoJ2_->IsOnline()) || (servoJ3_ && !servoJ3_->IsOnline());
             if (anyOffline) {
-                if (++servoOfflineTicks_ >= 4) {
-                    servoOfflineTicks_ = 0;
-                    SPDLOG_WARN("[HardwareManager] Servo offline for ~1s, attempting reconnect");
-                    ReconnectServos();
+                qint64 now = QDateTime::currentMSecsSinceEpoch();
+                if (now >= servoNextReconnectMs_) {
+                    bool j2Alive = !servoJ2_ || servoJ2_->Ping();
+                    bool rAlive  = !servoJ3_ || servoJ3_->Ping();
+                    if (j2Alive && rAlive) {
+                        SPDLOG_WARN("[HardwareManager] Servo offline but Ping ok, skip reconnect");
+                        servoNextReconnectMs_ = now + 2000;
+                    } else {
+                        SPDLOG_WARN("[HardwareManager] Servo offline (ping J2={} R={}), reconnect backoff={}ms",
+                                    j2Alive, rAlive, servoReconnectBackoffMs_);
+                        ReconnectServos();
+                        bool j2Online = servoJ2_ && servoJ2_->IsOnline();
+                        bool rOnline  = servoJ3_ && servoJ3_->IsOnline();
+                        if (j2Online && rOnline) {
+                            servoReconnectBackoffMs_ = 0;
+                        } else {
+                            // 重连失败：指数退避，上限 30s
+                            servoReconnectBackoffMs_ = servoReconnectBackoffMs_ > 0
+                                                           ? std::min<qint64>(servoReconnectBackoffMs_ * 2, 30000)
+                                                           : 2000;
+                        }
+                        servoNextReconnectMs_ = now + servoReconnectBackoffMs_;
+                    }
                 }
             } else {
-                servoOfflineTicks_ = 0;
+                servoReconnectBackoffMs_ = 0;
             }
         }
     }
@@ -1074,18 +1112,23 @@ void HardwareManager::ReconnectServos()
     double spdJ2 = cfg.getValue<double>("communication.servos[0].speed", 50.0);
     double spdR  = cfg.getValue<double>("communication.servos[1].speed", 50.0);
 
-    if (servoJ2_) {
-        if (servoJ2_->Connect(port, baud)) {
-            servoJ2_->SetServoId(static_cast<uint8_t>(idJ2));
-            servoJ2_->SetSpeed(spdJ2);
-        }
+    bool j2Ok = servoJ2_ && servoJ2_->Connect(port, baud);
+    if (j2Ok) {
+        servoJ2_->SetServoId(static_cast<uint8_t>(idJ2));
+        servoJ2_->SetSpeed(spdJ2);
     }
-    if (servoJ3_) {
-        if (servoJ3_->Connect(port, baud)) {
-            servoJ3_->SetServoId(static_cast<uint8_t>(idR));
-            servoJ3_->SetSpeed(spdR);
-        }
+    bool rOk = servoJ3_ && servoJ3_->Connect(port, baud);
+    if (rOk) {
+        servoJ3_->SetServoId(static_cast<uint8_t>(idR));
+        servoJ3_->SetSpeed(spdR);
     }
-    SPDLOG_INFO("[HardwareManager] Servo reconnect done (J2 id={}, R id={})", idJ2, idR);
+    if (!j2Ok || !rOk) {
+        SPDLOG_WARN("[HardwareManager] Servo reconnect partial/failed: J2={} R={} (err J2={} R={})",
+                    j2Ok, rOk,
+                    (servoJ2_ ? servoJ2_->GetLastError() : "none"),
+                    (servoJ3_ ? servoJ3_->GetLastError() : "none"));
+    } else {
+        SPDLOG_INFO("[HardwareManager] Servo reconnect done (J2 id={}, R id={})", idJ2, idR);
+    }
     emit enableStateChanged();
 }

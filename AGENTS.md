@@ -83,6 +83,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **`MC_HomeSns` 极性设置**：参数是**全局位掩码**（每 bit 对应一轴），`homeSns=1`→`|=1<<axisId`（高有效）、`0`→`&=~(1<<axisId)`（低有效）。**曾永远传 `0x1` 导致 homeSns=0/1 行为一致**（已修复）。`homeSns=-1` 不调用（沿用卡默认）。极性**影响搜索方向**及 `AXIS_STATUS_HOME_SWITCH` 位的解读。J1 真机 `homeSns=0`（低有效）配合 `homeDir=1` 电机逆时针搜索。
   - **`ulHomeMaxDis` 必须非零**：部分 BoPai 卡将 0 解释为"搜索 0 距离"→ 立即完成，设配置字段 `homeMaxDis`（Pulse，J1 设 1,500,000）。曾硬编码 4000000 测试通过，已改为 config 驱动。
   - **PollTick 软限位会误杀回零**（根因：软限位 min=0 且当前位置=0 时，`position<=lo` → `st.running=true` → `StopJog(MC_Stop)` 终止回零搜索。修复：`if(st.running && !homingActive_[i])` 回零中的轴不拦截。这也是"改软限位到 -180~90 就能回零"的原因——lo=-180，位置不在边界）。
+  - **回零完成检测必须加最短保护期（2026-08-26，真机误杀复现）**: 完成判定 `homingActive_[i] && !st.running` 曾为单拍判定——MC_HomeStart 到卡端 running 置位存在启动间隙（含 Start=1 时 HomeStop+150ms 重试窗口），间隙内一拍即误判"完成"清掉 homingActive_ 保护；随后压界起步的回零搜索（J1 未回零逻辑位 -102==limitMin 且 inverted 搜索方向朝越界侧 delta<0）被软限位 StopJog 误杀 → 报"轴1到达软限位"且未碰原点开关。修复：`homeStartedMs_[ai]` 记录发起时刻（HardwareManager），发起后 1s 内 running=false 不判完成。挤出轴（恒 0 压 limitMin=0）同源。
   - **`MotorStatus` 新增 `homeSwitch`/`homeFail`**：解析 `AXIS_STATUS_HOME_SWITCH`（HOME 信号电平）和 `AXIS_STATUS_HOME_FAIL`，HomeAxis 前后打印供真机诊断。
   - `StopAxis` 必须**先 `MC_HomeStop` 再 `MC_Stop`**：仅 `MC_Stop` 可能无法退出卡端 HOME 状态机，导致后续 Jog/Trap 被拒（回零中停止后再点动无反应）。
   - 回零速度单位 **Pulse/ms**（`dHomeRapidVel/dHomeLocatVel`），经 `axes.<key>.homeRapidVel/homeLocatVel` 配置，换算公式见 `doc/config.md`（J1 3°/s→21.3、1°/s→7.1）。
@@ -226,7 +227,7 @@ HAL 多品牌硬件接入全部完成：
 
 ### SequenceWorker 大脑执行引擎（2026-08-20 阶段 2 轮 A 落地，引擎层自测通过）
 
-- **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 未接线（T7–T10 阶段 2 轮 B）。
+- **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 已接线（T7–T10，2026-08-20/21 完成）。
 - **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
 - **线程模型**：`moveToThread` 到独立 QThread（worker 线程执行循环），**全部 HardwareManager 调用经 `InMainThread` 辅助用 `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` 回主线程执行**，与 PollTick 串行避免数据竞争；`RunSequence` 内 `invokeMethod("StartExecution", QueuedConnection)` 排队到 worker 线程。主线程只短暂执行硬件操作，UI 不卡（S08 已验）。
 - **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=打开取 `GetLimitMax`/闭合取 `GetLimitMin`。
@@ -236,4 +237,33 @@ HAL 多品牌硬件接入全部完成：
 
 **下一步**：**UI 接线 + 参数接入（阶段 2 轮 B，T7–T10）**——MainWindow 创建 SequenceWorker+QThread（T7）；AutoRunPage 5 按钮接线（启动=运行页内方案下拉选中方案 / 复位=HomeAll / 停止=Stop / 初始化=Initialize / 急停=EmergencyStop）+ 坐标面板随 stateUpdated 实时 FK 刷新 + 日志框接 logMessage + 两相机框接 frameReady（T8）；ProcessPage「示教读取」用当前关节 FK 填充点位（T9）；ConfigPage 运动学/TCP 标定参数喂入 Kinematics::SetParams/SetTCP/CoordTransform（T10）。随后 AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；真机电机轴（轴1 J1 / 轴3 Z / 轴5 夹爪）剩余手动功能测试（Z/夹爪 `calibrationPending` 每圈脉冲标定、Go 定位精度、遥测、拔网线异常）。自动流程中 `PickCycleController` 视觉抓取单周期模板后续作为 SequenceWorker Vision 动作的委托实现。
 
-其余未接线部分（`qDebug()`/`SPDLOG` 桩）：AutoRunPage 的 启动/复位/停止/初始化/急停；ProcessPage 的"示教读取"；ConfigPage 的"九点标定"。
+### UI 接线 T7–T10 + 评审修复 D1–D17（2026-08-20/21 完成，编译+冒烟通过）
+
+- **T7**：`MainWindow` 创建 `SequenceWorker`+QThread（worker 线程 `finished→deleteLater`）；退出走 `ShutdownWorker`（Stop(cancel) → quit → wait(20ms)+processEvents 循环 → terminate 兜底），防退出挂死。
+- **T8 AutoRunPage**：方案下拉（选中方案传给 RunSequence）/5 按钮（启动/复位=HomeAll/停止=Stop/初始化=Initialize/急停=EmergencyStop）/坐标面板 FK 实时刷新/日志框接 logMessage/双相机 QLabel 接 frameReady。
+- **T9 ProcessPage**：「示教读取」= GetPosition→FK 填充点位表并 push 进 `action.points` + save（仅 Move 类型动作）。
+- **T10 ConfigPage**：运动学 L1/L2/Z0/h1 与 TCP 编辑完成即发 `paramsChanged` → `SequenceWorker::ReloadFromConfig()`（running 门禁：运行中跳过防数据竞争）。
+- **关键修复（D1–D17，评审发现全部修复，清单见 TEST_RECORD.md / doc/worklog/2026-08-21.md）**：D1 方案下拉时序（`ProcessManager::load()` 提前到 MainWindow SetupUI 前 + showEvent 刷新）；D2 失败后启动按钮恢复；D4 ShutdownWorker；D5/D6 坐标面板用 stateUpdated/servoStateUpdated 缓存关节位 + Kinematics 成员缓存（避免 50ms 读舵机串口）；D11 急停无条件先 HardwareManager::EmergencyStop；D16 抽 `src/UI/KinematicsHelper.h`（UI 层统一 FromConfig/ReadConfigParams，Core 不依赖 Config）。
+- **moc 陷阱**：信号参数类型前向声明不够，AutoRunPage.h 需 include `HAL/interfaces/ICamera.h` 等完整定义；外层 lambda 必须捕获 this（内层捕 this 报 C3493）。
+
+### 真机联调进展（2026-08-24/25 进行中）
+
+- **阶段 1 已完成**（计划与实测记录见 `doc/test/real_machine_plan_phase2.md`）：1.1 连接使能 ✅；1.3 J1 回零显示 -102° ✅。**1.2 预期修正**：未回零时卡轴显示逻辑=机械规划位(0)−offset（J1 显示 -102 属设计行为）；舵机绝对编码器显示真实机械角−offset。**1.4 J2 回零精度**：实测 -27.4/-27.2/-27.3（机械停 0.6~0.7°，FashionStar 死区 ~1.5°+金属套松动放大波动）——决定紧固后复测、暂不软件补偿（0.6°≈末端 1.7mm 可接受）。**1.5 R 回零**：稳定 0.2° 系统性偏差，暂不处理。
+- **舵机回零"卡回零中"阻塞 jog/Go（已修）**：根因 servo 轴 `homingActive_` 只能靠 PollTick 卡轴 `st.running` 清除（舵机不在该向量）。修复：`CheckAxisBusy` busy 超时时同步清 `homingActive_` 并 emit `axisMoveFinished`（HardwareManager.cpp 兜底）；UI 层 `homingAxes_` 向量由 axisMoveFinished 驱动提示更新。
+- **舵机软件掉线防误判（2026-08-25，待真机复测）**：真机运行中出现"掉线→1s 全量重连→点动被拦"。根因三层：① `Transaction` 响应解析遇脏字节固定比较 rx[0..1] 且不丢弃 → 必超时；② 校验失败立即放弃；③ 单次查询失败即 `online=false`、连续 4 tick(1s) 即全量重连——EMI/USB 抖动的瞬时坏帧被放大。加固：滑动字节对齐 + 校验失败丢一字节继续等帧；`ReadTelemetry` 失败重试 1 次；超时 40→60ms；离线阈值 2s 且重连前 **Ping 门卫**（`IAxisServo::Ping()` 新增接口，SimServo 返回 connected_），Ping 通仅清计数不重连。**重连后无法点动属门禁正确行为**（重连强制复位使能，扭矩已释放须人工确认），不做自动使能；UI 在 offline→online 边沿提示「舵机已重连（扭矩已释放），请重新执行全局轴使能」（ManualControlPage::OnServoStateUpdated）。重连成功后直接点「全局使能」即可恢复（无需先断使能）。
+- **重连指数退避 + 日志降噪（2026-08-26，日志分析驱动）**：真机日志 09:42 启动即 `Open port COM3 failed`（CreateFileA 失败，USB 转串口不可用），无退避下 80 分钟重连 1646 次、26320 条"串口未打开" WARN。修复：重连改指数退避 2s→4s→…→30s cap（成功归零）；`ReconnectServos` 失败打 GetLastError 原因、不再无条件 "reconnect done"；`ReadTelemetry` 仅 online→offline 边沿打 WARN（`onlineWarned_` 去重）。**根本原因在 USB 转串口硬件层**（线/供电/驱动/占用），软件仅缓解刷屏——现场排查需查 USB 线缆接触、供电、是否有程序占用 COM3。日志分析要点：读 `log/creampuff_YYYY-MM-DD.log`，区分「启动即失败」（初始化 `Open port failed`）与「运行中断线」（遥测超时/发送失败），前者是环境问题后者才是软件抖动。
+- **连接状态分段着色 + 全局使能连接门禁（2026-08-25，已真机验证）**：① 急停旁「运动卡/舵机」状态原 `(cardOk || servoOk)` 整条统一着色（任一在线即全绿误导），改 QLabel 富文本 span 分段着色：未连接黄 `#e0a520`、已连接绿 `#7ed67e`；② EnableAll 原只判指针非空，未连接时底层 EnableAxis 仍返回 true → 状态灯误绿，已在入口加连接门禁（任一未连接直接拒绝，axisEnabled_ 保持全 false），UI 判据同步 AND、提示「未连接硬件，命令可能无效」。DisableAll 不设门禁（安全操作）。
+
+**下一步**：执行真机联调**阶段 4（回零回归 + 停止/急停）**：全轴一键回零、点动中停止（舵机 CMD24 保持锁力）、运动中急停、急停后无残留运动。随后 SequenceWorker 方案真机验证（阶段 5-6）、异常/回归（阶段 7-8）。奥比中光（Orbbec）真实相机 SDK 实现 `ICamera` 待同事提供 SDK 后接入。
+
+### 真机联调阶段 3 已完成（2026-08-26，Z 标定 + 运动学全链路闭环）
+
+- **3.1-3.4 全部通过**：低速点动标定、行程实测、软限位、标定收尾；**Z0 基准与 h1（大臂落差）标定完成，`calibrationPending` 可置 false**。
+- **Gemini 五步底层验证全部通过**：参数（Pulse/Rev=25600+导程+HOME 极性）/ 方向与单轴回零 / Go -100 钢卷尺实测精确 100mm / 软限位探底拦截 / **3D 坐标系验收**（Z0=470/h1=175/tcpDown=130：回零 Z 显示 165.0mm、Go -165 尖端触桌面显示 0.0mm）。
+- **手动页坐标面板 FK 接线（2026-08-26）**：全局使能下方 X/Y/Z/R 曾为硬编码假数据不更新；已接 stateUpdated/servoStateUpdated → 关节缓存 → KinematicsHelper::FromConfig FK 实时刷新（对齐 AutoRunPage 模式，参数变化才重建 Kinematics）。冒烟注意：Start-Process 继承控制台被 shell 回收触发 CTRL_CLOSE 主动退出（0xC0000374 为伪影非崩溃），须用 `-WindowStyle Hidden` 独立窗口验证。
+
+### 真机联调阶段 2 已完成（2026-08-25，除 Z 待硬件）
+
+- **通过项**：2.1 J1 点动撞 +8 自动停/状态点橙/底部提示/反向放行；2.2 J1 Go 逻辑 5°→机械 107°→回读 5°（H02）；2.3 越界拒绝（H08）；2.5 J2 Go 逻辑 5°→机械 33°→回读 5°；2.6 R offset=0 与旧版一致；2.7 夹爪点动方向正确。**Home Offset 逻辑坐标全链路真机验证完成**。
+- **遗留三项**：① Z 轴待硬件调试后测（阶段 3）；② J2 点动顿挫依然存在（用户决定暂不处理，疑点动节流阈值/匀速模式与负载匹配，专项排查时从 `kServoJogSendThreshold` 与 FSUS_PARAM_ACCEL_SWITCH 入手）；③ J2 位置显示小误差（可接受）。
+- 实测记录见 `doc/test/real_machine_plan_phase2.md` 阶段 2 表格下方。

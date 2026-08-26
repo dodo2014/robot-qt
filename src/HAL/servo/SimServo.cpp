@@ -138,6 +138,12 @@ bool SimServo::ClearAlarm()
     return true;
 }
 
+bool SimServo::Ping()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return connected_;
+}
+
 std::string SimServo::GetLastError() const
 {
     return lastError_;

@@ -43,6 +43,7 @@ public:
 
     bool IsOnline() const override;
     bool ClearAlarm() override;
+    bool Ping() override;
 
     std::string GetLastError() const override;
 

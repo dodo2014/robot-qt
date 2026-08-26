@@ -47,6 +47,7 @@ public:
     uint8_t servoId = 1;
     bool online = false;
     bool torque = false;
+    bool onlineWarned_ = false;   // 边沿去重：online→offline 首次失败打 WARN，持续离线不再刷屏
     double angle = 90.0;
     double speed = 50.0;
     int lastMoveTimeMs = 0;
@@ -59,7 +60,7 @@ public:
 
     static constexpr uint16_t FRAME_REQ_HEADER = 0x4C12;
     static constexpr uint16_t FRAME_RSP_HEADER = 0x1C05;
-    static constexpr uint32_t RESP_TIMEOUT_MS = 40;
+    static constexpr uint32_t RESP_TIMEOUT_MS = 60;   // 曾 40ms：USB 转串口延迟抖动下偶发误超时
 
     static constexpr uint8_t CMD_PING = 1;
     static constexpr uint8_t CMD_WRITE_DATA = 4;   // 写入用户数据
@@ -102,7 +103,7 @@ public:
         tx[n++] = (FRAME_REQ_HEADER >> 8) & 0xFF;
         tx[n++] = cmd;
         tx[n++] = static_cast<uint8_t>(nContent);
-        uint16_t sum = (FRAME_REQ_HEADER & 0xFF) + ((FRAME_REQ_HEADER >> 8) & 0xFF) + cmd + nContent;
+        uint16_t sum = static_cast<uint16_t>((FRAME_REQ_HEADER & 0xFF) + ((FRAME_REQ_HEADER >> 8) & 0xFF) + cmd + nContent);
         for (int i = 0; i < nContent; ++i) { tx[n++] = content[i]; sum += content[i]; }
         tx[n++] = sum & 0xFF;
 
@@ -120,8 +121,12 @@ public:
         while (m < (int)sizeof(rx) && (GetTickCount() - start) < RESP_TIMEOUT_MS) {
             DWORD r = 0;
             if (ReadFile(serial_->h, rx + m, sizeof(rx) - m, &r, NULL) && r > 0) m += (int)r;
-            if (m < 4 || rx[0] != (FRAME_RSP_HEADER & 0xFF) || rx[1] != ((FRAME_RSP_HEADER >> 8) & 0xFF))
-                continue;
+            // 滑动对齐：头部脏字节（迟到残留/半帧）逐字节丢弃直到找到响应帧头，
+            // 曾因固定比较 rx[0..1] 且不丢字节 → 一个脏字节导致整事务超时误判离线
+            while (m >= 2 && !(rx[0] == (FRAME_RSP_HEADER & 0xFF) && rx[1] == ((FRAME_RSP_HEADER >> 8) & 0xFF))) {
+                memmove(rx, rx + 1, --m);
+            }
+            if (m < 4) continue;
             int contentLen = rx[3];
             int frameLen = 4 + contentLen + 1;
             if (m < frameLen) continue;
@@ -135,11 +140,13 @@ public:
                 if (respLen) *respLen = contentLen;
                 return true;
             }
+            // 校验失败：丢一字节重新对齐继续等后续数据（可能是错位/坏帧拼接），
+            // 不立即放弃——曾一次坏帧即判查询失败，被上层放大成舵机离线
+            memmove(rx, rx + 1, --m);
             lastErrorCode = -5;
             lastError = "响应校验和错误";
-            return false;
         }
-        lastErrorCode = -6;
+        lastErrorCode = m >= sizeof(rx) ? -7 : -6;
         lastError = "响应超时";
         return false;
     }
@@ -481,13 +488,21 @@ ServoTelemetry XRServo::ReadTelemetry()
 
     // online 必须以查询结果为准：串口句柄在拔线/断连后数值仍有效，
     // 不能只看 IsOpen()（曾导致 COM 断开后状态灯不变）。查询失败即离线。
-    if (impl_->QueryMonitor(t)) {
-        impl_->angle = t.angleDeg;
-        impl_->online = true;
-        t.online = true;
-    } else {
-        impl_->online = false;
+    // 失败自动重试 1 次（共 2 次尝试）：瞬时坏帧/超时不应直接判离线，
+    // 否则连续 4 个遥测周期失败会误触发全量重连（硬件并未掉线）
+    for (int attempt = 0; attempt < 2 && !t.online; ++attempt) {
+        if (impl_->QueryMonitor(t)) {
+            impl_->angle = t.angleDeg;
+            impl_->online = true;
+            impl_->onlineWarned_ = false;
+            t.online = true;
+        } else if (attempt == 0 && !impl_->onlineWarned_) {
+            impl_->onlineWarned_ = true;
+            SPDLOG_WARN("[XRServo] ReadTelemetry id={} failed ({}), retrying",
+                        (int)impl_->servoId, impl_->lastError);
+        }
     }
+    if (!t.online) impl_->online = false;
     return t;
 }
 
@@ -501,6 +516,11 @@ bool XRServo::ClearAlarm()
     impl_->lastErrorCode = 0;
     impl_->lastError.clear();
     return true;
+}
+
+bool XRServo::Ping()
+{
+    return impl_->Ping();
 }
 
 std::string XRServo::GetLastError() const

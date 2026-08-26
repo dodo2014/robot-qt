@@ -139,8 +139,10 @@ private:
     // 舵机遥测轮询计数：每 5 个 poll tick（250ms）查询一次，避免
     // 阻塞串口事务占满主线程（真机每事务约几 ms，逐 tick 查询会卡 UI）
     int servoPollCounter_ = 0;
-    // 舵机连续离线次数（每 250ms 遥测刷新一次），达到阈值触发热重连
-    int servoOfflineTicks_ = 0;
+    // 舵机重连退避（指数增长 2s→4s→…→30s cap）：USB 转串口不可用（Open port failed）
+    // 时曾每 2.5s 全量重连 80 分钟（1646 次），刷爆日志并反复打断操作
+    qint64 servoNextReconnectMs_ = 0;
+    qint64 servoReconnectBackoffMs_ = 0;
 
     // 舵机连续点动状态（jogTimer_ 驱动）
     // 目标按时间累积推进（速度 = jogSpeed_），发送节流 ≥2°（越过 FashionStar
@@ -188,6 +190,10 @@ private:
     // 每个逻辑轴的"忙"截止时间戳(ms，0=空闲)。Go/点动发出时更新为 now+估计到位时间，
     // PollTick 里到达后复位并发 axisMoveFinished。用于 UI 置灰 Go 按钮防连点。
     QVector<qint64> axisBusyUntilMs_;
+    // 每轴回零发起时刻（ms 时间戳）：回零完成检测的最短保护期基准。
+    // 曾单拍判定 running=false 即"完成"→ MC_HomeStart 到卡端 running 置位存在启动间隙，
+    // 保护被提前清掉后，压界起步的回零搜索被软限位 StopJog 误杀（J1 -102==limitMin 同源）
+    QVector<qint64> homeStartedMs_;
     // 每个逻辑轴"忙"是否已广播（边沿去重）
     QVector<bool>   axisBusyNotified_;
 

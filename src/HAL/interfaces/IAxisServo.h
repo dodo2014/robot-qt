@@ -49,5 +49,8 @@ public:
     virtual bool IsOnline() const = 0;
     virtual bool ClearAlarm() = 0;
 
+    // 主动探测在线状态（用于"疑似离线"时确认，避免瞬时通信失败误触发重连）
+    virtual bool Ping() = 0;
+
     virtual std::string GetLastError() const = 0;
 };

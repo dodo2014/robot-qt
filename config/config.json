@@ -6,7 +6,7 @@
             "direction": 0,
             "hardwareType": 0,
             "homeOffset": 0.0,
-            "jogSpeed": 1.0,
+            "jogSpeed": 2.0,
             "limitMax": 100.0,
             "limitMin": 0.0,
             "maxAccel": 100.0,
@@ -63,7 +63,7 @@
             "limitMax": 8.0,
             "limitMin": -102.0,
             "maxAccel": 50.0,
-            "maxSpeed": 50.0,
+            "maxSpeed": 30.0,
             "name": "[1] 轴1 (大臂 J1)",
             "portId": 0,
             "sortOrder": 0,
@@ -118,11 +118,11 @@
             "direction": 0,
             "hardwareType": 0,
             "homeOffset": 0.0,
-            "jogSpeed": 5.0,
-            "limitMax": 195.0,
-            "limitMin": 0.0,
-            "maxAccel": 100.0,
-            "maxSpeed": 500.0,
+            "jogSpeed": 13.0,
+            "limitMax": 0.0,
+            "limitMin": -165.0,
+            "maxAccel": 50.0,
+            "maxSpeed": 21.0,
             "name": "[3] 轴3 (Z轴)",
             "portId": 1,
             "sortOrder": 2,
@@ -186,10 +186,10 @@
             }
         ],
         "links": {
-            "h1": 0.0,
+            "h1": 175.0,
             "l1": 138.83,
             "l2": 166.86,
-            "z0": 0.0
+            "z0": 470.0
         }
     },
     "simulation": {

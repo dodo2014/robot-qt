@@ -2,6 +2,7 @@
 
 #include "HAL/core/HardwareManager.h"
 #include "HAL/core/AxisMap.h"
+#include "KinematicsHelper.h"
 #include "spdlog/spdlog.h"
 
 #include <QHBoxLayout>
@@ -178,22 +179,25 @@ void ManualControlPage::SetupUI()
     auto* coordLayout = new QHBoxLayout(coordPanel);
     coordLayout->setSpacing(14);
 
-    struct Coord { QString name; double value; QString unit; };
+    struct Coord { QString name; QString unit; };
     QVector<Coord> coords = {
-        { QStringLiteral("X"), 145.23, QString() },
-        { QStringLiteral("Y"), 87.46,  QString() },
-        { QStringLiteral("Z"), 32.81,  QString() },
-        { QStringLiteral("R"), 12.50,  QStringLiteral("\xC2\xB0") },
+        { QStringLiteral("X"), QString() },
+        { QStringLiteral("Y"), QString() },
+        { QStringLiteral("Z"), QString() },
+        { QStringLiteral("R"), QStringLiteral("\xC2\xB0") },
     };
 
     for (const auto& c : coords)
     {
+        // 初始 0.00，由 stateUpdated/servoStateUpdated 驱动 FK 实时刷新
+        // （曾为硬编码假数据且从不更新）
         auto* label = new QLabel(
             QStringLiteral("<span style='color:#7c9fc0;'>%1: </span>"
                            "<span style='color:#7ed6ff;font-weight:700;font-size:15px;'>%2%3</span>")
-                .arg(c.name).arg(c.value, 0, 'f', 2).arg(c.unit));
+                .arg(c.name).arg(0.0, 0, 'f', 2).arg(c.unit));
         label->setStyleSheet("font-size: 15px; color: #b7d6ff; background: transparent; border: none;");
         coordLayout->addWidget(label);
+        coordLabels_.append(label);
     }
 
     coordRowLayout->addWidget(coordPanel);
@@ -434,10 +438,10 @@ void ManualControlPage::OnGlobalEnable()
 {
     SPDLOG_INFO("[ManualControl] 全局使能 clicked");
     bool connected = HardwareManager::instance().IsMotionCardConnected()
-                     || HardwareManager::instance().IsServoConnected();
+                     && HardwareManager::instance().IsServoConnected();
     bool ok = HardwareManager::instance().EnableAll();
     SPDLOG_INFO("[ManualControl] 全局使能 result: ok={} connected={}", ok, connected);
-    if (!connected) SetHint(QStringLiteral("未连接硬件，命令可能未生效"));
+    if (!connected) SetHint(QStringLiteral("未连接硬件，命令可能无效"), "#e0a520");
     else if (!ok)   SetHint(QStringLiteral("部分轴使能失败"));
     else            SetHint(QStringLiteral("全局轴使能完成"));
     qDebug() << "全局轴使能";
@@ -638,6 +642,9 @@ void ManualControlPage::OnStateUpdated(const QVector<MotorStatus>& axes)
         if (st.axisId < 0 || st.axisId >= posLabels_.size()) continue;
         QString unit = HardwareManager::instance().AxisUnit(static_cast<LogicalAxis>(st.axisId));
         posLabels_[st.axisId]->setText(QStringLiteral("%1%2").arg(st.position, 0, 'f', 1).arg(unit));
+        // FK 关节缓存：J1/Z 为卡轴（position 已是逻辑坐标）
+        if (st.axisId == static_cast<int>(LogicalAxis::J1)) cachedJ1_ = st.position;
+        else if (st.axisId == static_cast<int>(LogicalAxis::Z)) cachedZ_ = st.position;
         if (st.axisId < enabledState_.size()) {
             enabledState_[st.axisId]  = st.enabled;
             runningState_[st.axisId]  = st.running;
@@ -659,6 +666,7 @@ void ManualControlPage::OnStateUpdated(const QVector<MotorStatus>& axes)
             RefreshStatusDot(st.axisId);
         }
     }
+    RefreshCoordPanel();
 }
 
 void ManualControlPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servos)
@@ -668,7 +676,24 @@ void ManualControlPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servo
         if (axis >= 0 && axis < posLabels_.size()) {
             posLabels_[axis]->setText(QStringLiteral("%1°").arg(servos[i].angleDeg, 0, 'f', 1));
         }
+        // FK 关节缓存：servos[0]=J2、servos[1]=R（angleDeg 已是逻辑角）
+        if (i == 0) cachedJ2_ = servos[i].angleDeg;
+        else if (i == 1) cachedR_ = servos[i].angleDeg;
     }
+    RefreshCoordPanel();
+    // 舵机离线/重连边沿提示：重连后扭矩归零、使能标志已复位，必须重新手动使能
+    // （点动/Go 走 SET_ANGLE 与扭矩无关，但门禁要求人工确认，防止机械突然得电）
+    bool allOnline = true;
+    for (const auto& s : servos) if (!s.online) allOnline = false;
+    if (!servoAllOnlinePrev_ && allOnline) {
+        bool anyServoDisabled = !HardwareManager::instance().IsAxisEnabled(LogicalAxis::J2)
+                             || !HardwareManager::instance().IsAxisEnabled(LogicalAxis::R);
+        if (anyServoDisabled)
+            SetHint(QStringLiteral("舵机已重连（扭矩已释放），请重新执行全局轴使能"), "#e0a520");
+    } else if (servoAllOnlinePrev_ && !allOnline) {
+        SetHint(QStringLiteral("舵机通信异常，自动重连中..."), "#e0a520");
+    }
+    servoAllOnlinePrev_ = allOnline;
     // 使能灯以 HardwareManager::IsAxisEnabled 为准（见 OnEnableStateChanged）
     OnEnableStateChanged();
 }
@@ -748,4 +773,35 @@ void ManualControlPage::RefreshSoftLimitHint()
         SetHint(QStringLiteral("提示：按住 +/- 按钮持续运动，松开停止"));
     else
         SetHint(parts.join(QStringLiteral(" / ")), QStringLiteral("#ffb347"));
+}
+
+void ManualControlPage::RefreshCoordPanel()
+{
+    if (coordLabels_.size() < 4) return;
+
+    // 运动学参数仅在变化时重建一次（对齐 AutoRunPage，避免高频构造刷日志）
+    double l1, l2, z0, h1, tcpX, tcpY, tcpZ;
+    KinematicsHelper::ReadConfigParams(l1, l2, z0, h1, tcpX, tcpY, tcpZ);
+    if (!coordKinLoaded_ || l1 != kinL1_ || l2 != kinL2_ || z0 != kinZ0_ || h1 != kinH1_
+        || tcpX != kinTcpX_ || tcpY != kinTcpY_ || tcpZ != kinTcpZ_) {
+        coordKin_ = KinematicsHelper::FromConfig();
+        kinL1_ = l1; kinL2_ = l2; kinZ0_ = z0; kinH1_ = h1;
+        kinTcpX_ = tcpX; kinTcpY_ = tcpY; kinTcpZ_ = tcpZ;
+        coordKinLoaded_ = true;
+    }
+
+    Pose pose = coordKin_.Forward(Joints{cachedJ1_, cachedJ2_, cachedZ_, cachedR_});
+
+    const struct { const char* name; double value; const char* unit; } items[4] = {
+        { "X", pose.x, "" },
+        { "Y", pose.y, "" },
+        { "Z", pose.z, "" },
+        { "R", pose.r, "\xC2\xB0" },
+    };
+    for (int i = 0; i < 4; ++i) {
+        coordLabels_[i]->setText(
+            QStringLiteral("<span style='color:#7c9fc0;'>%1: </span>"
+                           "<span style='color:#7ed6ff;font-weight:700;font-size:15px;'>%2%3</span>")
+                .arg(items[i].name).arg(items[i].value, 0, 'f', 2).arg(items[i].unit));
+    }
 }
