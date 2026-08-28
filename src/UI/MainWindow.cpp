@@ -47,6 +47,7 @@ MainWindow::MainWindow(QWidget* parent)
     workerThread_->start();
     sequenceWorker_->ReloadFromConfig();
     autoRunPage_->SetSequenceWorker(sequenceWorker_);
+    processPage_->SetSequenceWorker(sequenceWorker_);
     connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
         sequenceWorker_->ReloadFromConfig();
     });

@@ -11,12 +11,16 @@
 #include <QSlider>
 #include <QLabel>
 
+class SequenceWorker;
+
 class ProcessPage : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit ProcessPage(QWidget* parent = nullptr);
+
+    void SetSequenceWorker(SequenceWorker* worker);
 
 private slots:
     void OnNewScheme();
@@ -72,4 +76,8 @@ private:
     QSpinBox* m_delaySpin = nullptr;
 
     QComboBox* m_gripperCombo = nullptr;
+
+    SequenceWorker* m_worker = nullptr;
+    bool m_stepActive = false;
+    void ResetStepSession();
 };

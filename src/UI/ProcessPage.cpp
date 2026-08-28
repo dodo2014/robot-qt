@@ -2,6 +2,7 @@
 #include "ProcessManager.h"
 #include "KinematicsHelper.h"
 #include "HAL/core/HardwareManager.h"
+#include "Logic/SequenceWorker.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -166,7 +167,9 @@ void ProcessPage::SetupUI()
     stopBtn->setStyleSheet(makeBtnStyle("#b13a3a", "#d14444"));
     stopBtn->setCursor(Qt::PointingHandCursor);
     connect(stopBtn, &QPushButton::clicked, this, [this]() {
-        SPDLOG_INFO("[ProcessPage] 停止按钮 clicked");
+        if (m_worker) m_worker->Stop();
+        ResetStepSession();
+        SPDLOG_INFO("[ProcessPage] 停止按钮：业务停止（保持使能，可重新单步）");
     });
 
     topLayout->addWidget(newSchemeBtn);
@@ -715,20 +718,60 @@ void ProcessPage::OnConfirmSwitch()
     RefreshActionList();
 }
 
+void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
+{
+    m_worker = worker;
+    if (!m_worker) return;
+    connect(m_worker, &SequenceWorker::logMessage, this, [this](const QString& msg) {
+        SPDLOG_INFO("[Process] worker: {}", msg.toStdString());
+    });
+    connect(m_worker, &SequenceWorker::actionStarted, this, [this](int i, const QString& name) {
+        SPDLOG_INFO("[Process] 单步 actionStarted {}/{}", i, name.toStdString());
+    });
+    connect(m_worker, &SequenceWorker::actionFinished, this, [this](int i, const QString& name) {
+        SPDLOG_INFO("[Process] 单步 actionFinished {}/{}", i, name.toStdString());
+    });
+    connect(m_worker, &SequenceWorker::schemeFinished, this, &ProcessPage::ResetStepSession);
+    connect(m_worker, &SequenceWorker::interrupted, this, &ProcessPage::ResetStepSession);
+    connect(m_worker, &SequenceWorker::errorOccurred, this, &ProcessPage::ResetStepSession);
+    // 顶栏全局急停也清单步会话（断使能 + worker 中断后需重置状态）
+    connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
+            this, &ProcessPage::ResetStepSession);
+}
+
+void ProcessPage::ResetStepSession()
+{
+    m_stepActive = false;
+}
+
 void ProcessPage::OnStepExecute()
 {
-    SPDLOG_INFO("[Process] 步进执行 clicked");
-    if (m_currentSchemeIdx < 0) return;
-    const auto& schemes = ProcessManager::instance().schemes();
-    if (m_currentActionIdx < 0) {
-        if (!schemes[m_currentSchemeIdx].actions.isEmpty())
-            m_currentActionIdx = 0;
-        else
-            return;
+    if (!m_worker) {
+        SPDLOG_WARN("[Process] 单步执行：引擎未初始化");
+        return;
     }
-    SPDLOG_INFO("[Process] Step execute: scheme={}, action={}",
-        schemes[m_currentSchemeIdx].schemeName.toStdString(),
-        schemes[m_currentSchemeIdx].actions[m_currentActionIdx].name.toStdString());
+    if (!HardwareManager::instance().IsGlobalEnabled()) {
+        SPDLOG_WARN("[Process] 单步执行：未使能，拒绝（请先手动使能所有轴）");
+        return;
+    }
+    if (m_currentSchemeIdx < 0) {
+        SPDLOG_WARN("[Process] 单步执行：未选择方案");
+        return;
+    }
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx >= schemes.size()) return;
+    const auto& scheme = schemes[m_currentSchemeIdx];
+
+    if (!m_stepActive) {
+        m_worker->ReloadFromConfig();
+        m_worker->SetStepMode(true);
+        m_worker->RunSequence(scheme);
+        m_stepActive = true;
+        SPDLOG_INFO("[Process] 单步执行启动：方案={}", scheme.schemeName.toStdString());
+    } else {
+        m_worker->NextStep();
+        SPDLOG_INFO("[Process] 单步执行：释放下一步");
+    }
 }
 
 void ProcessPage::OnNewAction()

@@ -106,20 +106,27 @@
 
 ### 阶段 5：SequenceWorker 真机全流程（1 天，**本轮核心**）
 
+**执行顺序：先单步执行（5.1-5.5）全通过，再做自动运行（5.6-5.15）。**
+
 **前置**：手动页使能 + 一键回零（J1/J2/R；Z 若回零未通则用当前位，方案点位避开）。在 ProcessPage 建方案。
 
 | # | 方案（按可用轴拼装） | 期望 |
-|---|---|---|
-| 5.1 | Move（示教读取 2-3 点，speedPercent=50%） | 逐点 InverseSmart → MoveAbs(J2→R→J1→Z) → 到位等待；日志逐步 actionStarted；无大甩臂（就近选解） |
-| 5.2 | 加 Gripper 开/合动作 | 夹爪按 GetLimitMax/Min 开合到位 |
-| 5.3 | 加 Delay 1s | 等待 1s 不卡 UI |
-| 5.4 | （可选）加 Vision | 真实相机未装 → 走模拟延时路径（无相机降级，验证不崩溃） |
-| 5.5 | 方案完成后 schemeFinished | 状态「✅ 完成」、启动按钮恢复 |
-| 5.6 | 运行中 Stop | 当前动作安全停止 + interrupted + 保持使能 |
-| 5.7 | 运行中急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断；需重新手动使能 |
-| 5.8 | 未使能时启动 | 拒绝 + 提示（门禁） |
-| 5.9 | **运行中编辑运动学参数** | ReloadFromConfig 被 running 门禁跳过（不竞争）；下次启动用新参数（D3 验证） |
-| 5.10 | **运行中关闭窗口** | 进程不挂死、10s 内退出（ShutdownWorker，D4 验证） |
+| --- | --- | --- |
+| 5.1 | ProcessPage「单步执行」首点（Move 2-3 点, speedPercent=50%） | 仅 action[0] 运行后暂停（状态"单步暂停"），不自动跑后续；日志 actionStarted[0]（SetStepMode+RunSequence 接线验证） |
+| 5.2 | 连续点「单步执行」（=NextStep 释放） | 每点跑下一动作并暂停；共 N 次点完 N 动作 → schemeFinished、单步会话复位、状态「✅ 完成」 |
+| 5.3 | 单步中按 ProcessPage「停止」 | Stop 业务停止（保持使能），单步会话复位；可重新单步（就近刹车原则） |
+| 5.4 | 单步中按顶栏全局急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断，单步会话经 emergencyStopTriggered 复位；需重新手动使能 |
+| 5.5 | 未使能时单步执行 | 拒绝 + 提示（RunSequence 内部 IsGlobalEnabled 门禁，S07 已验） |
+| 5.6 | Move（示教读取 2-3 点，speedPercent=50%）整跑 | 逐点 InverseSmart → MoveAbs(J2→R→J1→Z) → 到位等待；日志逐步 actionStarted；无大甩臂（就近选解） |
+| 5.7 | 加 Gripper 开/合动作 | 夹爪按 GetLimitMax/Min 开合到位 |
+| 5.8 | 加 Delay 1s | 等待 1s 不卡 UI |
+| 5.9 | （可选）加 Vision | 真实相机未装 → 走模拟延时路径（无相机降级，验证不崩溃） |
+| 5.10 | 方案完成后 schemeFinished | 状态「✅ 完成」、启动按钮恢复 |
+| 5.11 | 运行中按 AutoRunPage「停止」 | 当前动作安全停止 + interrupted + 保持使能 |
+| 5.12 | 运行中顶栏全局急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断；需重新手动使能 |
+| 5.13 | 未使能时启动 | 拒绝 + 提示（门禁） |
+| 5.14 | **运行中编辑运动学参数** | ReloadFromConfig 被 running 门禁跳过（不竞争）；下次启动用新参数（D3 验证） |
+| 5.15 | **运行中关闭窗口** | 进程不挂死、10s 内退出（ShutdownWorker，D4 验证） |
 
 ### 阶段 6：AutoRunPage UI 接线真机（0.5-1 天）
 

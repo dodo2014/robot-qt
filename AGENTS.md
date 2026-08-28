@@ -254,7 +254,7 @@ HAL 多品牌硬件接入全部完成：
 - **理念**：急停全局唯一入口（MainWindow 顶栏圆形红色按钮），业务停止就近跟随场景（ProcessPage 单步执行旁停止按钮）。
 - **MainWindow 顶栏**：右侧新增 46px 圆形急停（完整 QSS selector）；点击 = `HardwareManager::EmergencyStop()` + `sequenceWorker_` 判空调 `EmergencyStop()`（**必须含 worker 中断**，否则方案运行中急停后 SequenceWorker 会继续跑下一动作）。
 - **信号驱动状态清理**：`HardwareManager` 新增 `emergencyStopTriggered` 信号（`EmergencyStop()` 内 emit，唯一触发点）；ManualControlPage 连接它做 `ResetAxisStates()`+提示，AutoRunPage 连接它恢复启动按钮/状态标签/日志（原 `OnEmergencyClicked` 删除，UI 响应改 `OnEmergencyTriggered` 槽）。
-- **按钮变化**：AutoRunPage 5→4（删"⚔ 急停"）；ManualControlPage 顶部 4→3（使能/断使能/一键回零）；ProcessPage「单步执行」右侧新增红色「停止」（stub `SPDLOG_INFO`，后续接 `SequenceWorker::Stop()` 时需 MainWindow 注入 worker，参照 `SetSequenceWorker` 模式）。
+- **按钮变化**：AutoRunPage 5→4（删"⚔ 急停"）；ManualControlPage 顶部 4→3（使能/断使能/一键回零）；ProcessPage「单步执行」右侧红色「停止」已接 `SequenceWorker::Stop()`（业务停止就近，经 `SetSequenceWorker` 注入 worker，与 AutoRunPage 同模式）；ProcessPage「单步执行」经 `SetStepMode(true)+RunSequence` / `NextStep` 接单步模式（此前为 stub，本轮补齐）。
 - **语义区分**：停止=业务（可恢复、保持使能）、急停=安全（断使能、需重新使能）。TEST_RECORD 记 🟡，阶段 5 用例 5.6/5.7 覆盖真机验证。
 
 ### 真机联调进展（2026-08-24/25 进行中）
