@@ -146,20 +146,16 @@ void ManualControlPage::SetupUI()
     homeAllBtn->setCursor(Qt::PointingHandCursor);
     connect(homeAllBtn, &QPushButton::clicked, this, &ManualControlPage::OnGlobalHome);
 
-    auto* estopBtn = new QPushButton(QStringLiteral("\xE2\x9A\xA0 急停"));
-    estopBtn->setStyleSheet("QPushButton { background: #d53a3a; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 15px; color: white; } QPushButton:hover { background: #ef4a4a; }");
-    estopBtn->setCursor(Qt::PointingHandCursor);
-    connect(estopBtn, &QPushButton::clicked, this, [this]() {
-        SPDLOG_INFO("[ManualControl] 急停 clicked");
-        HardwareManager::instance().EmergencyStop();
-        ResetAxisStates();
-        SetHint(QStringLiteral("已触发急停，所有轴立即停止"));
-    });
+    // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号清理状态数组
+    connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
+            this, [this]() {
+                ResetAxisStates();
+                SetHint(QStringLiteral("已触发急停，所有轴立即停止"));
+            });
 
     btnLayout->addWidget(enableBtn);
     btnLayout->addWidget(disableBtn);
     btnLayout->addWidget(homeAllBtn);
-    btnLayout->addWidget(estopBtn);
 
     connStatusLabel_ = new QLabel();
     connStatusLabel_->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 0 6px;");

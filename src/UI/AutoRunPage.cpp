@@ -192,7 +192,6 @@ void AutoRunPage::SetupUI()
         { QStringLiteral("↺ 复位"),   QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"), QStringLiteral("color: #1a1e24;") },
         { QStringLiteral("⏹ 停止"),   QStringLiteral("#b13a3a"), QStringLiteral("#d14444"), QString() },
         { QStringLiteral("⟳ 初始化"), QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"), QString() },
-        { QStringLiteral("⚔ 急停"),   QStringLiteral("#cc2222"), QStringLiteral("#ee3333"), QString() },
     };
 
     for (const auto& b : btns)
@@ -213,12 +212,15 @@ void AutoRunPage::SetupUI()
         }
         else if (b.text.contains("复位"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnResetClicked);
         else if (b.text.contains("停止"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStopClicked);
-        else if (b.text.contains("初始化")) connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked);
-        else                                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnEmergencyClicked);
+        else                                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked);
 
         btnLayout->addWidget(btn, 1);
     }
     rightLayout->addWidget(btnRow);
+
+    // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号做状态恢复
+    connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
+            this, &AutoRunPage::OnEmergencyTriggered);
 
     // 底部提示
     m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));
@@ -351,11 +353,9 @@ void AutoRunPage::OnInitClicked()
     }
 }
 
-void AutoRunPage::OnEmergencyClicked()
+void AutoRunPage::OnEmergencyTriggered()
 {
-    // 安全关键：急停必须无条件触发硬件断使能，不依赖 worker 是否存在
-    HardwareManager::instance().EmergencyStop();
-    if (m_worker) m_worker->EmergencyStop();
+    // 仅 UI 响应：硬件断使能与 worker 中断由全局急停触发点（MainWindow）完成
     m_btnStart->setEnabled(true);
     m_statusLabel->setText(QStringLiteral("⛔ 急停"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #ff5e6b; padding: 6px 0; background: transparent; border: none;");

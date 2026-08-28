@@ -756,6 +756,7 @@ bool HardwareManager::EmergencyStop()
         }
     }
     emit enableStateChanged();
+    emit emergencyStopTriggered();   // 通知各页面做自身状态清理（全局急停唯一触发点在此）
     return true;
 }
 

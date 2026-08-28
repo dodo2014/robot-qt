@@ -116,7 +116,7 @@
 | 5.4 | （可选）加 Vision | 真实相机未装 → 走模拟延时路径（无相机降级，验证不崩溃） |
 | 5.5 | 方案完成后 schemeFinished | 状态「✅ 完成」、启动按钮恢复 |
 | 5.6 | 运行中 Stop | 当前动作安全停止 + interrupted + 保持使能 |
-| 5.7 | 运行中急停 | EmergencyStop + 断使能；需重新手动使能 |
+| 5.7 | 运行中急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断；需重新手动使能 |
 | 5.8 | 未使能时启动 | 拒绝 + 提示（门禁） |
 | 5.9 | **运行中编辑运动学参数** | ReloadFromConfig 被 running 门禁跳过（不竞争）；下次启动用新参数（D3 验证） |
 | 5.10 | **运行中关闭窗口** | 进程不挂死、10s 内退出（ShutdownWorker，D4 验证） |
@@ -126,7 +126,7 @@
 | # | 动作 | 期望 |
 |---|---|---|
 | 6.1 | 方案下拉 | 显示 ProcessPage 建好的方案（非"（无方案）"）；ProcessPage 增删后切回刷新（D1 验证） |
-| 6.2 | 启动/复位/停止/初始化/急停 5 按钮 | 对应 RunSequence/HomeAll/Stop/Initialize/EmergencyStop；启动置灰、完成/失败/停止恢复（D2 验证） |
+| 6.2 | 启动/复位/停止/初始化 4 按钮 + **顶栏全局急停** | 4 按钮对应 RunSequence/HomeAll/Stop/Initialize（急停已升舱到 MainWindow 顶栏，2026-08-28）；启动置灰、完成/失败/停止恢复（D2 验证）；全局急停触发各页状态复位（emergencyStopTriggered 信号） |
 | 6.3 | 坐标面板 | 随 stateUpdated 实时 FK+TCP 显示夹爪尖端坐标；**不卡顿**（缓存关节位，D5 验证） |
 | 6.4 | 日志框 | 逐条显示 logMessage，滚动到底，上限 1000 行（D13） |
 | 6.5 | 双相机框 | 接 frameReady（SimCamera 画面）；真机相机未装时无画面不崩溃 |

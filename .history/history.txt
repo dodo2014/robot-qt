@@ -1,70 +1,83 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-08-28T09:43:19.678+08:00
+最后更新时间：2026-08-28T14:15:09.949+08:00
 
 # 项目概述
 
-- CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机联调验收阶段。
+- CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机联调阶段，核心任务是阶段 5 SequenceWorker 真机验证。
 - 2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 开发自动工艺流程执行引擎 SequenceWorker（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
 - L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
-- Continuous QA 测试台账机制（根目录 TEST_RECORD.md）：修复或完成功能后强制记账，重构前必先读台账推演回归风险。
-- 当前基线 = b9c7ed3（config: add Axis_Z home params），2026-08-26 晚因多模型协作污染已 hard reset 并按该基线更新全部文档。
-- 当前主线任务（2026-08-27/28）：为被基线复位丢弃的修复项制定重做+真机复测计划，用户要求先更新计划文档、具体手册信息须带用户确认；计划曾只覆盖博派卡方案，用户指出必须补充两个舵机（J2/R）的方案。
-- 后续：阶段 5 SequenceWorker 真机全流程、阶段 6-8（UI 联测/异常回归/编译发布）；奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
-- 新需求讨论（2026-08-27）：项目中拟增加物理蘑菇按钮（初始化/启动/停止/复位/急停），接线方案待设计确认。
+- 2026-08-28 完成系统目录结构与架构全面梳理，产出 doc/architecture.md（目录职责/分层依赖/三条数据流/门面设计原则/拆分路线/关键不变量）。
+- HardwareManager.cpp 臃肿问题：已部分拆分——相机生命周期拆出 CameraManager、每轴速度/单位/软限位查询拆出 AxisConfigService，对外 API 不变；后续拆分路线见 doc/architecture.md。
+- 当前基线 = b9c7ed3（config: add Axis_Z home params），2026-08-26 晚因多模型协作污染 hard reset；被丢弃的 4 项修复已于 2026-08-28 重做并真机复测通过。
+- 后续：阶段 5 SequenceWorker 真机全流程（当前核心）→ 阶段 6-8（UI 联测/异常回归/编译发布）；奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
+- 新需求讨论中：物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。
 
-# 被丢弃修复项的复测计划（2026-08-28 关注点）
+# Git 操作规约
 
-- 用户目标：复测「曾真机验证通过、但代码随基线复位被清除」的功能，询问如何测试。
-- 需重做的代码修复：① 回零中点动误中断门禁 jogInProgress_（卡轴+舵机统一）；② 急停状态残留 ResetAxisStates；③ 一键回零 post-start 竞态 reject 分支；④ Z 回零 reject 分支 + UI「轴X 未启动」提示。
-- 复测路径：先重做代码修复，再按阶段 4（回零回归 + 停止/急停）用例真机复测——全轴一键回零（J1→-102/J2→-28/R→0）、点动中停止（卡轴减速停、舵机 CMD24 保持锁力）、运动中急停+断使能、急停后无残留运动、软件退出断使能。
-- 权威参考：doc/worklog/2026-08-26.md（未被 reset 影响）与 doc/test/homing_debug_report.md。
+用户明确要求（2026-08-28 再次强调）：禁止自动执行 git commit/push，仅当用户明确说「提交/commit」时才执行；完成工作时最多提示「可提交」，由用户决定时机。
 
-# 回零系列 bug 及修复方案（须重做并复测）
+# 阶段 4 重做修复与真机复测结果（2026-08-28 已通过）
 
-- 一键回零软限位误报：根因回零启动瞬间 running 标志间隙期被软限位拦截误杀压界起步搜索。修复：完成判定加 1s 保护期 homeStartedMs_（发起时刻起 1s 内 running=false 不判完成）。b9c7ed3 已含此项。
-- 一键回零后电机轴全部无反应：根因多轴并发回零竞态。修复：BoPaiCard post-start 等待 running 置位最多 200ms + reject 分支补 MC_Stop 防 HOME 残留。b9c7ed3 仅含 post-start WARN 检测，未 reject。
-- Z 轴回零假完成：Axis_Z 缺回零参数，homeMaxDis=0 被固件解释为搜索 0 距离立即返回。修复：补齐 homeMaxDis=2500000 等；reject 分支要求 homeDone/homeSwitch 均 false 才拒。b9c7ed3 已含 Z home 参数。
-- 急停后状态残留（轴1/轴3 误显「限位」而非「未使能」）：修复为急停 ResetAxisStates 清 UI 残留（限位优先级高于未使能所致）。已被 reset 丢弃，须重做。
+- 4 项被基线复位丢弃的修复已全部重做并真机复测通过：① 回零中点动误中断门禁 jogInProgress_（卡轴+舵机统一）；② 急停状态残留清除 ResetAxisStates；③ 回零 post-start 竞态 + Z reject（BoPaiCard）；④ 一键回零未启动轴提示（UI）。
+- 舵机重连抖动循环治理（成功冷却+离线降频）：暂不专项验证，真机继续观察（根因已定性为舵机侧硬件故障，见舵机章节）。
 
-# 回零中禁止点动门禁（卡轴+舵机统一实现，已被 reset 丢弃须重做）
+# 回零系列 bug 根因与修复方案（已全部重做并复测通过）
 
-- 用户明确要求：门禁不可只针对舵机实现，卡轴（BoPaiCard）必须同样实现，不可只改一半。
-- 方案：新增 jogInProgress_ 标志（MoveJog 卡轴/舵机分支成功置位），StopJog 仅当 jogInProgress_ && jogAxis_==axis 才停止+清状态，否则 return——避免「回零中按点动键（MoveJog 被拒）→ 松键 StopJog 无条件停止」误中断同轴回零（此前 servo->Stop、MC_Stop 均打断 HOME 状态机）。
-- HomeAxis/StopAxis/DisableAll/EmergencyStop/JogTick 撞限/ReconnectServos 均需复位该标志。
+- 一键回零软限位误报：回零启动瞬间 running 标志间隙期被软限位拦截误杀压界起步搜索；修复为完成判定加 1s 保护期 homeStartedMs_（发起时刻起 1s 内 running=false 不判完成）。
+- 一键回零后电机轴全部无反应：多轴并发回零竞态；修复为 BoPaiCard post-start 等待 running 置位最多 200ms + reject 分支补 MC_HomeStop/MC_Stop 防 HOME 状态机残留。
+- Z 轴回零假完成：Axis_Z 缺回零参数，homeMaxDis=0 被固件解释为搜索 0 距离立即返回；补齐 homeMaxDis=2500000 等，reject 分支要求 homeDone/homeSwitch 均 false 才拒。
+- 急停后状态残留（轴1/轴3 误显「限位」而非「未使能」，限位优先级高于未使能所致）：急停调 ResetAxisStates 清 UI 残留。
+- 回零中点动误中断门禁 jogInProgress_（用户明确要求卡轴与舵机统一实现，不可只改一半）：MoveJog 卡轴/舵机分支成功置位；StopJog 仅当 jogInProgress_ && jogAxis_==axis 才停止+清状态，否则 return——避免「回零中按点动键被拒 → 松键 StopJog 无条件停止」误中断同轴回零。HomeAxis/StopAxis/DisableAll/EmergencyStop/JogTick 撞限/ReconnectServos 均复位该标志。
+
+# 舵机重连抖动治理与硬件定性（2026-08-28）
+
+- 问题现象：设备「半死」（时通时断）时指数退避失效——重连成功即归零 → 1-2s 后又 offline 立即再重连（日志实证 1 分钟 8+ 次全量重连），且重连的 CloseHandle→CreateFileA→DTR 翻转扰动总线越连越抖；离线时遥测 250ms×2 次尝试×60ms 超时占满 UI 线程 → 急停/全局使能点击排队秒级无响应（「卡死」真因）。
+- 软件修复五项：① 重连成功也冷却 30s（硬上限 2 次/分钟；在线后遥测成功自动恢复 online，仅句柄失效拔 USB 需重连）；② 离线时遥测降频 250ms→1s；③ 已离线 ReadTelemetry 单次尝试（重试仅防在线误判）；④ Ping ok skip 退避 2s→4s→8s→15s cap（恢复在线清零）；⑤ 删 XRServo 重连纯噪声 INFO 日志。
+- 硬件定性（官方 FashionStar 测试软件复测实锤）：官方软件也连不上 id=0（J2）舵机，断电重连后恢复，舵机已连续通电 24h+ → 排除本软件全部链路，属舵机侧状态类故障（最可能：MCU 长时间运行异常/过热/供电劣化；J2 负载最重+全程锁力发热大，日志失联多以 ping J2=false 呈现）。
+- 与 2026-08-26 的 COM3 Open failed 是两个不同故障（那次 PC 侧 USB 打不开串口；这次串口能开、舵机不应答），排查方向勿混淆。
+- 运维规程：不要 24h 连续通电、不用时断使能（释放锁力降温）或断电、失联先断电重启舵机；复现时记录周期/摸 J2 外壳温度/带载测电压，证据齐全后向供应商反馈。
+- 舵机死机期软件重连无效属预期（冷却 30s 设计合理）。
+
+# 回零速度单位换算与 Z 轴调速（2026-08-28）
+
+- homeRapidVel 单位是 Pulse/ms，与手动界面配置的点动速度（mm/s 或 °/s）的关系：物理速度 × PulsePerUnit 换算（Z 轴 10240 脉冲/mm）。
+- Z 轴回零速度偏快：homeRapidVel 现场调 102.4 → 82.4（快速段约 10 → 8.05mm/s）；config 修改无需重新编译即生效。
 
 # 真机联调进度
 
-- 阶段 1–4 曾全部真机验证通过（连接使能/Home Offset、单轴点动 Go 全链路、Z 标定+运动学闭环、回零完整回归+停止/急停），但部分验证对应的代码修复随基线复位被丢弃，实际处于待重做状态（权威记录见 doc/worklog/2026-08-24/25/26.md）。
+- 阶段 1-4 已全部真机验证通过：连接使能/Home Offset、单轴点动 Go 全链路、Z 标定+运动学闭环（Go -100 钢卷尺实测精确 100mm；Z0=470/h1=175/tcpDown=130，回零 Z 显示 165mm、触桌面 0.0mm）、回零完整回归+停止/急停（2026-08-28 复测通过）。
 - J2 回零精度实测 -27.4/-27.2/-27.3（死区~1.5°+金属套松动），决定紧固后复测、暂不软件补偿；R 回零稳定 0.2° 系统性偏差暂不处理。
-- Z 轴标定完成且与理论一致（Go -100 钢卷尺实测精确 100mm；Z0=470/h1=175/tcpDown=130，回零 Z 显示 165mm、触桌面 0.0mm）。
+- 阶段 2 遗留：J2 点动顿挫（用户决定暂不处理，专项排查从 kServoJogSendThreshold 与 FSUS_PARAM_ACCEL_SWITCH 入手）；J2 位置显示小误差（可接受）。
+- 下一步：阶段 5 SequenceWorker 方案真机验证（当前核心）→ 阶段 6-8（异常/回归/编译发布）。
+
+# 阶段 5 测试准备关注点（2026-08-28）
+
+用户准备开始阶段 5 测试，提出疑问：工艺流程界面是否需要整合手动控制界面的急停按钮——待讨论决策。
 
 # 基线复位事件与多模型协作风险（2026-08-26）
 
-- 用户发现最新可疑修改出现在从 deepseek-v4-flash 切换到其他模型之后，执行了 revert（实为 git reset --hard 到 b9c7ed3），丢弃全部未提交工作区修改（hard reset 无法用 git 找回）。
-- 用户随后要求执行既定计划并根据 b9c7ed3 内容更新文档；AGENTS.md/TEST_RECORD.md/doc/config.md/doc/test/real_machine_plan_phase2.md 均已是 b9c7ed3 版本。
-- 用户使用 tortoiseGit 查看日志；日志中 SHA-1 全 0、message 为 "Working tree changes" 的条目是 TortoiseGit 对未提交工作区改动的占位显示，并非真实提交。
-- 教训：多模型协作下 config.json 与代码存在被覆盖/回滚风险；任何模型修改 config 前需核对轴回零参数等已标定配置完整性（曾发生 Axis_Z home 参数丢失导致假完成），变更后须真机复测。
+- 用户发现最新可疑修改出现在从 deepseek-v4-flash 切换到其他模型之后，执行 git reset --hard 到 b9c7ed3，丢弃全部未提交工作区修改（hard reset 无法用 git 找回）。
+- TortoiseGit 日志中 SHA-1 全 0、message 为 "Working tree changes" 的条目是对未提交工作区改动的占位显示，并非真实提交。
+- 教训：多模型协作下 config.json 与代码存在被覆盖/回滚风险；修改 config 前需核对轴回零参数等已标定配置完整性（曾发生 Axis_Z home 参数丢失导致假完成），变更后须真机复测。
 
 # 迭代进度与工作计划跟踪
 
 - 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志手动记到 doc/worklog/YYYY-MM-DD.md。
-- 计划文档编写约束（2026-08-27 用户明确）：先更新计划文档，具体的手册信息（如硬件手册参数）要带用户确认，不得自行臆断。
-- 计划覆盖范围约束：重做/复测计划曾只包含博派卡方案，用户指出还有两个舵机（J2/R，FashionStar 总线舵机）需要同等方案，计划必须覆盖全部硬件。
-- 阶段 1（小脑核心库 T1-T4）编码完成；阶段 2 轮 A（SequenceWorker）引擎层自测通过；阶段 3（T7-T10 UI 接线）完成并评审修复 D1-D17。kinematics_sequenceworker_plan.md 所列代码已全部完成。
+- 计划文档编写约束（2026-08-27 用户明确）：先更新计划文档，具体的手册信息（如硬件手册参数）要带用户确认，不得自行臆断；计划必须覆盖全部硬件（博派卡 + J2/R 两个 FashionStar 舵机），不可只写卡方案。
+- 阶段 1（小脑核心库 T1-T4）编码完成；阶段 2 轮 A（SequenceWorker）引擎层自测通过；阶段 3（T7-T10 UI 接线）完成并评审修复 D1-D17。
 - 评审遗留低优先级改进：RefreshCoordPanel 每 50ms 重复构造临时 Kinematics（建议缓存实例参数变化才重建）；日志框无行数上限；ConfigPage Tab5 轴限位修改未触发 SequenceWorker::ReloadFromConfig。
 
 # 物理蘑菇按钮接线需求（新需求讨论中）
 
-- 用户提出拟在项目中增加物理蘑菇按钮：初始化/启动/停止/复位/急停，询问如何接线。
-- 接线方案尚未定稿，需结合博派卡 IO 与安全回路设计后带用户确认。
+用户提出拟增加物理蘑菇按钮：初始化/启动/停止/复位/急停，询问如何接线；方案需结合博派卡 IO 与安全回路设计后带用户确认。
 
 # Kinematics 重构原则（2026-08-20）
 
 - 原则 1 等效小臂与强语义 TCP：夹爪直接装在 J4 前方朝下。保留 SetTCP(offsetX, offsetY, offsetZ) 外部接口；内部 tcpForward_=offsetX、tcpDown_=-offsetZ（offsetY!=0 时 SPDLOG_WARN 忽略 Y 向）；l2_eff = l2_ + tcpForward_。
 - 原则 2 甜甜圈工作空间校验：l2_eff 可能大于 l1_，工作空间为中空圆环。r > (l1_+l2_eff)+0.001 或 r < |l1_-l2_eff|-0.001 时目标不可达返回 false；原点物理不可达，删除原点奇点处理。
-- 原则 3 Z 轴高度：Z0=撞顶时大臂上表面绝对高度，h1=大臂向下倾斜固定垂直落差，tcpDown_=夹爪向下延伸长度。正解高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_（早期无 tcpDown_ 项的表述作废）。
+- 原则 3 Z 轴高度：Z0=撞顶时大臂上表面绝对高度，h1=大臂向下倾斜固定垂直落差，tcpDown_=夹爪向下延伸长度。正解高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_。
 - ConfigPage 运动学 Tab 在 L1/L2/Z0 旁追加 h1（大臂落差）输入框，双向绑定 config.json 的 kinematics.links.h1。
 
 # HomeOffset 逻辑零点机制（关键决策，已 b9c7ed3 固化）
@@ -86,10 +99,11 @@
 - 根因：软限位拦截不看运动方向——朝边界内运动的请求也被拦截（与 J1 同源问题）。
 - 修复：按逻辑位置增量 delta 判断方向，仅拦截仍朝越界方向运动者，朝边界内运动放行；lastPollPos_ 作每轮基线。MoveAbs/MoveJog 入口本就按目标/方向校验，无需改。
 
-# 持续测试机制（Continuous QA）
+# 持续测试机制与工作规约
 
 - 防回归硬规约（注入 AGENTS.md）：①测试台账制度（根目录 TEST_RECORD.md）；②强制记账法则（每次彻底解决 Bug 或完成新功能后必须追加一行：模块、测试场景/动作、期望结果、状态🟢 已通过、踩坑记录/备注）；③修改前验算（大范围重构/核心逻辑修改前先通读 TEST_RECORD.md 推演回归风险）。
 - 每次修复必须同步更新 AGENTS.md、历史记录等全部相关文档。测试用例分组（B/C/D 组）自行验证后输出结果。
+- Git 规约：禁止自动 commit/push，仅用户明确要求时执行（2026-08-28 用户再次强调）。
 
 # 表 Schema：TEST_RECORD.md 台账表
 
@@ -101,9 +115,9 @@
 
 # 待确认问题
 
-- TEST_RECORD.md 放项目根目录是否合适、doc/ 下是否拆子目录——待确认。
-- 夹爪按钮方向、电机正负向约定等未决问题维持现状继续测试（见「夹爪机构与业务边界」）。
-- Kinematics 重构 prompt 示例值（l1_=174.35/l2=215）与实测配置值不一致——已确认以 config.json 实际值及新测值为准。
-- 多模型协作下 config.json 等关键文件被覆盖风险长期存在，修改前需核对已标定参数完整性（如 Axis_Z home 参数），变更后须真机复测回零。
-- 重做/复测计划中涉及硬件手册的具体信息需带用户确认（2026-08-27 用户要求）。
+- 阶段 5：工艺流程界面是否整合手动控制界面的急停按钮——待讨论（2026-08-28）。
 - 物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。
+- TEST_RECORD.md 放项目根目录是否合适、doc/ 下是否拆子目录——待确认。
+- 夹爪按钮方向、电机正负向约定等未决问题维持现状继续测试。
+- 多模型协作下 config.json 等关键文件被覆盖风险长期存在，修改前需核对已标定参数完整性（如 Axis_Z home 参数），变更后须真机复测回零。
+- 计划文档中涉及硬件手册的具体信息需带用户确认（2026-08-27 用户要求）。

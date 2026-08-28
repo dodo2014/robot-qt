@@ -117,6 +117,9 @@ signals:
     void enableStateChanged();
     // 轴运动结束（Go 到位 / 停止 / 急停），UI 据此恢复 Go 按钮
     void axisMoveFinished(int logicalAxis);
+    // 急停已触发（EmergencyStop 内部发出）：各页面据此做自身状态清理
+    // （手动页清状态点数组、自动页恢复启动按钮与状态标签），急停行为单点化
+    void emergencyStopTriggered();
     // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
     void frameReady(const CameraFrame& frame);
 

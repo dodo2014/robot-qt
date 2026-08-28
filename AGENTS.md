@@ -107,6 +107,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 1. **测试台账制度**：项目根目录存在 **`TEST_RECORD.md`**，记录所有已调通的功能与边界条件测试。
 2. **强制记账法则**：每次彻底解决一个 Bug 或完成一个新功能后，**必须**主动用文件编辑工具在 `TEST_RECORD.md` 追加一行测试记录：模块、测试场景/动作、期望结果、状态（**🟢 已通过**）、踩坑记录/备注。
 3. **修改前验算**：计划大范围重构或修改核心逻辑（`HardwareManager`、`ProcessManager`、`PollTick/JogTick`、换算/软限位/回零等）前，**必须先读取 `TEST_RECORD.md`**，脑内推演改动是否会破坏已标为 **🟢 已通过** 的用例；有风险则调整方案或补回归验证。
+4. **Git 提交须用户明确要求**：**禁止主动执行 `git commit/push`**——即使完成一批改动并整理好提交信息，也必须等用户明确说"提交/commit"才执行；push 同理。工作完成时最多提示"可提交"，由用户决定时机。
 
 ## Code Conventions
 
@@ -247,6 +248,14 @@ HAL 多品牌硬件接入全部完成：
 - **T10 ConfigPage**：运动学 L1/L2/Z0/h1 与 TCP 编辑完成即发 `paramsChanged` → `SequenceWorker::ReloadFromConfig()`（running 门禁：运行中跳过防数据竞争）。
 - **关键修复（D1–D17，评审发现全部修复，清单见 TEST_RECORD.md / doc/worklog/2026-08-21.md）**：D1 方案下拉时序（`ProcessManager::load()` 提前到 MainWindow SetupUI 前 + showEvent 刷新）；D2 失败后启动按钮恢复；D4 ShutdownWorker；D5/D6 坐标面板用 stateUpdated/servoStateUpdated 缓存关节位 + Kinematics 成员缓存（避免 50ms 读舵机串口）；D11 急停无条件先 HardwareManager::EmergencyStop；D16 抽 `src/UI/KinematicsHelper.h`（UI 层统一 FromConfig/ReadConfigParams，Core 不依赖 Config）。
 - **moc 陷阱**：信号参数类型前向声明不够，AutoRunPage.h 需 include `HAL/interfaces/ICamera.h` 等完整定义；外层 lambda 必须捕获 this（内层捕 this 报 C3493）。
+
+### 全局急停升舱 + 业务停止就近（2026-08-28，待真机复测）
+
+- **理念**：急停全局唯一入口（MainWindow 顶栏圆形红色按钮），业务停止就近跟随场景（ProcessPage 单步执行旁停止按钮）。
+- **MainWindow 顶栏**：右侧新增 46px 圆形急停（完整 QSS selector）；点击 = `HardwareManager::EmergencyStop()` + `sequenceWorker_` 判空调 `EmergencyStop()`（**必须含 worker 中断**，否则方案运行中急停后 SequenceWorker 会继续跑下一动作）。
+- **信号驱动状态清理**：`HardwareManager` 新增 `emergencyStopTriggered` 信号（`EmergencyStop()` 内 emit，唯一触发点）；ManualControlPage 连接它做 `ResetAxisStates()`+提示，AutoRunPage 连接它恢复启动按钮/状态标签/日志（原 `OnEmergencyClicked` 删除，UI 响应改 `OnEmergencyTriggered` 槽）。
+- **按钮变化**：AutoRunPage 5→4（删"⚔ 急停"）；ManualControlPage 顶部 4→3（使能/断使能/一键回零）；ProcessPage「单步执行」右侧新增红色「停止」（stub `SPDLOG_INFO`，后续接 `SequenceWorker::Stop()` 时需 MainWindow 注入 worker，参照 `SetSequenceWorker` 模式）。
+- **语义区分**：停止=业务（可恢复、保持使能）、急停=安全（断使能、需重新使能）。TEST_RECORD 记 🟡，阶段 5 用例 5.6/5.7 覆盖真机验证。
 
 ### 真机联调进展（2026-08-24/25 进行中）
 

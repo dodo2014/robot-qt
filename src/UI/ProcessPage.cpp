@@ -160,6 +160,15 @@ void ProcessPage::SetupUI()
     stepBtn->setCursor(Qt::PointingHandCursor);
     connect(stepBtn, &QPushButton::clicked, this, &ProcessPage::OnStepExecute);
 
+    // 单步调试的就地"刹车"：防走错轨迹时瞬间停止（后续接 SequenceWorker::Stop()，
+    // 届时由 MainWindow 注入 worker；全局急停仍在 MainWindow 顶栏，与此业务停止区分）
+    auto* stopBtn = new QPushButton(QStringLiteral("停止"));
+    stopBtn->setStyleSheet(makeBtnStyle("#b13a3a", "#d14444"));
+    stopBtn->setCursor(Qt::PointingHandCursor);
+    connect(stopBtn, &QPushButton::clicked, this, [this]() {
+        SPDLOG_INFO("[ProcessPage] 停止按钮 clicked");
+    });
+
     topLayout->addWidget(newSchemeBtn);
     topLayout->addWidget(label);
     topLayout->addWidget(m_schemeNameEdit);
@@ -167,6 +176,7 @@ void ProcessPage::SetupUI()
     topLayout->addWidget(deleteSchemeBtn);
     topLayout->addWidget(confirmBtn);
     topLayout->addWidget(stepBtn);
+    topLayout->addWidget(stopBtn);
     topLayout->addStretch();
 
     mainLayout->addWidget(topBar);

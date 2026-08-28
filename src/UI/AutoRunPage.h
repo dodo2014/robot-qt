@@ -28,7 +28,7 @@ private slots:
     void OnResetClicked();
     void OnStopClicked();
     void OnInitClicked();
-    void OnEmergencyClicked();
+    void OnEmergencyTriggered();   // 响应全局急停信号（硬件/worker 中断在 MainWindow 触发点完成）
 
     void OnFrameReady(const CameraFrame& frame);
     void OnLogMessage(const QString& msg);

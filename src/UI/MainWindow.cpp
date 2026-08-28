@@ -252,7 +252,7 @@ void MainWindow::SetupUI()
 QWidget* MainWindow::CreateTopBar()
 {
     auto* topBar = new QWidget();
-    topBar->setFixedHeight(62);
+    topBar->setFixedHeight(76);
     topBar->setStyleSheet(R"(
         background: #1a2028;
         border-bottom: 1px solid #343b45;
@@ -374,6 +374,25 @@ QWidget* MainWindow::CreateTopBar()
     rightLayout->addWidget(statusItem1);
     rightLayout->addWidget(statusItem2);
     rightLayout->addWidget(clockLabel_);
+
+    // 全局急停（唯一软件急停入口）：硬件断使能 + SequenceWorker 中断，
+    // 各页面状态清理经 emergencyStopTriggered 信号响应（急停行为单点化）
+    auto* globalEstopBtn = new QPushButton(QStringLiteral("急停"));
+    globalEstopBtn->setFixedSize(60, 60);
+    globalEstopBtn->setCursor(Qt::PointingHandCursor);
+    //globalEstopBtn->setToolTip(QStringLiteral("全局急停：所有轴立即停止并断使能，自动流程中断"));
+    globalEstopBtn->setStyleSheet(R"(
+    QPushButton { background: #d5202a; border: 2px solid #ff5e6b; border-radius: 30px;
+                  color: white; font-weight: 700; font-size: 16px; padding: 0; }
+    QPushButton:hover { background: #ee3333; }
+    QPushButton:pressed { background: #a8151d; }
+    )");
+    connect(globalEstopBtn, &QPushButton::clicked, this, [this]() {
+        SPDLOG_WARN("[MainWindow] 全局急停 triggered");
+        HardwareManager::instance().EmergencyStop();
+        if (sequenceWorker_) sequenceWorker_->EmergencyStop();
+    });
+    rightLayout->addWidget(globalEstopBtn);
 
     // Build top bar
     auto* leftWidget = new QWidget();
