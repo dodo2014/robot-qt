@@ -26,6 +26,8 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
 
 ## Architecture
 
+> 完整架构梳理（目录职责/分层依赖/三条数据流/门面设计原则/拆分路线/关键不变量）见 **`doc/architecture.md`**（2026-08-28）。以下为速览。
+
 ```
 CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
 ├─ src/Config/  — Configuration management (ConfigManager, ProcessManager)

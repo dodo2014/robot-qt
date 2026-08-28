@@ -933,7 +933,15 @@ void HardwareManager::PollTick()
 
     CheckAxisBusy();   // 到位后发 axisMoveFinished（UI 恢复 Go 按钮）
 
-    if (motionCard_) {
+    if (motionCard_) PollCardAxis();
+    if (servoJ2_ || servoJ3_) PollServoTelemetry();
+}
+
+// 卡轴轮询：脉冲→逻辑坐标映射、软限位方向拦截、回零完成检测（保护期）、
+// stateUpdated 广播、报警/限位边沿与异常签名日志。
+// P1 拆分（原 PollTick motionCard_ 块）：纯函数重排，执行顺序/状态访问/日志完全一致。
+void HardwareManager::PollCardAxis()
+{
         // 仿真卡：先积分点动运动
         if (auto* sim = dynamic_cast<SimCard*>(motionCard_.get()))
             sim->Step(0.05);
@@ -1052,8 +1060,13 @@ void HardwareManager::PollTick()
                 break;
             }
         }
-    }
+}
 
+// 舵机轮询：离线时降频遥测 + 热重连（Ping 门卫/指数退避/成功冷却 30s）。
+// 由 PollTick 每 50ms 调用；串口事务在 UI 线程执行，轮询分频见 pollDiv。
+// P1 拆分（原 PollTick servo 块）：纯函数重排，执行顺序/状态访问/日志完全一致。
+void HardwareManager::PollServoTelemetry()
+{
     if (servoJ2_ || servoJ3_) {
         // 离线时遥测降频到 20 tick（1s）：离线时每舵机查询最多阻塞 ~120ms（60ms 超时），
         // 250ms 轮询会把 UI 线程占满 → 急停/全局使能按钮事件排队秒级无响应（真机实测"卡死"）

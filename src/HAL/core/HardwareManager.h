@@ -131,6 +131,9 @@ private:
     void JogTick();
     // 舵机串口断开后的热重连：两个实例共享同一句柄，须一起断开重连
     void ReconnectServos();
+    // P1 拆分：PollTick 的两个子步骤（纯函数重排，无行为变化）
+    void PollCardAxis();        // 卡轴：状态映射/软限位拦截/回零完成/报警边沿/异常签名
+    void PollServoTelemetry();  // 舵机：离线降频遥测 + 热重连退避
 
     QTimer* pollTimer_ = nullptr;
     QTimer* jogTimer_  = nullptr;
