@@ -398,6 +398,7 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
         motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
         bool ok = motionCard_->MoveAbs(binding.index, pulse, speedPulse);
         if (ok) {
+            jogInProgress_ = false;   // Go 接管：终止任何残留点动状态
             // 卡轴按速度估算到位时间用于 Go 按钮门禁（卡本身 running 态也由轮询驱动）
             double dist = std::fabs(mmOrDeg - GetPosition(axis));
             double spd = (speed > 0) ? speed : GetJogSpeed(axis);
@@ -410,7 +411,10 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
         if (servo) {
             bool ok = servo->MoveToAngle(targetPhys, 0);
-            if (ok) MarkAxisBusy(axis, servo->GetLastMoveTimeMs());
+            if (ok) {
+                jogInProgress_ = false;   // Go 接管：终止任何残留点动状态
+                MarkAxisBusy(axis, servo->GetLastMoveTimeMs());
+            }
             SPDLOG_INFO("[HardwareManager] MoveAbs axis={} target={:.1f} -> {}", ai, mmOrDeg, ok);
             return ok;
         }
@@ -467,7 +471,11 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
         // 加速度实时读 config（与「电控与映射」编辑一致），运动前刷新卡内快照
         motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
         bool ok = motionCard_->MoveJog(binding.index, pulseSpeed, -1.0, effDir);
-        if (ok) MarkAxisBusy(axis, 3600 * 1000);   // 点动视为忙
+        if (ok) {
+            jogAxis_ = axis;
+            jogInProgress_ = true;
+            MarkAxisBusy(axis, 3600 * 1000);   // 点动视为忙
+        }
         return ok;
     }
     if (binding.type == AxisBinding::Type::Servo) {
@@ -484,6 +492,7 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
             jogStartPos_   = start;
             jogStartMs_    = QDateTime::currentMSecsSinceEpoch();
             lastJogTarget_ = start;
+            jogInProgress_ = true;
             if (!jogTimer_->isActive()) jogTimer_->start();
             // 点动持续进行中，视为忙（UI 置灰 Go 按钮，防连点打断）
             MarkAxisBusy(axis, 3600 * 1000);
@@ -497,6 +506,13 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
 
 void HardwareManager::StopJog(LogicalAxis axis)
 {
+    // 门禁：仅停止"当前正在点动的轴"。回零中松点动键（MoveJog 被回零门禁拒绝但
+    // UI OnJogStop 仍会触发）曾无条件 StopJog → 误中断回零/其他轴运动；现非点动轴直接 return
+    if (!jogInProgress_ || jogAxis_ != axis) {
+        SPDLOG_INFO("[HardwareManager] StopJog skipped axis={} (jogInProgress={} jogAxis={})",
+                    static_cast<int>(axis), jogInProgress_, static_cast<int>(jogAxis_));
+        return;
+    }
     auto binding = AxisMap::Get(axis);
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         motionCard_->StopJog(binding.index);
@@ -506,6 +522,7 @@ void HardwareManager::StopJog(LogicalAxis axis)
         if (servo) servo->Stop();
         SPDLOG_INFO("[HardwareManager] StopJog axis={}", (int)axis);
     }
+    jogInProgress_ = false;
     // 停止回零/点动 → 解除回零门禁 + 忙结束，恢复 Go 按钮
     int i = static_cast<int>(axis);
     if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
@@ -541,6 +558,7 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
     if (binding.type == AxisBinding::Type::Card && motionCard_) {
         bool ok = motionCard_->HomeAxis(binding.index);
         if (ok) {
+            jogInProgress_ = false;   // 回零接管：点动状态终止
             if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;   // 回零门禁
             if (ai >= 0 && ai < homeStartedMs_.size())
                 homeStartedMs_[ai] = QDateTime::currentMSecsSinceEpoch();   // 完成检测保护期基准
@@ -554,6 +572,7 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
         if (servo) {
             bool ok = servo->MoveToAngle(0.0, 0);
             if (ok) {
+                jogInProgress_ = false;   // 回零接管：点动状态终止
                 if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;
                 MarkAxisBusy(axis, 5000);   // 舵机回零按 5s 上限
             }
@@ -575,6 +594,7 @@ bool HardwareManager::StopAxis(LogicalAxis axis)
         if (servo) ok = servo->Stop();
     }
     // 停止当前运动（点动/Go/回零）→ 解除回零门禁 + 忙结束，恢复 Go 按钮
+    jogInProgress_ = false;
     int i = static_cast<int>(axis);
     if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
     if (i >= 0 && i < axisBusyUntilMs_.size()) {
@@ -603,6 +623,7 @@ void HardwareManager::CheckAxisBusy()
         if (axisBusyUntilMs_[i] == 0) continue;
         if (now >= axisBusyUntilMs_[i]) {
             axisBusyUntilMs_[i] = 0;
+            jogInProgress_ = false;   // 忙超时兜底：运动已终止（防御性）
             if (i < homingActive_.size()) homingActive_[i] = false;  // 回零超时兜底，舵机/无开关卡轴
             if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
                 axisBusyNotified_[i] = true;
@@ -689,6 +710,7 @@ bool HardwareManager::DisableAll()
     if (motionCard_) motionCard_->StopAll();
 
     // 断使能视为回零中止
+    jogInProgress_ = false;
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     // 清除忙态时间戳，避免急停/断使能后 30s 内再回零/Go 被 IsAxisBusy 拒绝
     for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
@@ -723,6 +745,7 @@ bool HardwareManager::EmergencyStop()
     if (servoJ3_) servoJ3_->TorqueOff();
     // 急停后需重新手动使能才能继续点动/移动/回零
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
+    jogInProgress_ = false;
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     // 清除忙态时间戳，避免急停后 30s 内再回零/Go 被 IsAxisBusy 拒绝
     for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
@@ -863,6 +886,7 @@ void HardwareManager::JogTick()
         servo->MoveToAngle(target + off, 0);
         servo->Stop();
         jogTimer_->stop();
+        jogInProgress_ = false;
         int idx = static_cast<int>(jogAxis_);
         if (idx >= 0 && idx < axisBusyUntilMs_.size()) {
             axisBusyUntilMs_[idx] = 0;
@@ -948,6 +972,7 @@ void HardwareManager::PollTick()
                                 bool movingOut = positive ? (delta >= 0.0) : (delta <= 0.0);
                                 if (movingOut) {
                                     motionCard_->StopJog(binding.index);
+                                    jogInProgress_ = false;
                                     if (i < lastSoftLimitHit_.size() && !lastSoftLimitHit_[i]) {
                                         lastSoftLimitHit_[i] = true;
                                         emit softLimitTriggered(i, positive);
@@ -1030,8 +1055,11 @@ void HardwareManager::PollTick()
     }
 
     if (servoJ2_ || servoJ3_) {
-        // 串口事务在 UI 线程执行，降频到每 5 tick（250ms）查询一次
-        if (++servoPollCounter_ % 5 == 0) {
+        // 离线时遥测降频到 20 tick（1s）：离线时每舵机查询最多阻塞 ~120ms（60ms 超时），
+        // 250ms 轮询会把 UI 线程占满 → 急停/全局使能按钮事件排队秒级无响应（真机实测"卡死"）
+        bool anyOffline = (servoJ2_ && !servoJ2_->IsOnline()) || (servoJ3_ && !servoJ3_->IsOnline());
+        const int pollDiv = anyOffline ? 20 : 5;
+        if (++servoPollCounter_ % pollDiv == 0) {
             QVector<ServoTelemetry> servos;
             auto toLogicalAngle = [this](LogicalAxis axis, ServoTelemetry t) {
                 int idx = static_cast<int>(axis);
@@ -1045,18 +1073,23 @@ void HardwareManager::PollTick()
             emit servoStateUpdated(servos);
 
             // 热重连：任一舵机离线 → 先 Ping 确认再重连共享串口。
-            // 指数退避（2s→4s→…→30s cap）：瞬时坏帧/超时被 ReadTelemetry 重试吸收；
-            // 真离线（含 Open port failed 的 USB 不可用期）用退避重试，避免刷爆日志。
-            bool anyOffline = (servoJ2_ && !servoJ2_->IsOnline()) || (servoJ3_ && !servoJ3_->IsOnline());
+            // 失败指数退避（2s→4s→…→30s cap）；成功也冷却 30s——设备"半死"时
+            // 成功归零曾形成 1-2s 一次的断→连→断循环（重连的 CloseHandle→CreateFileA→
+            // DTR 翻转反而扰动总线，越连越抖）。在线后遥测查询成功会自动恢复 online，
+            // 不依赖重连；仅串口句柄失效（拔 USB）需要重连，冷却最多延迟恢复 30s。
             if (anyOffline) {
                 qint64 now = QDateTime::currentMSecsSinceEpoch();
                 if (now >= servoNextReconnectMs_) {
                     bool j2Alive = !servoJ2_ || servoJ2_->Ping();
                     bool rAlive  = !servoJ3_ || servoJ3_->Ping();
                     if (j2Alive && rAlive) {
-                        SPDLOG_WARN("[HardwareManager] Servo offline but Ping ok, skip reconnect");
-                        servoNextReconnectMs_ = now + 2000;
+                        // Ping 通=句柄有效、设备应答，仅遥测瞬时失败：退避后再查，不重连
+                        ++servoPingSkipCount_;
+                        qint64 skipWait = std::min<qint64>(2000 << std::min(servoPingSkipCount_ - 1, 3), 15000);
+                        SPDLOG_WARN("[HardwareManager] Servo offline but Ping ok, skip reconnect (wait {}ms)", skipWait);
+                        servoNextReconnectMs_ = now + skipWait;
                     } else {
+                        servoPingSkipCount_ = 0;
                         SPDLOG_WARN("[HardwareManager] Servo offline (ping J2={} R={}), reconnect backoff={}ms",
                                     j2Alive, rAlive, servoReconnectBackoffMs_);
                         ReconnectServos();
@@ -1064,17 +1097,19 @@ void HardwareManager::PollTick()
                         bool rOnline  = servoJ3_ && servoJ3_->IsOnline();
                         if (j2Online && rOnline) {
                             servoReconnectBackoffMs_ = 0;
+                            servoNextReconnectMs_ = now + 30000;   // 成功冷却 30s，打断抖动循环
                         } else {
                             // 重连失败：指数退避，上限 30s
                             servoReconnectBackoffMs_ = servoReconnectBackoffMs_ > 0
                                                            ? std::min<qint64>(servoReconnectBackoffMs_ * 2, 30000)
                                                            : 2000;
+                            servoNextReconnectMs_ = now + servoReconnectBackoffMs_;
                         }
-                        servoNextReconnectMs_ = now + servoReconnectBackoffMs_;
                     }
                 }
             } else {
                 servoReconnectBackoffMs_ = 0;
+                servoPingSkipCount_ = 0;
             }
         }
     }
@@ -1084,6 +1119,7 @@ void HardwareManager::ReconnectServos()
 {
     // 两个舵机共享同一串口句柄，必须一起断开（引用计数归零才会真正关闭）
     if (jogTimer_->isActive()) jogTimer_->stop();
+    jogInProgress_ = false;
     // 重连=运动中被打断，同步解除回零门禁 + 忙态
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {

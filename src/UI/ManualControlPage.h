@@ -46,6 +46,7 @@ private:
     void SetHint(const QString& text, const QString& color = QString());
     void RefreshSoftLimitHint();
     void RefreshCoordPanel();
+    void ResetAxisStates();   // 急停后清除残留状态数组（曾导致轴1/3 误显示"限位"而非"未使能"）
 
     QVector<QLabel*> posLabels_;
     QVector<QLabel*> statusDots_;

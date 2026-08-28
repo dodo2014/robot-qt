@@ -267,14 +267,14 @@ bool XRServo::Connect(const std::string& port, int baudRate)
 {
     std::lock_guard<std::mutex> lock(g_serialMutex);
 
-    // 同一串口已被其他实例打开：复用共享句柄，仅递增引用计数
+    // 同一串口已被其他实例打开：复用共享句柄，仅递增引用计数（J2 先连、R 必然复用，
+    // 每次重连都打此日志属纯噪声，不打印）
     auto it = g_serials.find(port);
     if (it != g_serials.end()) {
         impl_->serial_ = it->second;
         ++it->second->refs;
         impl_->portName = port;
         impl_->ownsHandle = false;
-        SPDLOG_INFO("[XRServo] Reusing shared serial handle for {}", port);
     } else {
         char portName[32];
         sprintf_s(portName, "\\\\.\\%s", port.c_str());
@@ -362,7 +362,6 @@ bool XRServo::IsConnected() const
 bool XRServo::SetServoId(uint8_t id)
 {
     impl_->servoId = id;
-    SPDLOG_INFO("[XRServo] Servo id set to {}", id);
     return true;
 }
 
@@ -488,9 +487,12 @@ ServoTelemetry XRServo::ReadTelemetry()
 
     // online 必须以查询结果为准：串口句柄在拔线/断连后数值仍有效，
     // 不能只看 IsOpen()（曾导致 COM 断开后状态灯不变）。查询失败即离线。
-    // 失败自动重试 1 次（共 2 次尝试）：瞬时坏帧/超时不应直接判离线，
-    // 否则连续 4 个遥测周期失败会误触发全量重连（硬件并未掉线）
-    for (int attempt = 0; attempt < 2 && !t.online; ++attempt) {
+    // 在线时失败自动重试 1 次（共 2 次尝试）：瞬时坏帧/超时不应直接判离线，
+    // 否则连续 4 个遥测周期失败会误触发全量重连（硬件并未掉线）。
+    // 已离线时只尝试 1 次：重试是为防"瞬时坏帧误判在线"，离线状态下重试
+    // 只会让 UI 线程阻塞时间翻倍（60ms 超时 × 2 舵机 × 每 tick）
+    const int maxAttempts = impl_->online ? 2 : 1;
+    for (int attempt = 0; attempt < maxAttempts && !t.online; ++attempt) {
         if (impl_->QueryMonitor(t)) {
             impl_->angle = t.angleDeg;
             impl_->online = true;

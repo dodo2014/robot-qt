@@ -1,108 +1,109 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-08-26T20:17:50.949+08:00
+最后更新时间：2026-08-28T09:43:19.678+08:00
 
 # 项目概述
 
-- - CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机联调验收阶段（2026-08-24/26 阶段 1–4 已完成）。
-- - 2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 开发自动工艺流程执行引擎 SequenceWorker（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
-- - L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
-- - Continuous QA 测试台账机制（根目录 TEST_RECORD.md）：修复或完成功能后强制记账，重构前必先读台账推演回归风险。
-- - 下一步：真机联调阶段 5（SequenceWorker 真机全流程）——手动页使能+一键回零 → ProcessPage 建方案（Move/Gripper/Vision/Delay/Extrude）→ AutoRunPage 启动运行，验证动作执行/日志/中断/异常处理；随后阶段 6-8（UI 联测/异常回归/编译发布）。奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
+- CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式），当前处于真机联调验收阶段。
+- 2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 开发自动工艺流程执行引擎 SequenceWorker（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
+- L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
+- Continuous QA 测试台账机制（根目录 TEST_RECORD.md）：修复或完成功能后强制记账，重构前必先读台账推演回归风险。
+- 当前基线 = b9c7ed3（config: add Axis_Z home params），2026-08-26 晚因多模型协作污染已 hard reset 并按该基线更新全部文档。
+- 当前主线任务（2026-08-27/28）：为被基线复位丢弃的修复项制定重做+真机复测计划，用户要求先更新计划文档、具体手册信息须带用户确认；计划曾只覆盖博派卡方案，用户指出必须补充两个舵机（J2/R）的方案。
+- 后续：阶段 5 SequenceWorker 真机全流程、阶段 6-8（UI 联测/异常回归/编译发布）；奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
+- 新需求讨论（2026-08-27）：项目中拟增加物理蘑菇按钮（初始化/启动/停止/复位/急停），接线方案待设计确认。
 
-# 真机联调阶段 4：回零完整回归 + 停止/急停（2026-08-26 完成）
+# 被丢弃修复项的复测计划（2026-08-28 关注点）
 
-- - 4.1 全轴一键回零 → J1→-102、J2→-28、R→0、Z/夹爪按各自零位：验证通过（含此前单轴回零：轴1 J1、轴5 夹爪已通过，轴3 Z 补齐回零参数后通过）。回零中点击点动按钮会中断回零——用户质疑逻辑是否正常，后确认并修复（见「回零中禁止点动门禁」）。
-- - 4.2 点动中按停止：卡轴减速停、舵机保持锁力不垂落（CMD24 停止）：验证通过。
-- - 4.3 运动中急停：卡轴全 halt + 舵机失力可拨动；状态点告警/失能；复位可重新使能：验证通过。
-- - 4.4 急停后卡无残留运动（位置不再变化）：验证通过。
-- - 4.5 软件退出断使能：正常关窗口 → 舵机 Damping 松力（aboutToQuit）；直接关 cmd → ConsoleSignalHandler → ShutdownHalt：验证通过。
-- - 阶段 4 测试中先后复现多个 bug（见下节），均真机复测通过后记账，并按要求同步更新文档与 worklog（2026-08-26 真机验证通过，记录文档和 worklog）。
+- 用户目标：复测「曾真机验证通过、但代码随基线复位被清除」的功能，询问如何测试。
+- 需重做的代码修复：① 回零中点动误中断门禁 jogInProgress_（卡轴+舵机统一）；② 急停状态残留 ResetAxisStates；③ 一键回零 post-start 竞态 reject 分支；④ Z 回零 reject 分支 + UI「轴X 未启动」提示。
+- 复测路径：先重做代码修复，再按阶段 4（回零回归 + 停止/急停）用例真机复测——全轴一键回零（J1→-102/J2→-28/R→0）、点动中停止（卡轴减速停、舵机 CMD24 保持锁力）、运动中急停+断使能、急停后无残留运动、软件退出断使能。
+- 权威参考：doc/worklog/2026-08-26.md（未被 reset 影响）与 doc/test/homing_debug_report.md。
 
-# 回零系列 bug 全量修复（2026-08-26，均真机复测通过）
+# 回零系列 bug 及修复方案（须重做并复测）
 
-- - 一键回零软限位误报：回零过程中报「轴1 到达软限位 / 轴6 到达软限位」且运动停止，但轴1 并未触碰限位开关（此前轴1/轴3 单轴回零也偶发，未受重视）。根因：回零启动瞬间 running 标志的间隙期，软限位拦截逻辑误杀压界起步的搜索。修复：回零完成检测增加 1s 保护期（homeStartedMs_），防 running 启动间隙误清保护 → 软限位误杀压界起步的搜索。复测通过；曾复现后再次点一键回零影响不大。
-- - 一键回零后电机轴（轴1/Z/轴5/轴6）全部无反应 bug：根因为多轴并发发起回零的竞态。修复：BoPaiCard post-start 等待 running 置位最多 200ms，防一键回零多轴发起竞态误杀所有轴；reject 分支补 MC_Stop 防 HOME 残留。
-- - Z 轴回零假完成：回零未完成就提示「回零完成」。根因：config.json 中 Axis_Z 缺少 homeRapidVel/homeMaxDis 等回零参数，homeMaxDis=0 被固件解释为「搜索 0 距离」立即返回 → 假完成。修复：Z 补 homeMaxDis=2500000 等回零参数；reject 分支 homeDone/homeSwitch 均 false 时才拒。
-- - 急停后状态残留：点了急停，轴1/轴3 仍显示「限位」而非「未使能」。用户提出急停应消除所有当前状态。修复：急停 ResetAxisStates 清 UI 残留状态（曾因限位优先级高于未使能导致急停后误显「限位」）。
-- - 完整排查报告与修复对照见 doc/test/homing_debug_report.md 及 doc/worklog/2026-08-26.md。
+- 一键回零软限位误报：根因回零启动瞬间 running 标志间隙期被软限位拦截误杀压界起步搜索。修复：完成判定加 1s 保护期 homeStartedMs_（发起时刻起 1s 内 running=false 不判完成）。b9c7ed3 已含此项。
+- 一键回零后电机轴全部无反应：根因多轴并发回零竞态。修复：BoPaiCard post-start 等待 running 置位最多 200ms + reject 分支补 MC_Stop 防 HOME 残留。b9c7ed3 仅含 post-start WARN 检测，未 reject。
+- Z 轴回零假完成：Axis_Z 缺回零参数，homeMaxDis=0 被固件解释为搜索 0 距离立即返回。修复：补齐 homeMaxDis=2500000 等；reject 分支要求 homeDone/homeSwitch 均 false 才拒。b9c7ed3 已含 Z home 参数。
+- 急停后状态残留（轴1/轴3 误显「限位」而非「未使能」）：修复为急停 ResetAxisStates 清 UI 残留（限位优先级高于未使能所致）。已被 reset 丢弃，须重做。
 
-# 回零中禁止点动门禁（卡轴 + 舵机统一实现）
+# 回零中禁止点动门禁（卡轴+舵机统一实现，已被 reset 丢弃须重做）
 
-- - 用户明确要求：回零中禁止点动的修改此前只针对舵机实现，卡轴（BoPaiCard）必须实现同样的门禁，不可只改一半。
-- - 修复：新增 `jogInProgress_` 标志（MoveJog 卡轴/舵机分支成功置位），`StopJog` 仅当 `jogInProgress_ && jogAxis_==axis` 才停止+清状态，否则直接 return，从而避免「回零中按点动键（MoveJog 被门禁拒）→ 松键 OnJogStop → StopJog 无条件停止」误中断同轴回零（此前舵机 servo->Stop、卡轴 MC_Stop 均会打断 HOME 状态机）。
-- - `HomeAxis/StopAxis/DisableAll/EmergencyStop/JogTick 撞限/ReconnectServos` 均复位该标志（HardwareManager.cpp:498）。
+- 用户明确要求：门禁不可只针对舵机实现，卡轴（BoPaiCard）必须同样实现，不可只改一半。
+- 方案：新增 jogInProgress_ 标志（MoveJog 卡轴/舵机分支成功置位），StopJog 仅当 jogInProgress_ && jogAxis_==axis 才停止+清状态，否则 return——避免「回零中按点动键（MoveJog 被拒）→ 松键 StopJog 无条件停止」误中断同轴回零（此前 servo->Stop、MC_Stop 均打断 HOME 状态机）。
+- HomeAxis/StopAxis/DisableAll/EmergencyStop/JogTick 撞限/ReconnectServos 均需复位该标志。
 
-# config.json Axis_Z home 参数回滚排查
+# 真机联调进度
 
-- - 用户发现 config.json 中 Axis_Z 曾配置的 homeRapidVel 等 home 回零参数消失，要求分析当前 session 上下文定位是哪个模型做了修改/回滚。
-- - 排查结论（结合 git log）：多模型协作开发中 config 被覆盖导致 Axis_Z 回零参数丢失，Z 轴回零因此出现「假完成」（见回零系列 bug）。已重新补齐 homeRapidVel/homeLocatVel/homeBackDis/homeMaxDis=2500000 等回零参数。
-- - 教训：config.json 的轴回零参数属于关键配置，任何模型修改 config 前需核对完整性，避免覆盖已标定的轴参数；变更后须真机复测回零。
+- 阶段 1–4 曾全部真机验证通过（连接使能/Home Offset、单轴点动 Go 全链路、Z 标定+运动学闭环、回零完整回归+停止/急停），但部分验证对应的代码修复随基线复位被丢弃，实际处于待重做状态（权威记录见 doc/worklog/2026-08-24/25/26.md）。
+- J2 回零精度实测 -27.4/-27.2/-27.3（死区~1.5°+金属套松动），决定紧固后复测、暂不软件补偿；R 回零稳定 0.2° 系统性偏差暂不处理。
+- Z 轴标定完成且与理论一致（Go -100 钢卷尺实测精确 100mm；Z0=470/h1=175/tcpDown=130，回零 Z 显示 165mm、触桌面 0.0mm）。
+
+# 基线复位事件与多模型协作风险（2026-08-26）
+
+- 用户发现最新可疑修改出现在从 deepseek-v4-flash 切换到其他模型之后，执行了 revert（实为 git reset --hard 到 b9c7ed3），丢弃全部未提交工作区修改（hard reset 无法用 git 找回）。
+- 用户随后要求执行既定计划并根据 b9c7ed3 内容更新文档；AGENTS.md/TEST_RECORD.md/doc/config.md/doc/test/real_machine_plan_phase2.md 均已是 b9c7ed3 版本。
+- 用户使用 tortoiseGit 查看日志；日志中 SHA-1 全 0、message 为 "Working tree changes" 的条目是 TortoiseGit 对未提交工作区改动的占位显示，并非真实提交。
+- 教训：多模型协作下 config.json 与代码存在被覆盖/回滚风险；任何模型修改 config 前需核对轴回零参数等已标定配置完整性（曾发生 Axis_Z home 参数丢失导致假完成），变更后须真机复测。
 
 # 迭代进度与工作计划跟踪
 
-- - 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；工作流惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志手动记录到 doc/worklog/YYYY-MM-DD.md。
-- - 阶段 1（小脑核心库 T1-T4）编码完成并 B/C/D 组用例自验通过；阶段 2 轮 A（SequenceWorker）2026-08-20 落地并引擎层自测通过；阶段 3（T7-T10 UI 接线）2026-08-21 完成并六维度评审后集中修复 D6-D17，代码部分全部完成。
-- - kinematics_sequenceworker_plan.md 所列计划代码 2026-08-21 已全部完成；真机联调按 real_machine_plan_phase2.md 执行：阶段 1（连接+使能+Home Offset）→ 阶段 2（单轴点动/Go 全链路）→ 阶段 3（Z 标定+Go 精度）→ 阶段 4（回零完整回归+停止/急停）均已真机验证通过。
-- - T7-T10 评审遗留改进方向（低优先级）：RefreshCoordPanel 每 50ms 重复构造临时 Kinematics + 6 次点号路径解析，建议按 ReloadFromConfig 模式缓存实例仅参数变化时重建；日志框高频 append 无行数上限；ConfigPage Tab5 电控映射轴限位修改未触发 SequenceWorker::ReloadFromConfig。
+- 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志手动记到 doc/worklog/YYYY-MM-DD.md。
+- 计划文档编写约束（2026-08-27 用户明确）：先更新计划文档，具体的手册信息（如硬件手册参数）要带用户确认，不得自行臆断。
+- 计划覆盖范围约束：重做/复测计划曾只包含博派卡方案，用户指出还有两个舵机（J2/R，FashionStar 总线舵机）需要同等方案，计划必须覆盖全部硬件。
+- 阶段 1（小脑核心库 T1-T4）编码完成；阶段 2 轮 A（SequenceWorker）引擎层自测通过；阶段 3（T7-T10 UI 接线）完成并评审修复 D1-D17。kinematics_sequenceworker_plan.md 所列代码已全部完成。
+- 评审遗留低优先级改进：RefreshCoordPanel 每 50ms 重复构造临时 Kinematics（建议缓存实例参数变化才重建）；日志框无行数上限；ConfigPage Tab5 轴限位修改未触发 SequenceWorker::ReloadFromConfig。
+
+# 物理蘑菇按钮接线需求（新需求讨论中）
+
+- 用户提出拟在项目中增加物理蘑菇按钮：初始化/启动/停止/复位/急停，询问如何接线。
+- 接线方案尚未定稿，需结合博派卡 IO 与安全回路设计后带用户确认。
 
 # Kinematics 重构原则（2026-08-20）
 
-- - 原则 1 等效小臂模型与强语义 TCP：物理模型严密验证后彻底重写 Kinematics.h/.cpp，夹爪直接安装在 J4 前方并朝下。保留外部配置接口 SetTCP(offsetX, offsetY, offsetZ) 与 config.json 联动；类内部删除 dx_/dy_/dz_，改用 tcpForward_=0.0（沿小臂 L2 向前）、tcpDown_=0.0（竖直向下物理距离，绝对正数）。
-- - SetTCP 映射：tcpForward_=offsetX；tcpDown_=-offsetZ（传入 offsetZ 为负表示向下）；offsetY != 0 时 SPDLOG_WARN「当前模型忽略 Y 向 TCP 偏移」。正逆解中小臂有效长度 l2_eff = l2_ + tcpForward_。
-- - 原则 2 甜甜圈工作空间校验（Annulus Workspace）：l2_eff 可能大于 l1_，工作空间为中空圆环。ikSolve 双向边界检查：r > (l1_+l2_eff)+0.001 或 r < fabs(l1_-l2_eff)-0.001 时目标不可达，警告返回 false；彻底删除原 if(r<kEpsilon) 原点奇点处理（原点物理上不可达）。
-- - 原则 3 Z 轴高度推导：Z0 为撞顶时大臂上表面绝对高度，h1 为大臂向下倾斜固定垂直落差，tcpDown_ 为夹爪向下延伸长度；SetParams(l1xy, l2, z0, h1)。正解：夹爪尖端真实高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解：电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_（早期无 tcpDown_ 项的表述作废，以此为准）。
+- 原则 1 等效小臂与强语义 TCP：夹爪直接装在 J4 前方朝下。保留 SetTCP(offsetX, offsetY, offsetZ) 外部接口；内部 tcpForward_=offsetX、tcpDown_=-offsetZ（offsetY!=0 时 SPDLOG_WARN 忽略 Y 向）；l2_eff = l2_ + tcpForward_。
+- 原则 2 甜甜圈工作空间校验：l2_eff 可能大于 l1_，工作空间为中空圆环。r > (l1_+l2_eff)+0.001 或 r < |l1_-l2_eff|-0.001 时目标不可达返回 false；原点物理不可达，删除原点奇点处理。
+- 原则 3 Z 轴高度：Z0=撞顶时大臂上表面绝对高度，h1=大臂向下倾斜固定垂直落差，tcpDown_=夹爪向下延伸长度。正解高度 = 电机物理高度 + z0_ - h1_ - tcpDown_；逆解电机物理高度 = 目标尖端高度 - z0_ + h1_ + tcpDown_（早期无 tcpDown_ 项的表述作废）。
+- ConfigPage 运动学 Tab 在 L1/L2/Z0 旁追加 h1（大臂落差）输入框，双向绑定 config.json 的 kinematics.links.h1。
 
-# ConfigPage 运动学参数 Tab h1 输入框（2026-08-20）
+# HomeOffset 逻辑零点机制（关键决策，已 b9c7ed3 固化）
 
-- - 大臂向下倾斜产生固定垂直落差 h1，正逆解 Z 轴计算必须包含。
-- - ConfigPage.cpp【运动学参数】Tab 在 L1、L2、Z0 旁追加 h1（大臂落差）输入框，与 config.json 的 kinematics.links.h1 双向绑定。
+- 语义：逻辑角度 = 机械角度 - homeOffset。J1 offset=102°、J2 offset=28°、其余 0。所有界面/软限位/运动学统一使用逻辑坐标。
+- 软限位同步偏移：J1 物理 0~110° → limitMin:-102/limitMax:8；J2 物理 0~180° → limitMin:-28/limitMax:152。
+- 单一转换点在 HardwareManager 门面层：下发 机械=inv?-(逻辑+off):(逻辑+off)，回读减 offset；AxisConverter 保持纯机械↔脉冲不感知偏移，不得在别处再加减。
+- 自测通过（驱动测试 24/24）：回零→逻辑 -102/-28、Go 逻辑 5→机械 -107（inverted）、点动撞界自动停、越界拒绝/反向放行。期间修两隐藏 bug：SimCard::SetAxisConfig rotation 分支漏 gearRatio（ppu 错 100 倍）；MoveJog 启动边界容差太紧（浮点舍入）改 0.01。
 
-# HomeOffset 逻辑零点机制（关键决策，2026-08-19 阶段 1 落地）
+# 夹爪机构与业务边界
 
-- - 语义：逻辑角度 = 机械角度 - homeOffset（机械零点=回零位置，逻辑零点=工艺示教零点）。J1 offset=102°、J2 offset=28°、其余轴 0。所有界面/软限位/运动学统一使用逻辑坐标。
-- - 软限位随 HomeOffset 同步偏移（用户明确要求）：J1 物理 0~110° → 逻辑 limitMin:-102.0/limitMax:8.0；J2 物理 0~180° → 逻辑 limitMin:-28/limitMax:152。config.json 默认值已同步更新。
-- - 回零后逻辑位置为 -offset；所有逻辑坐标经硬件层单点转换（MoveAbs 下发 机械=inv?-(逻辑+off):(逻辑+off)、GetPosition 回读减 offset），不得在别处再加减偏移。实现全部落在 HardwareManager 门面层，AxisConverter 保持纯机械坐标↔脉冲不感知偏移。
-- - 已自测验证（驱动测试 24/24 通过，2026-08-19）：回零→逻辑 -102/-28、Go 逻辑 5→机械 -107（inverted）、点动撞界自动停、越界拒绝/反向放行。
-- - 期间修复两个隐藏 bug：SimCard::SetAxisConfig rotation 分支漏 gearRatio（ppu 错 100 倍 → 点动撞界夹紧失效）；MoveJog 启动边界检查容差太紧（浮点舍入 7.99996875），改 0.01。
+- 真机结构：夹爪电机轴是短丝杆，螺纹环带夹爪松紧。螺纹环靠近电机=夹紧、远离=松开；从电机轴向看顺时针=松开、逆时针=夹紧。回零默认是夹紧（限位金属片碰电机轴根部开关触发）。
+- 软限位 [-5,0]mm 来源：回零后显示 0、松开后显示负值 → limitMin=-5/limitMax=0。
+- 业务边界存疑（维持现状继续测试中）：① 夹爪界面按钮与点动方向的对应关系（夹紧应=点动-还是点动+）；② 电机正负向与顺/逆时针对应约定（观察方向）；③ 松开后位置显示负值是否有问题。
 
-# 夹爪机构（真机结构）
+# 软限位反向拦截 bug（已修复并真机验证，b9c7ed3 已固化）
 
-- - 夹爪电机轴是一根短丝杆，丝杆上有螺纹环，螺纹环带动夹爪松开/夹紧。
-- - 螺纹环靠近电机 → 夹紧；远离电机 → 松开。从电机轴向看：顺时针=松开、逆时针=夹紧。
-- - 回零动作默认是夹紧：螺纹环上的限位金属片接触电机轴根部限位开关触发回零。
-- - 夹爪软限位 -5~0mm 来源：回零后位置显示 0；松开后位置显示负值 → limitMin=-5、limitMax=0。
-
-# 软限位反向拦截 bug（已修复并真机验证）
-
-- - 现象：点动夹紧惯性越过 0 到 0.2 后持续按「松开」无反应，只能逐点按回 [-5,0] 区间；反向同理；越界后 Go 到界内值也无反应。
-- - 根因：软限位拦截未区分运动方向（与 J1 曾遇问题同源）——惯性越界后朝边界内运动的请求也被拦截。
-- - 修复：按运动方向判断，仅拦截仍朝越界方向运动的动作，朝边界内运动放行。已真机验证并记账。
-
-# 业务边界与方向约定
-
-- - 夹爪「松开/夹紧」动作与物理动作当前一致，但按螺纹环移动方式（远离电机=松开），界面按钮位置存疑：夹紧是否应=点动-、松开应=点动+？——维持现状继续测试。
-- - 电机正负向与顺时针/逆时针的对应约定：从哪个方向观察电机轴？——维持现状继续测试。
-- - 松开后位置显示负值是否有问题（夹爪方向约定）——待确认。
+- 现象：惯性越界（如夹爪冲到 0.2 > max=0）后持续按反向键无反应，只能逐点按回区间；越界后 Go 回界内也被拦。
+- 根因：软限位拦截不看运动方向——朝边界内运动的请求也被拦截（与 J1 同源问题）。
+- 修复：按逻辑位置增量 delta 判断方向，仅拦截仍朝越界方向运动者，朝边界内运动放行；lastPollPos_ 作每轮基线。MoveAbs/MoveJog 入口本就按目标/方向校验，无需改。
 
 # 持续测试机制（Continuous QA）
 
-- - 系统级防回归机制，已注入 AGENTS.md 为绝对规约：①测试台账制度（根目录 TEST_RECORD.md）；②强制记账法则（每次彻底解决 Bug 或完成新功能后必须主动追加：模块、测试场景/动作、期望结果、状态「🟢 已通过」、踩坑记录/备注）；③修改前验算（大范围重构/修改核心逻辑前先通读 TEST_RECORD.md 推演回归风险）。
-- - 每次修复完成必须同步更新 AGENTS.md、历史记录等全部相关文档。
-- - 测试用例分组（如 B/C/D 组）自行验证后输出结果。
+- 防回归硬规约（注入 AGENTS.md）：①测试台账制度（根目录 TEST_RECORD.md）；②强制记账法则（每次彻底解决 Bug 或完成新功能后必须追加一行：模块、测试场景/动作、期望结果、状态🟢 已通过、踩坑记录/备注）；③修改前验算（大范围重构/核心逻辑修改前先通读 TEST_RECORD.md 推演回归风险）。
+- 每次修复必须同步更新 AGENTS.md、历史记录等全部相关文档。测试用例分组（B/C/D 组）自行验证后输出结果。
 
-# 测试台账表定义（TEST_RECORD.md）
+# 表 Schema：TEST_RECORD.md 台账表
 
-- - 表位于项目根目录，列结构与初始模板如下：
-- - | 模块 | 测试场景 / 动作 | 期望结果 | 测试状态 | 踩坑记录 / 备注 |
-- - | :--- | :--- | :--- | :--- | :--- |
-- - | *示例* | *在自动模式下点击手动点动按钮* | *UI必须置灰拦截，且底层拒绝下发指令* | *🟢 已通过* | *防止权限穿透导致撞机* |
-- - 测试状态用「🟢 已通过」表示。
+- 测试台账位于项目根目录，列结构与初始模板如下：
+- | 模块 | 测试场景 / 动作 | 期望结果 | 测试状态 | 踩坑记录 / 备注 |
+- | :--- | :--- | :--- | :--- | :--- |
+- | *示例* | *在自动模式下点击手动点动按钮* | *UI必须置灰拦截，且底层拒绝下发指令* | *🟢 已通过* | *防止权限穿透导致撞机* |
+- 测试状态用「🟢 已通过」表示。
 
 # 待确认问题
 
-- - Kinematics 重构 prompt 示例曾使用大臂 l1_=174.35、l2=215，与项目已重测/配置值（L1=138.83、L2=166.86）不一致——已确认重构以 config.json 实际值及新测值为准。
-- - TEST_RECORD.md 放项目根目录的位置是否合适、doc/ 下文档是否需拆分子目录——待确认。
-- - 方向约定等未决问题（见业务边界与方向约定）维持现状继续测试。
-- - 多模型协作下 config.json 等关键文件存在被覆盖/回滚风险，修改前需核对轴回零参数等已标定配置的完整性（2026-08-26 曾发生 Axis_Z home 参数丢失）。
+- TEST_RECORD.md 放项目根目录是否合适、doc/ 下是否拆子目录——待确认。
+- 夹爪按钮方向、电机正负向约定等未决问题维持现状继续测试（见「夹爪机构与业务边界」）。
+- Kinematics 重构 prompt 示例值（l1_=174.35/l2=215）与实测配置值不一致——已确认以 config.json 实际值及新测值为准。
+- 多模型协作下 config.json 等关键文件被覆盖风险长期存在，修改前需核对已标定参数完整性（如 Axis_Z home 参数），变更后须真机复测回零。
+- 重做/复测计划中涉及硬件手册的具体信息需带用户确认（2026-08-27 用户要求）。
+- 物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。

@@ -291,16 +291,35 @@ bool BoPaiCard::HomeAxis(int axisId)
             return false;
         }
         // 启动后验证（持锁内直接读 lastStatus_，避免 GetAxisStatus 二次加锁死锁）：
-        // running=false + homeDone=false 说明回零立即结束且未成功：常见于 HOME 信号当前已有效
-        // （homeSwitch=true → 卡认为已在原点），或回零方向/极性配置问题
-        RefreshStatus();
-        MotorStatus st = lastStatus_.count(axisId) ? lastStatus_[axisId] : MotorStatus{};
-        SPDLOG_INFO("[BoPaiCard] Home axis {} post-start: running={} homeDone={} homeSwitch={} homeFail={} alarm={} enabled={}",
-                    axisId, st.running, st.homeDone, st.homeSwitch, st.homeFail, st.alarm, st.enabled);
-        if (!st.running && !st.homeDone)
-            SPDLOG_WARN("[BoPaiCard] Home axis {} finished immediately WITHOUT success: homeSwitch={} homeFail={} "
-                        "(HOME 信号当前有效? 检查机械挡块/接线极性, 或手动点动离开信号区后重试)",
-                        axisId, st.homeSwitch, st.homeFail);
+        // MC_HomeStart 到卡端 running 置位存在启动延迟，等待最多 200ms（50ms 步进）。
+        // 始终不置位且无 homeDone/homeSwitch → 回零立即结束未成功 → reject：
+        // 常见于 HOME 信号当前已有效（homeSwitch=true → 卡认为已在原点）、回零方向/极性配置问题，
+        // 或 homeMaxDis=0（部分固件解释为"搜索 0 距离"立即返回）
+        bool runningUp = false;
+        bool homeDoneSeen = false;
+        bool homeSwitchSeen = false;
+        bool homeFailSeen = false;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            RefreshStatus();
+            MotorStatus st = lastStatus_.count(axisId) ? lastStatus_[axisId] : MotorStatus{};
+            SPDLOG_INFO("[BoPaiCard] Home axis {} post-start[{}/4]: running={} homeDone={} homeSwitch={} homeFail={} alarm={} enabled={}",
+                        axisId, attempt + 1, st.running, st.homeDone, st.homeSwitch, st.homeFail, st.alarm, st.enabled);
+            if (st.running) { runningUp = true; break; }
+            if (st.homeDone) homeDoneSeen = true;
+            if (st.homeSwitch) homeSwitchSeen = true;
+            if (st.homeFail) homeFailSeen = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!runningUp && !homeDoneSeen && !homeSwitchSeen) {
+            SPDLOG_WARN("[BoPaiCard] Home axis {} rejected: finished immediately WITHOUT success: "
+                        "homeDone={} homeSwitch={} homeFail={} "
+                        "(HOME 信号当前有效? 检查机械挡块/接线极性, 或手动点动离开信号区后重试; 若 homeMaxDis=0 请设非零)",
+                        axisId, homeDoneSeen, homeSwitchSeen, homeFailSeen);
+            // reject 必须收尾卡端 HOME 状态机：仅 MC_Stop 可能无法退出，否则后续 Jog/Trap 被拒
+            impl_->card.MC_HomeStop(ch);
+            impl_->card.MC_Stop(0x0001 << axisId, 0);
+            return false;
+        }
     }
     return true;
 }

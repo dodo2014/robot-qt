@@ -136,24 +136,32 @@ private:
     QTimer* jogTimer_  = nullptr;
     bool initialized_ = false;
 
-    // 舵机遥测轮询计数：每 5 个 poll tick（250ms）查询一次，避免
-    // 阻塞串口事务占满主线程（真机每事务约几 ms，逐 tick 查询会卡 UI）
+    // 舵机遥测轮询计数：在线每 5 个 poll tick（250ms）查询一次；离线时降频到 20 tick（1s）——
+    // 离线时每舵机查询最多阻塞 ~120ms（60ms 超时），250ms 轮询会把 UI 线程占满，
+    // 急停/全局使能按钮事件排队秒级无响应（真机 2026-08-28 实测"卡死"根因）
     int servoPollCounter_ = 0;
     // 舵机重连退避（指数增长 2s→4s→…→30s cap）：USB 转串口不可用（Open port failed）
-    // 时曾每 2.5s 全量重连 80 分钟（1646 次），刷爆日志并反复打断操作
+    // 时曾每 2.5s 全量重连 80 分钟（1646 次），刷爆日志并反复打断操作。
+    // 重连成功也冷却 30s（不归零 0）：设备"半死"时成功归零曾形成 1-2s 一次的
+    // 断→连→断循环（CloseHandle→CreateFileA→DTR 翻转反而扰动总线）
     qint64 servoNextReconnectMs_ = 0;
     qint64 servoReconnectBackoffMs_ = 0;
+    // Ping 门卫连续放行计数：skip reconnect 间隔 2s→4s→8s→15s cap（恢复在线清零）
+    int servoPingSkipCount_ = 0;
 
     // 舵机连续点动状态（jogTimer_ 驱动）
     // 目标按时间累积推进（速度 = jogSpeed_），发送节流 ≥2°（越过 FashionStar
     // 约 1.5° 控制死区）。曾用「每 tick current+3°」导致推进 60°/s 远超设定速度、
     // 舵机追不上而一顿一顿。
+    // jogInProgress_ + jogAxis_：StopJog 门禁。回零中松点动键（MoveJog 被门禁拒但
+    // OnJogStop 仍触发）曾无条件 StopJog 打断回零，现仅"当前正在点动的轴"才放行。
     LogicalAxis jogAxis_      = LogicalAxis::J1;
     int         jogDir_       = 1;
     double      jogSpeed_     = 50.0;
     double      jogStartPos_  = 0.0;
     qint64      jogStartMs_   = 0;
     double      lastJogTarget_ = 0.0;
+    bool        jogInProgress_ = false;
     static constexpr double kServoJogSendThreshold = 2.0; // 目标增量 ≥ 此值才下发
 
     std::unique_ptr<IMotionCard>    motionCard_;

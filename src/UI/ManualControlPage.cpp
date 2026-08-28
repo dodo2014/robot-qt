@@ -152,6 +152,7 @@ void ManualControlPage::SetupUI()
     connect(estopBtn, &QPushButton::clicked, this, [this]() {
         SPDLOG_INFO("[ManualControl] 急停 clicked");
         HardwareManager::instance().EmergencyStop();
+        ResetAxisStates();
         SetHint(QStringLiteral("已触发急停，所有轴立即停止"));
     });
 
@@ -472,16 +473,26 @@ void ManualControlPage::OnGlobalHome()
         return;
     }
     if (!connected) { SPDLOG_WARN("[ManualControl] 一键回零 rejected: 未连接硬件"); SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
-    // 逐轴发起回零（HomeAll 的使能门禁已在上文校验），仅对真正启动回零的轴标记 homingAxes_
+    // 逐轴发起回零（HomeAll 的使能门禁已在上文校验），仅对真正启动回零的轴标记 homingAxes_；
+    // 被拒轴（报警/忙/卡端 reject）逐轴列出，便于区分"回零中"与"未启动"
     bool anyStarted = false;
+    QStringList notStarted;
     for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
         if (HardwareManager::instance().HomeAxis(static_cast<LogicalAxis>(i))) {
             if (i < homingAxes_.size()) homingAxes_[i] = true;
             anyStarted = true;
+        } else {
+            notStarted << QStringLiteral("轴%1").arg(i + 1);
         }
     }
-    SetHint(anyStarted ? QStringLiteral("回零中...") : QStringLiteral("回零被拒（请先使能或检查轴状态）"),
-            anyStarted ? QString() : QStringLiteral("#e0a520"));
+    if (!anyStarted) {
+        SetHint(QStringLiteral("回零被拒（请先使能或检查轴状态）"), QStringLiteral("#e0a520"));
+    } else if (!notStarted.isEmpty()) {
+        SetHint(QStringLiteral("回零中...（%1 未启动）").arg(notStarted.join(QStringLiteral("、"))),
+                QStringLiteral("#e0a520"));
+    } else {
+        SetHint(QStringLiteral("回零中..."));
+    }
     qDebug() << "一键回零";
 }
 
@@ -804,4 +815,21 @@ void ManualControlPage::RefreshCoordPanel()
                            "<span style='color:#7ed6ff;font-weight:700;font-size:15px;'>%2%3</span>")
                 .arg(items[i].name).arg(items[i].value, 0, 'f', 2).arg(items[i].unit));
     }
+}
+
+void ManualControlPage::ResetAxisStates()
+{
+    // 急停后使能复位，但 UI 状态数组残留：RefreshStatusDot 优先级 alarm→限位→回零→运行→使能→未使能，
+    // "限位"高于"未使能"，导致停在软限位边界的轴误显示橙色"限位"（曾复现轴1/3）。急停时全清再刷新。
+    alarmState_.fill(false);
+    limitState_.fill(false);
+    enabledState_.fill(false);
+    runningState_.fill(false);
+    homeDoneState_.fill(false);
+    homingAxes_.fill(false);
+    softLimitDir_.fill(0);
+    for (auto& d : alarmDetail_) d.clear();
+    for (auto* b : goButtons_) if (b) b->setEnabled(true);
+    for (int i = 0; i < statusDots_.size(); ++i) RefreshStatusDot(i);
+    RefreshSoftLimitHint();
 }

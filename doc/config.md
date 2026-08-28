@@ -169,7 +169,7 @@ tcpCalibration
 |---|---|---|---|---|---|---|---|---|
 | `Axis_J1` | 0 卡 | 0 | 1 反向 | rotation | 30.0 | 30.0 | 50.0 | 25600 / 1 / 0.01 / lead360（驱动器 25600 脉冲/圈 + 谐波减速 1:100） |
 | `Axis_J2` | 1 舵机 | 0 | 0 | – | 15.0 | 120.0 | 232.0 | minPulse500 / maxPulse2500 / minAngle0 / maxAngle180 |
-| `Axis_Z` | 0 卡 | 1 | 0 | linear | 13.0 | 21.0 | 50.0 | 25600 / 1 / 0.5 / lead5（皮带20:40 + 丝杆导程5mm，10240 脉冲/mm；2026-08-26 阶段 3 已真机标定，`calibrationPending` config 仍 true 未置 false） |
+| `Axis_Z` | 0 卡 | 1 | 0 | linear | 13.0 | 21.0 | 50.0 | 25600 / 1 / 0.5 / lead5（皮带20:40 + 丝杆导程5mm，10240 脉冲/mm；2026-08-26 阶段 3 已真机标定，`calibrationPending:false`） |
 | `Axis_R` | 1 舵机 | 1 | 0 | – | 55.0 | 180.0 | 240.0 | minPulse500 / maxPulse2500 / minAngle0 / maxAngle180 |
 | `Axis_Gripper` | 0 卡 | 3 | 0 | linear | 1.0 | 10.0 | 50.0 | 40000 / 1 / 1 / lead2（驱动器 XINJE DP3L1-224 拨码 SW5-SW8 全 OFF=40000 Pulse/rev，已标定；lead 暂定 2mm） |
 | `Axis_Extruder` | 0 卡 | 2 | 0 | rotation | 2.0 | 20.0 | 100.0 | 32000 / 1 / 1 / lead10 |
@@ -203,7 +203,7 @@ homeLocatVel(1°/s) = 1 × 7111.11 / 1000 ≈ 7.1  Pulse/ms
 |---|---|---|---|---|---|---|---|
 | `Axis_J1` | [1] 轴1 (大臂 J1) | 运动控制卡 | 0 | -102 | 8 | 30.0 | homeDir=1, homeSns=0, homeRapidVel=21.3, homeLocatVel=7.1, homeBackDis=0, homeMaxDis=1,500,000 |
 | `Axis_J2` | [2] 轴2 (小臂 J2) | 串口总线舵机 | 1 | -28 | 152 | 15.0 | – |
-| `Axis_Z` | [3] 轴3 (Z轴) | 运动控制卡 | 2 | -165 | 0 | 13.0 | homeDir=1, homeSns=-1, homeRapidVel=102.4, homeLocatVel=20.48, homeBackDis=5120, homeMaxDis=2,500,000 |
+| `Axis_Z` | [3] 轴3 (Z轴) | 运动控制卡 | 2 | -165 | 0 | 13.0 | homeDir=1, homeSns=-1, homeRapidVel=82.4, homeLocatVel=20.48, homeBackDis=5120, homeMaxDis=2,500,000 |
 | `Axis_R` | [4] 轴4 (翻转 R) | 串口总线舵机 | 3 | 0 | 180 | 55.0 | – |
 | `Axis_Gripper` | [5] 轴5 (夹爪) | 运动控制卡 | 4 | -5 | 0 | 1.0 | homeDir=1, homeSns=0, homeRapidVel=20.0, homeLocatVel=10.0, homeBackDis=0, homeMaxDis=600,000 |
 | `Axis_Extruder` | [6] 轴6 (挤出) | 运动控制卡 | 5 | 0 | 100 | 2.0 | – |
