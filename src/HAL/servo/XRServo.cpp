@@ -79,9 +79,18 @@ public:
     float AngleReal2Raw(float real) const { return kAngleReal2Raw * real + bAngleReal2Raw; }
     float AngleRaw2Real(float raw) const { return (raw - bAngleReal2Raw) / kAngleReal2Raw; }
 
-    // 发送前清空输入缓冲（丢弃上一条指令的残留响应字节）
-    void EmptyInput()
+    // 把 ref 归一化到 target 附近 ±180°：cmd 10 (QUERY_ANGLE) 为 ±180 有符号回绕表示，
+    // 物理 180.1° 会返回 -179.9——目标 179.9 与查询 -179.9 表示差 360°，直接算 dAngle=359.8°
+    // → interval 7.2s → WaitForAxes 干等（动作不连贯，真机 2026-08-31）。行程计算前必须对齐。
+    static double AlignNear(double ref, double target)
     {
+        while (ref - target > 180.0)  ref -= 360.0;
+        while (ref - target < -180.0) ref += 360.0;
+        return ref;
+    }
+
+    // 发送前清空输入缓冲（丢弃上一条指令的残留响应字节）
+    void EmptyInput()    {
         if (!IsOpen()) return;
         DWORD r = 0;
         uint8_t tmp[256];
@@ -212,6 +221,11 @@ public:
         }
         int32_t rawAngle = (resp[13] << 24) | (resp[12] << 16) | (resp[11] << 8) | resp[10];
         t.angleDeg = AngleRaw2Real(static_cast<float>(rawAngle) * 0.1f);
+        // 与 cmd 10 (QueryAngle) 的 ±180 表示对齐：MONITOR 原始角度可为 0~360 宽范围表示，
+        // 180° 边界处两命令返回相差 360°（真机实测 2026-08-31：同一位置 cmd22=+180.1° 而
+        // cmd10=-179.9°，导致手动页显示 180.1 与示教读取 -179.8 不一致）。统一 [-180,180]。
+        if (t.angleDeg > 180.0) t.angleDeg -= 360.0;
+        if (t.angleDeg < -180.0) t.angleDeg += 360.0;
         return true;
     }
 
@@ -378,8 +392,11 @@ bool XRServo::TorqueOn()
     }
     double a = impl_->angle;
     if (impl_->QueryAngle(a)) impl_->angle = a;
-    // 锁定到当前位置：发"到当前角(1000ms)"使舵机保持扭矩
-    bool ok = impl_->SendSetAngle(impl_->AngleReal2Raw(static_cast<float>(impl_->angle)), 1000, 0);
+    // 锁定到当前位置：用"控制模式停止(mode=1 停止后保持锁力)"而非 SET_ANGLE(当前角)。
+    // 曾用 SET_ANGLE 发查询角——cmd 10 角度为 ±180 回绕表示，180° 边界处查询返回 -179.8，
+    // 舵机从 +180 到 -179.8 按 359.8° 行程执行 → 使能瞬间 J4 沿 180→90→0→-90→-180 翻转
+    // 一整圈（真机 2026-08-31 实测）。CMD 24 只锁定不位移，杜绝边界回绕。
+    bool ok = impl_->SendControlModeStop(1, 500);
     impl_->torque = ok;
     return ok;
 }
@@ -407,6 +424,7 @@ bool XRServo::MoveToAngle(double angleDeg, int timeMs)
         double cur = impl_->angle;
         double real = cur;
         if (impl_->QueryAngle(real)) { impl_->angle = real; cur = real; }
+        cur = impl_->AlignNear(cur, a);   // ±180 回绕对齐：180° 边界查询返回 -179.9 曾致 dAngle 错算 360°→interval 7.2s
         double dAngle = std::fabs(a - cur);
         double spd = impl_->speed > 0 ? impl_->speed : 50.0;
         uint16_t est = static_cast<uint16_t>((dAngle / spd) * 1000.0);
@@ -435,7 +453,7 @@ bool XRServo::MoveAtSpeed(double angleDeg, double speedDps)
     if (spd <= 0) spd = 1.0;
     // 点动与 Go 走同一条已验证指令 cmd 8 (SET_ANGLE)：把速度换算成到达周期。
     // 真机实测 cmd 12 (SET_ANGLE_BY_VELOCITY) 点动无响应，弃用。
-    double dAngle = std::fabs(a - impl_->angle);
+    double dAngle = std::fabs(a - impl_->AlignNear(impl_->angle, a));  // ±180 回绕对齐（同 MoveToAngle）
     uint16_t interval = static_cast<uint16_t>((dAngle / spd) * 1000.0);
     if (interval < 50) interval = 50;
     if (interval > 30000) interval = 30000;

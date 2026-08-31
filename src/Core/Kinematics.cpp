@@ -145,8 +145,11 @@ bool Kinematics::ikSolve(const Pose& target, Joints& sol, bool elbowUp) const
     double l2_eff = l2_ + tcpForward_;           // 等效小臂 (mm)：小臂本体 + 夹爪沿 L2 向前延伸
 
     // 甜甜圈外边界：尖端距离超过最大可达半径 l1 + l2_eff → 不可达。
-    // 0.001 为浮点容差(mm)：允许目标刚好在边界上因舍入产生的 1mm 误差。
-    if (r > (l1_ + l2_eff) + 0.001)
+    // 0.1 为边界容差(mm)：真机示教坐标显示精度为 0.01mm，完全伸直位示教点极径可能因
+    // 显示舍入+浮点微差超出理论边界 0.001~0.01mm（2026-08-31 真机：点(358.69,1.15)
+    // 极径 358.6918 > 理论最大 358.69 被 0.001 容差误拒）。0.1mm 覆盖舍入与标定微差，
+    // 且超界解仍受 ValidateJoints 关节限位兜底，不会放出离谱位置。
+    if (r > (l1_ + l2_eff) + 0.1)
     {
         SPDLOG_WARN("[Kinematics] IK: target out of workspace (beyond outer radius), dist={:.2f} > L1+L2_eff={:.2f}",
                     r, l1_ + l2_eff);
@@ -154,9 +157,10 @@ bool Kinematics::ikSolve(const Pose& target, Joints& sol, bool elbowUp) const
     }
 
     // 甜甜圈内边界：尖端距离小于内孔半径 |l1 - l2_eff| → 落入空心区（含原点），物理上不可达。
-    // 0.001 为浮点容差(mm)。当 l2_eff ≥ l1 时内孔半径 = l2_eff - l1（如 268 - 138.83 = 129.17mm）。
+    // 0.1 为边界容差(mm)，同外边界（覆盖示教舍入；l2_eff ≥ l1 时内孔半径 = l2_eff - l1，
+    // 如 219.86 - 138.83 = 81.03mm）。
     double rInner = std::fabs(l1_ - l2_eff);
-    if (r < rInner - 0.001)
+    if (r < rInner - 0.1)
     {
         SPDLOG_WARN("[Kinematics] IK: target inside annulus hole, dist={:.2f} < |L1-L2_eff|={:.2f}",
                     r, rInner);

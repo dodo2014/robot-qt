@@ -92,6 +92,10 @@ add_subdirectory(src/Logic)
 add_subdirectory(src/Config)
 add_subdirectory(src/UI)
 
+# 独立验证工具（tests/）：不在主程序依赖链上，ninja CreamPuffRobot 不会编译它们，
+# 需要 `ninja test_kinematics_check` 单独构建
+add_subdirectory(tests)
+
 # ============================================================
 # 主可执行文件
 # ============================================================

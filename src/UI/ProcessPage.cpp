@@ -55,6 +55,13 @@ QIcon makeActionIcon(int kind)
         p.drawLine(QPointF(4, 11), QPointF(10, 17));
         p.drawLine(QPointF(10, 17), QPointF(16, 11));
         break;
+    case 5: { // play triangle（运行/执行）
+        QPolygonF tri;
+        tri << QPointF(7.0, 4.5) << QPointF(15.5, 10.0) << QPointF(7.0, 15.5);
+        p.setBrush(Qt::white);
+        p.drawPolygon(tri);
+        break;
+    }
     }
     p.end();
     return QIcon(pm);
@@ -270,11 +277,22 @@ void ProcessPage::SetupUI()
     downActionBtn->setFixedSize(40, 32);
     connect(downActionBtn, &QPushButton::clicked, this, &ProcessPage::OnMoveActionDown);
 
+    // 选中动作单独执行：不整跑方案，只跑当前选中动作（含其全部点位），绿色运行图标
+    m_runSelectedBtn = new QPushButton();
+    m_runSelectedBtn->setIcon(makeActionIcon(5));
+    m_runSelectedBtn->setIconSize(QSize(18, 18));
+    m_runSelectedBtn->setToolTip(QStringLiteral("执行选中动作"));
+    m_runSelectedBtn->setStyleSheet(makeBtnStyle("#2f8f5f", "#3aa06f"));
+    m_runSelectedBtn->setCursor(Qt::PointingHandCursor);
+    m_runSelectedBtn->setFixedSize(40, 32);
+    connect(m_runSelectedBtn, &QPushButton::clicked, this, &ProcessPage::OnRunSelectedAction);
+
     actionBtnRow->addWidget(newActionBtn);
     actionBtnRow->addWidget(editActionBtn);
     actionBtnRow->addWidget(deleteActionBtn);
     actionBtnRow->addWidget(upActionBtn);
     actionBtnRow->addWidget(downActionBtn);
+    actionBtnRow->addWidget(m_runSelectedBtn);
     actionBtnRow->addStretch();
 
     leftLayout->addWidget(actionHeader);
@@ -499,18 +517,23 @@ void ProcessPage::SetupUI()
     speedRowLayout->addStretch();
     m_speedPercentRow->setVisible(false);
 
-    // 输入框 ↔ 滑动条双向同步（各自 blockSignals 防回环）
+    // 输入框 ↔ 滑动条双向同步（各自 blockSignals 防回环）；
+    // 同时实时写回当前编辑动作的 speedPercent——拖动即生效（执行/单步直接读内存值），
+    // 不必先点「保存动作」（正式落盘仍由保存按钮负责，两处写同一字段无冲突）。
+    // 曾只有 OnSaveAction 才写 action.speedPercent，改滑条后直接执行仍用旧值（2026-08-31 用户反馈"速度没变化"）。
     connect(m_speedPercentSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, [this](int v) {
         m_speedPercentSlider->blockSignals(true);
         m_speedPercentSlider->setValue(v);
         m_speedPercentSlider->blockSignals(false);
+        ApplySpeedPercentToCurrentAction(v);
     });
     connect(m_speedPercentSlider, &QSlider::valueChanged,
             this, [this](int v) {
         m_speedPercentSpin->blockSignals(true);
         m_speedPercentSpin->setValue(v);
         m_speedPercentSpin->blockSignals(false);
+        ApplySpeedPercentToCurrentAction(v);
     });
 
     rightLayout->addWidget(m_speedPercentRow);
@@ -737,11 +760,31 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
     // 顶栏全局急停也清单步会话（断使能 + worker 中断后需重置状态）
     connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
             this, &ProcessPage::ResetStepSession);
+    // 「执行选中动作」按钮复位：单动作结束/中断/出错三路径均恢复（含停止按钮 → interrupted 路径）
+    connect(m_worker, &SequenceWorker::singleActionFinished, this, [this] {
+        if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(true);
+    });
+    connect(m_worker, &SequenceWorker::interrupted, this, [this] {
+        if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(true);
+    });
+    connect(m_worker, &SequenceWorker::errorOccurred, this, [this] {
+        if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(true);
+    });
 }
 
 void ProcessPage::ResetStepSession()
 {
     m_stepActive = false;
+}
+
+void ProcessPage::ApplySpeedPercentToCurrentAction(int v)
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx >= schemes.size()) return;
+    auto& actions = schemes[m_currentSchemeIdx].actions;
+    if (m_currentActionIdx >= actions.size()) return;
+    actions[m_currentActionIdx].speedPercent = v;
 }
 
 void ProcessPage::OnStepExecute()
@@ -772,6 +815,42 @@ void ProcessPage::OnStepExecute()
         m_worker->NextStep();
         SPDLOG_INFO("[Process] 单步执行：释放下一步");
     }
+}
+
+void ProcessPage::OnRunSelectedAction()
+{
+    if (!m_worker) {
+        SPDLOG_WARN("[Process] 执行选中动作：引擎未初始化");
+        return;
+    }
+    if (m_currentSchemeIdx < 0) {
+        SPDLOG_WARN("[Process] 执行选中动作：未选择方案");
+        return;
+    }
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx >= schemes.size()) return;
+    const auto& scheme = schemes[m_currentSchemeIdx];
+
+    int row = m_actionList->currentRow();
+    if (row < 0) {
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择一个动作"));
+        return;
+    }
+    if (row >= scheme.actions.size()) return;
+
+    // 若正处于单步会话，先清单步状态，避免与单动作执行混用（RunSingleAction 内部另清 stepMode）
+    if (m_stepActive) ResetStepSession();
+    // 每次执行前刷新运动学/手眼（与 OnStepExecute 一致，保证与 ConfigPage 编辑同步）
+    m_worker->ReloadFromConfig();
+    bool ok = m_worker->RunSingleAction(scheme, row);
+    if (!ok) {
+        // 拒绝（未使能/运行中/越界）不发完成信号，立即恢复按钮，避免永久禁用
+        m_runSelectedBtn->setEnabled(true);
+        return;
+    }
+    m_runSelectedBtn->setEnabled(false);
+    SPDLOG_INFO("[Process] 执行选中动作启动：方案={} 动作[{}]={}",
+                scheme.schemeName.toStdString(), row, scheme.actions[row].name.toStdString());
 }
 
 void ProcessPage::OnNewAction()

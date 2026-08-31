@@ -12,6 +12,7 @@
 #include <QLabel>
 
 class SequenceWorker;
+class QPushButton;
 
 class ProcessPage : public QWidget
 {
@@ -27,6 +28,7 @@ private slots:
     void OnDeleteScheme();
     void OnConfirmSwitch();
     void OnStepExecute();
+    void OnRunSelectedAction();
     void OnNewAction();
     void OnEditAction();
     void OnDeleteAction();
@@ -42,6 +44,7 @@ private slots:
 
 private:
     void SetupUI();
+    void ApplySpeedPercentToCurrentAction(int v);
     void RefreshActionList();
     void RefreshActionDetail(int idx);
     void RefreshSchemeCombo();
@@ -78,6 +81,7 @@ private:
     QComboBox* m_gripperCombo = nullptr;
 
     SequenceWorker* m_worker = nullptr;
+    QPushButton* m_runSelectedBtn = nullptr;
     bool m_stepActive = false;
     void ResetStepSession();
 };

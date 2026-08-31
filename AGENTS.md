@@ -17,12 +17,14 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
 - **Run**: `out\build\x64-Debug\CreamPuffRobot.exe`
 - **Release**: root `build_release.bat` (relocatable via `%~dp0`, ASCII-only; builds Release + one-click packaging)
 - **用户实际运行 Debug 版**（真机验证用 `out\build\x64-Debug\CreamPuffRobot.exe`）。改动代码后**务必同时编译 Debug + Release**，否则用户拿到的 exe 不含修复。编译前若 `LNK1168 无法写入 exe`，先结束正在运行的 `CreamPuffRobot.exe` 进程。CLI 编译（无需开 VS）：先 `cmd /c "call vcvars64.bat && ninja CreamPuffRobot"`（vcvars 在 `D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\`，Debug 用 VS 自带 ninja，Release 用 `D:\Qt\Tools\Ninja\ninja.exe`）。
+- **Shell 注意（2026-08-31 踩坑）**：CLI 编译须在 **PowerShell** 执行（`cmd /c "call ""...vcvars64.bat"" >nul && ninja CreamPuffRobot"`，在 out\build\x64-Debug 下）；**Git Bash 直接调 `cmd //c` 会因引号嵌套/MSYS2 路径转换坏掉 vcvars 路径**（报 `'ommunity' 不是内部或外部命令`），勿用。现成编译脚本：`out\smoke\build_debug.bat`（可经 PowerShell `&` 调用）。**`.bat` 文件必须纯 ASCII**（含中文注释会被 cmd 按 GBK 解析成乱码命令，报 `'橀噺' 不是内部或外部命令`）；`.ps1` 若含中文须带 UTF-8 BOM（PowerShell 5.1 无 BOM 按 ANSI 解析）。
 
 ## 项目记忆与日志（三套，勿混用）
 
 - **`AGENTS.md`（本文档）**：人工整理的精华记忆，带 `file:line`，即改即用。新会话必读。
 - **`doc/worklog/YYYY-MM-DD.md`**：每日工作日志，人工精读记录（真机数据、问题/结论、明日计划）。手动创建。
 - **`.history/`（OpenCode 插件自动生成，勿手改）**：自动采集每次会话的用户提问 → `.history/pending.ndjson`，按条件（最老提问超 3h 或满 100 条）自动压缩成 `.history/history.txt` 长期记忆。插件 `project-history-compress`（全局配置 `D:\dev\opencode\config\opencode\plugins\project-history.js`）手动触发压缩。**用途**：跨会话/换人/换模型快速恢复项目上下文；含噪声，作为背景参考，**不作为权威事实**（权威以 AGENTS.md + 源码为准）。`.history/` 内的 `pending.ndjson/state.json/lock` 已被插件写入 `.gitignore` 排除。新会话如需项目记忆，可读 `.history/history.txt`。
+- **`.history/` WorkBuddy 版压缩（2026-08-31 起，与 OpenCode 插件同格式互通）**：automation `project-history-compress`（每天 08:30）按同一组文件/同一 marker 约定压缩，两工具交替维护互不破坏。WorkBuddy 采集靠会话约定：用户提出对项目长期有意义的提问/需求/决策时，助手 prepend 到 `pending.ndjson`（`{"ts":"ISO","text":"..."}`）；手动触发：对 WorkBuddy 说「压缩项目历史」。
 
 ## Architecture
 
@@ -32,7 +34,7 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
 CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
 ├─ src/Config/  — Configuration management (ConfigManager, ProcessManager)
 ├─ src/HAL/     — Hardware Abstraction Layer（interfaces/core/motioncard/servo/camera/algorithm 六子目录）
-├─ src/Core/    — Kinematics, CoordTransform, Trajectory（2026-08 重构：`Pose{x,y,z,r}`/`Joints{j1,j2,z,r}`，2D SCARA L1=138.83/L2=166.86，R 独立透传；`Forward/Inverse/InverseSmart/SetTCP`；**TCP 已内化为等效小臂**（`l2_eff = L2 + tcpForward_`，Z 扣 `tcpDown_`，旧 `ApplyTCPOffset/AddTCPOffset` 已删除）；**甜甜圈工作空间校验**（`rInner=|L1−L2_eff|`，原点不可达）；`CoordTransform` 为 Eigen 4×4 手眼矩阵；旧 `Pose3D`/`JointAngles` 已删除。**L1 大臂水平投影 2026-08 重测：174.35 → 138.83**）
+├─ src/Core/    — Kinematics, CoordTransform, Trajectory（2026-08 重构：`Pose{x,y,z,r}`/`Joints{j1,j2,z,r}`，2D SCARA L1=138.83/L2=166.86，R 独立透传；`Forward/Inverse/InverseSmart/SetTCP`；**TCP 已内化为等效小臂**（`l2_eff = L2 + tcpForward_`，Z 扣 `tcpDown_`，旧 `ApplyTCPOffset/AddTCPOffset` 已删除）；**甜甜圈工作空间校验**（`rInner=|L1−L2_eff|`，原点不可达；**内外边界容差 0.1mm**——曾 0.001mm 太紧，完全伸直位示教点极径因显示舍入微超理论最大半径被误拒，2026-08-31 修复）；`CoordTransform` 为 Eigen 4×4 手眼矩阵；旧 `Pose3D`/`JointAngles` 已删除。**L1 大臂水平投影 2026-08 重测：174.35 → 138.83**）
 ├─ src/Logic/   — PickCycleController (视觉抓取单周期模板) + SequenceWorker（大脑执行引擎，2026-08-20 新增）
 └─ src/UI/      — MainWindow + 5 pages + ToggleSwitch
 ```
@@ -53,6 +55,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 - **品牌实现**: `BoPaiCard`("Bopai"，博派运动卡，`USE_BOPAI`)、`XRServo`("XRServo"，FashionStar 总线伺服舵机，`USE_XRSERVO`)。舵机 ID 由 HardwareManager 从 `config.communication.servos[]` 读取喂入
 - **XRServo 协议为 FashionStar（曾用错协议）**: 真机舵机是 Fashionrobo 总线舵机，协议帧头**请求 `0x4C 0x12` / 响应 `0x1C 0x05`**，校验和 = (header+cmd+size+Σcontent) & 0xFF（求和，非取反），小端，角度 0.1°、速度 0.1°/s。命令：PING=1、SET_ANGLE=8（含周期/功率）、DAMPING=9、QUERY_ANGLE=10、SET_ANGLE_BY_VELOCITY=12、MONITOR=22（电压/电流/功率/温度/状态/角度一次取全）。参考 `D:\workspace\projects\ServoTest\FashionStar_UartServoProtocol.*`（真机实测可用）。**曾移植 bopai\puff 的 `0xF9 0xFF` 协议**，真机不认 → 点动/移动无动作、角度只回缓存（默认 90°）。`ReadAngle` 必须真实查询（cmd 10），不能回内存缓存
 - **XRServo 舵机 ID 来源与点动（实测踩坑）**: 真机实测映射 **轴2(J2)→舵机 id 0、轴4(R)→id 1**（不是 1/2）。舵机总线 ID 由 HardwareManager 从 `axes.Axis_J2.portId`/`axes.Axis_R.portId` 读取（即「电控与映射」页的物理端口 ID，**改 portId 需重启程序重连才生效**；曾误从 `communication.servos[].id` 读导致改 portId 无效果、只有 id=1 的舵机动作）。点动 `MoveAtSpeed` **禁用 cmd 12 (SET_ANGLE_BY_VELOCITY)**（真机点动无响应），改为与 Go 同走 cmd 8 并把速度换算成到达周期（`interval = |Δangle|/speed×1000`，钳制 50–30000ms）
+- **XRServo 角度表示统一（2026-08-31 修复，180° 边界坑）**: **cmd 22 (MONITOR) 与 cmd 10 (QUERY_ANGLE) 角度表示不同**——MONITOR 原始角度为 0~360 宽范围（int32 解析，180.1° 原样返回），QUERY_ANGLE 为 ±180 有符号回绕（int16 解析，180.1° 被固件表示为 −179.9°）。手动页坐标面板用遥测（cmd 22）、示教读取经 `GetPosition→ReadAngle`（cmd 10）→ 同一位置两处显示相差 360°。**修复：`XRServo::QueryMonitor` 角度统一 wrap 到 [−180,180]**（`>180→−=360`、`<−180→+=360`），与 cmd 10 及 R 软限位 [−180,180] 表示一致。新角度读取路径务必沿用此约定。**三个 180 边界坑（2026-08-31 全部踩过）**：① **R 限位域须与角度表示一致**——config `Axis_R.limitMin/Max` 曾为 [0,180]，示教点 r=−179.9（cmd 10 回绕表示）被 ValidateJoints 拒 → IK 无解（用户重新示教后正常）；② **`TorqueOn` 禁止用 SET_ANGLE(查询角) 锁位**——180° 边界查询返回 −179.8，舵机从 +180 走 359.8° 翻转一整圈；改用 `CMD 24 (SendControlModeStop mode=1 停止后保持锁力)`（与 Stop 同款）只锁定不位移；③ **`MoveToAngle/MoveAtSpeed` 行程计算前必须 ±360 对齐**（新增 `Impl::AlignNear(ref, target)` 归一到目标附近）——目标 179.9 与查询 −179.9 表示差 360 → dAngle 错算 359.8° → interval 7196ms → `MarkAxisBusy(7.2s)` → WaitForAxes 干等（点间停顿 7 秒不连贯）。
 - **BoPaiCard 网口连接（MC_Open 需要 PC 与卡两端 IP）**: 本机 IP 由 `HardwareManager` 从 `communication.motionCard.pcIp` 读取，经 `IMotionCard::SetHost(pcIp, port)` 在 `Connect` 前注入（**底层卡代码禁止读 ConfigManager**，遵循 `SetAxisConfig` 同款注入模式）。卡 IP `192.168.0.1`。连不上先 `ping` 确认同网段
 - **XRServo 共享串口句柄**: 同一串口总线的多个舵机实例（J2/R 都连 COM3）**禁止各自 `CreateFileA` 独占打开**——第二个必失败。`XRServo.cpp` 按端口名维护共享句柄注册表（`g_serials` + 引用计数，首个创建、末个关闭）。共享句柄下**帧事务必须持 `SharedSerial::mtx` 串口级互斥**（发送+接收整体持锁），否则两实例并发写会帧交叉。新增总线设备时沿用此模式
 - **XRServo 通信阻塞与 UI 卡顿**: FashionStar 事务为同步串口读写，**不加固定 Sleep**（写后短超时轮询 `ReadFile`，单帧几 ms）。但事务仍在 UI 线程：`HardwareManager::PollTick` 舵机遥测**降频到每 5 tick（250ms）**（`servoPollCounter_`）避免每 50ms 阻塞。彻底消除需把串口 IO 移出 UI 线程（通信线程 + 异步接口），当前阶段暂缓
@@ -108,6 +111,8 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 2. **强制记账法则**：每次彻底解决一个 Bug 或完成一个新功能后，**必须**主动用文件编辑工具在 `TEST_RECORD.md` 追加一行测试记录：模块、测试场景/动作、期望结果、状态（**🟢 已通过**）、踩坑记录/备注。
 3. **修改前验算**：计划大范围重构或修改核心逻辑（`HardwareManager`、`ProcessManager`、`PollTick/JogTick`、换算/软限位/回零等）前，**必须先读取 `TEST_RECORD.md`**，脑内推演改动是否会破坏已标为 **🟢 已通过** 的用例；有风险则调整方案或补回归验证。
 4. **Git 提交须用户明确要求**：**禁止主动执行 `git commit/push`**——即使完成一批改动并整理好提交信息，也必须等用户明确说"提交/commit"才执行；push 同理。工作完成时最多提示"可提交"，由用户决定时机。
+5. **Sim 冒烟规范（2026-08-31 定稿）**：用标准脚本 `out\smoke\sim_smoke.ps1`——就地临时改**工程根** `config/config.json` 为 SimCard/SimServo → `-WindowStyle Hidden` 独立窗口启动 8s 验证存活 → try/finally 保证恢复配置。**禁止拷贝 exe 输出目录做副本冒烟**——开发机版程序路径硬编码 `PROJECT_SOURCE_DIR`（main.cpp 读 `PROJECT_SOURCE_DIR/config/config.json` 与 `log/`），拷贝副本无效（曾误生成 2.1GB C 盘副本）。产物仅工程根 `log/creampuff_YYYY-MM-DD.log`；通过标准 = 进程存活 + 日志 SimCard/SimServo/SimAlgo/SimCamera 初始化正常。
+6. **运动学验证程序（2026-08-31 固化）**：`tests/test_kinematics_check.cpp`（root CMake 已挂 tests 子目录，独立 target 不进主程序依赖链）。无参运行 = 内置真机摆位回归（2026-08-31 两组实测）+ 限位内 20 组 FK↔IK 往返自检，退出码 0/1 可脚本调用；`fk <j1> <j2> <z> <r>` / `ik <x> <y> <z> <r> [curJ2]` 手动查询。参数自动读 config（改 config 无需改程序）。编译：`$env:TARGET='test_kinematics_check'` 后跑 `out\smoke\build_debug.bat` 或根 `build_release.bat`（两脚本已支持 TARGET 环境变量选 target，默认 CreamPuffRobot 不变；PowerShell→bat 传参用环境变量，`%~1` 在该链路曾失真）。
 
 ## Code Conventions
 
@@ -166,12 +171,13 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 1. **AutoRunPage** — 自动运行: camera views, LCD display, coord panel, log, 5 control buttons
 2. **ManualControlPage** — 手动控制: enable/disable, 6-axis JOG table
 3. **ProcessPage** — 工艺与流程: scheme management, action list (QListWidget), detail stack (QStackedWidget × 5 action types). Data stored in `process.json` via `ProcessManager`. 动作与方案的新增/编辑/删除/保存完整闭环，实时同步 JSON。
+   - **执行选中动作（2026-08-31）**: 动作列表按钮行「下移」后绿色运行图标按钮（仅图标 + tooltip）→ `OnRunSelectedAction` → `SequenceWorker::RunSingleAction` 单动作独立执行（详见 SequenceWorker 节）；未选动作弹窗、与单步会话互斥（启动前 `ResetStepSession`）。
    - 移动动作: 点位 QTableWidget (点名称/X/Y/Z/R/姿态) + 添加/删除/上移/下移/示教按钮。内存仍为扁平 PointData，仅 JSON 序列化为 `coord`/`joints` 嵌套结构
    - 识别动作: 识别类型/曝光时间/匹配模板/置信度阈值
    - 挤压动作: 挤出量/挤出速度/回抽量/回抽速度
    - 延时动作: 延时时间 ms
    - 夹爪动作: 闭合/张开 选择
-   - **动作运行速度**（`m_speedPercentRow`，仅移动/挤压/夹爪动作显示，其余隐藏）: `QSpinBox`(1-100, 后缀 " %") + `QSlider`(横向) 双向同步，各自 `blockSignals` 防回环；保存时读 `m_speedPercentSpin->value()`。滑块 `setFixedWidth(240)` 固定长度、无拉伸（`addWidget` 不带 stretch），长度调整改 `ProcessPage.cpp:469`
+   - **动作运行速度**（`m_speedPercentRow`，仅移动/挤压/夹爪动作显示，其余隐藏）: `QSpinBox`(1-100, 后缀 " %") + `QSlider`(横向) 双向同步，各自 `blockSignals` 防回环；保存时读 `m_speedPercentSpin->value()`。**拖动即实时写回当前动作 `action.speedPercent`（`ApplySpeedPercentToCurrentAction`，2026-08-31 起改即生效，不必先点保存）**。滑块 `setFixedWidth(240)` 固定长度、无拉伸（`addWidget` 不带 stretch），长度调整改 `ProcessPage.cpp:469`
 4. **VisionTestPage** — 视觉检测（导航第 4 项，位于「设备与配置」前）: 相机控制（型号下拉/序列号/分辨率/FPS/打开关闭/开始停止采集 + 状态点）＋ 预览（RGB/深度切换、识别框叠加开关、FPS/时间戳/分辨率、保存截图）＋ 算法测试（型号下拉/单次检测/连续检测/结果表格，表格列 = 序号/置信度/X/Y/Z/偏航/U/V/宽/高）＋ 离线图片加载（`getOpenFileName`→`CameraFrame`→`Detect`）＋ 参数（置信度阈值/Zmin/Zmax/曝光，`QDoubleSpinBox::valueChanged` 实时写 `ConfigManager`）。
    - 采集来源统一走 `HardwareManager::frameReady`（采集线程）→ `OnFrameReady` 存 `latestFrame_` 渲染；检测结果存 `lastResults_`，RGB/深度/截图共用 `BuildDisplayImage()`（含叠加）。截图经 `FrameSaver` 异步写盘。
    - 型号下拉在构造函数从工厂 `AvailableTypes()` 填充（`Initialize()` 前的 `ForceLinkHALImpls` 未执行时可能为空，回退 "SimCamera"/"SimAlgo" 字符串，与工厂注册名一致）。
@@ -231,12 +237,15 @@ HAL 多品牌硬件接入全部完成：
 ### SequenceWorker 大脑执行引擎（2026-08-20 阶段 2 轮 A 落地，引擎层自测通过）
 
 - **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 已接线（T7–T10，2026-08-20/21 完成）。
-- **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
+- **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/ **`RunSingleAction(const SchemeData&, int actionIndex)`（2026-08-31 新增，单动作独立执行，与 RunSequence 共用 running 门禁互斥；未使能发 errorOccurred，运行中/越界静默返回 false）** /`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/`**`singleActionFinished`**`/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
 - **线程模型**：`moveToThread` 到独立 QThread（worker 线程执行循环），**全部 HardwareManager 调用经 `InMainThread` 辅助用 `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` 回主线程执行**，与 PollTick 串行避免数据竞争；`RunSequence` 内 `invokeMethod("StartExecution", QueuedConnection)` 排队到 worker 线程。主线程只短暂执行硬件操作，UI 不卡（S08 已验）。
 - **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=打开取 `GetLimitMax`/闭合取 `GetLimitMin`。
 - **中断语义**：`cancel_` 原子标志 + 等待循环（`WaitForCancelOrTime`/`WaitForAxes`/`WaitForStep`）20ms 轮询退出 → `ExecuteActions` 检测后发 `interrupted("用户停止")`。
 - **参数来源**：`ReloadFromConfig()` 从 config 实时读 `kinematics.links.*`/`tcpCalibration.*`/`axes.*.limit*` 喂入 Kinematics/CoordTransform，与 ConfigPage 编辑一致。
 - **自测**：临时驱动 17/17 通过（2026-08-20，仿真 Sim 全家桶）：S01 完整方案 5 动作、S03 Vision 闭环（基座 8.6,-0.8,55.0 conf=1.00）、S04 单步 5 次 NextStep、S05 Stop、S06 EmergencyStop、S07 未使能拒绝、S08 线程不卡。测试驱动已清理。
+- **单动作独立执行（2026-08-31，编译+Sim 冒烟通过，GUI 交互待真机验证）**：`RunSingleAction` 镜像 `RunSequence` 模式（running 门禁 → 深拷贝 scheme → `invokeMethod("StartSingleExecution", QueuedConnection)`）；`StartSingleExecution` 镜像 `ExecuteActions`（cancel 区分 interrupted/errorOccurred；**失败双发 errorOccurred 为既有兜底语义**——ExecuteAction 内部多数失败路径已发，外层再发覆盖 MoveAbs 静默失败路径，勿"优化"掉）。UI：ProcessPage 动作列表按钮行「下移」后绿色运行图标按钮（40×32，`makeActionIcon(5)` 白色实心播放三角 + tooltip），`OnRunSelectedAction` 启动前 `ResetStepSession()` 清单步会话 + `ReloadFromConfig()`，拒绝路径（未使能/运行中/越界）立即恢复按钮；singleActionFinished/interrupted/errorOccurred 三信号恢复按钮。实施前对原计划逐条代码核验：8 处修正全部属实，另补 1 处硬伤（ProcessPage.h 缺 `class QPushButton;` 前置声明）。
+- **已知改进项（2026-08-31 用户指出）**：`MoveToPoint` 目前一律用 `InverseSmart`（双解就近）求解，**无视示教点 `posture` 字段**；且示教读取 `OnTeachRead` **硬编码 `posture=elbow_up`**（未按实际 J2 符号记录）。应一并改进：① 示教按 `cur.j2` 符号记录 posture（≥0→elbow_up / <0→elbow_down）；② 执行按 posture 用 `Inverse(target, out, elbowUp)` 确定性解，`InverseSmart` 仅作 posture 缺失/未知兜底。触发背景：点_002 报 `IK(Smart)` 时用户质疑"elbow 已确认为何还走 ik smart"（当时直接根因是 R 限位域不一致，见 XRServo 节，但该改进仍必要）。
+- **动作运行速度实时生效（2026-08-31 修复）**：ProcessPage 滑条/输入框 `valueChanged` 经 `ApplySpeedPercentToCurrentAction(v)` **实时写回当前动作 `speedPercent`**（改即生效，不必先点「保存动作」；落盘仍由保存按钮负责）。曾只有 `OnSaveAction` 才写 action.speedPercent，拖动滑条后直接执行读旧值（用户反馈"速度没变化"）。`ExecuteMove` 侧 `speedScale = qBound(0.01, speedPercent/100, 1.0)` 链路本就正确。
 
 **下一步**：**UI 接线 + 参数接入（阶段 2 轮 B，T7–T10）**——MainWindow 创建 SequenceWorker+QThread（T7）；AutoRunPage 5 按钮接线（启动=运行页内方案下拉选中方案 / 复位=HomeAll / 停止=Stop / 初始化=Initialize / 急停=EmergencyStop）+ 坐标面板随 stateUpdated 实时 FK 刷新 + 日志框接 logMessage + 两相机框接 frameReady（T8）；ProcessPage「示教读取」用当前关节 FK 填充点位（T9）；ConfigPage 运动学/TCP 标定参数喂入 Kinematics::SetParams/SetTCP/CoordTransform（T10）。随后 AutoRunPage 两个相机占位框接入 `frameReady` 实时画面；奥比中光（Orbbec）真实相机 SDK 实现 `ICamera`；真机电机轴（轴1 J1 / 轴3 Z / 轴5 夹爪）剩余手动功能测试（Z/夹爪 `calibrationPending` 每圈脉冲标定、Go 定位精度、遥测、拔网线异常）。自动流程中 `PickCycleController` 视觉抓取单周期模板后续作为 SequenceWorker Vision 动作的委托实现。
 

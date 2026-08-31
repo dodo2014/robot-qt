@@ -27,5 +27,8 @@ logs/
 # vcpkg (ignore the whole directory)
 vcpkg/
 
+# WorkBuddy private memory (agent workspace notes, not project source)
+.workbuddy/
+
 # Config override
 config/config.local.json

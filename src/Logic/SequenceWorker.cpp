@@ -161,6 +161,40 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme)
     return true;
 }
 
+bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
+{
+    if (impl_->running.load()) {
+        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: already running");
+        return false;
+    }
+    if (actionIndex < 0 || actionIndex >= static_cast<int>(scheme.actions.size())) {
+        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: index out of range");
+        return false;
+    }
+    // 使能门禁：与 RunSequence 同一安全门禁（先使能再运动）
+    if (!InMainThread([] { return HardwareManager::instance().IsGlobalEnabled(); })) {
+        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: axes not enabled");
+        emit errorOccurred(QStringLiteral("轴未使能，请先手动使能"));
+        return false;
+    }
+
+    impl_->cancel.store(false);
+    impl_->stepGo.store(false);
+    impl_->scheme = scheme;
+    impl_->currentIndex = actionIndex;
+    impl_->stepMode.store(false);   // 单动作执行与单步会话互斥（UI 侧另清 m_stepActive）
+    impl_->running.store(true);
+
+    emit stateChanged(QStringLiteral("执行选中动作"));
+    SPDLOG_INFO("[SequenceWorker] RunSingleAction: [{}] {}", actionIndex,
+                scheme.actions[actionIndex].name.toStdString());
+
+    // 排队到 worker 线程执行（同 RunSequence 模式）
+    QMetaObject::invokeMethod(this, "StartSingleExecution",
+                              Qt::QueuedConnection, Q_ARG(int, actionIndex));
+    return true;
+}
+
 void SequenceWorker::Stop()
 {
     if (!impl_->running.load()) return;
@@ -200,6 +234,35 @@ void SequenceWorker::StartExecution()
         SPDLOG_INFO("[SequenceWorker] Scheme finished: {}", impl_->scheme.schemeName.toStdString());
         emit schemeFinished();
     }
+    impl_->running.store(false);
+    emit stateChanged(QStringLiteral("空闲"));
+}
+
+void SequenceWorker::StartSingleExecution(int index)
+{
+    // 防御：调用链（RunSingleAction 已校验）保证合法，此处兜底防越界 UB
+    if (index < 0 || index >= static_cast<int>(impl_->scheme.actions.size())) {
+        SPDLOG_WARN("[SequenceWorker] StartSingleExecution: index out of range {}", index);
+        impl_->running.store(false);
+        emit stateChanged(QStringLiteral("空闲"));
+        return;
+    }
+    const auto& action = impl_->scheme.actions[index];
+    emit actionStarted(index, action.name);
+    SPDLOG_INFO("[SequenceWorker] Single action {}: {}", index, action.name.toStdString());
+
+    bool ok = ExecuteAction(action, index);
+    if (!ok) {
+        // 注意：ExecuteAction 内部多数失败路径（IK 失败/视觉未检出/各超时）已发 errorOccurred，
+        // 此处再发一次为兜底语义（覆盖 MoveAbs 静默失败路径），与 ExecuteActions 行为一致。
+        if (impl_->cancel.load())
+            emit interrupted(QStringLiteral("用户停止"));
+        else
+            emit errorOccurred(action.name);
+    } else {
+        emit actionFinished(index, action.name);
+    }
+    emit singleActionFinished(index);
     impl_->running.store(false);
     emit stateChanged(QStringLiteral("空闲"));
 }

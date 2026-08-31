@@ -1,7 +1,7 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-08-28T17:30:32.618+08:00
+最后更新时间：2026-08-31T13:08:27.704+08:00
 
 # 项目概述
 
@@ -30,6 +30,12 @@
 - 阶段 5 测试准备：确认 SequenceWorker 已接线（T7-T10 完成）；AutoRunPage 方案下拉/5 按钮/坐标面板 FK/双相机 frameReady 已接；ProcessPage 单步执行 + 就近停止按钮已接；ManualControlPage 急停改由 MainWindow 顶栏全局急停驱动。
 - 测试流程（用户 2026-08-28 启动）：先单步执行验证各动作（Move/Vision/Extrude/Delay/Gripper）逐条正确 → 再选方案做完整自动运行 → 观察到位精度/坐标刷新/异常中断（停止/急停）行为。
 - 阶段 5 核心关注点：单步执行按钮（ProcessPage）与就近停止按钮（SequenceWorker::Stop）联动；自动运行启动门禁（未使能拒绝）；急停后需重新手动使能才能继续。
+
+# 单动作独立执行（RunSingleAction）
+
+- 用户 2026-08-28 提出：除单步执行外，希望选中流程动作列表中的某个动作单独执行一次。
+- 2026-08-31 已实施：SequenceWorker 新增 RunSingleAction/StartSingleExecution/singleActionFinished（镜像 RunSequence 模式：running 门禁互斥 + InMainThread 使能门禁 + QueuedConnection 派发，与单步/整方案互斥）；ProcessPage 动作列表下方「下移」按钮后新增绿色运行图标按钮（仅图标 + tooltip「执行选中动作」），未选动作弹窗提示、拒绝路径立即恢复按钮、启动前清单步会话。
+- 实施前对原计划（quantum-vortex-newton.md）逐条核验：8 处修正全部属实，另补 1 处硬伤（ProcessPage.h 缺 class QPushButton; 前置声明）。Debug+Release 编译 + Sim 冒烟通过（TEST_RECORD 已记 🟢），GUI 点击交互待真机验证。
 
 # 回零系列 bug 根因与修复方案
 

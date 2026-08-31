@@ -42,6 +42,10 @@ public:
     // 启动方案执行。若已在执行返回 false。线程安全（内部排队到 worker 线程执行）。
     bool RunSequence(const SchemeData& scheme);
 
+    // 单独执行方案中某一条动作（含其全部点位），与 RunSequence 共用 running 门禁互斥。
+    // 未使能/越界/运行中拒绝返回 false（未使能会发 errorOccurred）。线程安全。
+    bool RunSingleAction(const SchemeData& scheme, int actionIndex);
+
     // 停止：取消当前动作并中断执行（安全停止，保持使能）。线程安全。
     void Stop();
 
@@ -59,6 +63,7 @@ public:
 signals:
     void actionStarted(int index, const QString& name);
     void actionFinished(int index, const QString& name);
+    void singleActionFinished(int index);
     void schemeFinished();
     void interrupted(const QString& reason);
     void errorOccurred(const QString& message);
@@ -67,6 +72,7 @@ signals:
 
 private slots:
     void StartExecution();          // worker 线程入口（QueuedConnection 调用）
+    void StartSingleExecution(int index);   // 单动作执行入口（RunSingleAction 排队调用）
 
 private:
     bool ExecuteActions();          // 逐动作执行主循环
