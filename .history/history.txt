@@ -1,7 +1,7 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-08-31T13:08:27.704+08:00
+最后更新时间：2026-09-01T09:26:54+08:00
 
 # 项目概述
 
@@ -17,7 +17,7 @@
 # Git 操作规约
 
 - 用户明确要求（2026-08-28 再次强调）：禁止自动执行 git commit/push，仅当用户明确说「提交/commit」时才执行；完成工作时最多提示「可提交」，由用户决定时机。
-- 用户于 2026-08-28 15:15 主动要求「执行提交 commit」并明确触发了一次提交。
+- 用户于 2026-08-28 15:15 与 2026-08-31 各主动触发一次提交（08-31 为 0647fbb，17 文件，覆盖当日全部修复）。
 
 # 阶段 4 重做修复与真机复测结果
 
@@ -35,7 +35,7 @@
 
 - 用户 2026-08-28 提出：除单步执行外，希望选中流程动作列表中的某个动作单独执行一次。
 - 2026-08-31 已实施：SequenceWorker 新增 RunSingleAction/StartSingleExecution/singleActionFinished（镜像 RunSequence 模式：running 门禁互斥 + InMainThread 使能门禁 + QueuedConnection 派发，与单步/整方案互斥）；ProcessPage 动作列表下方「下移」按钮后新增绿色运行图标按钮（仅图标 + tooltip「执行选中动作」），未选动作弹窗提示、拒绝路径立即恢复按钮、启动前清单步会话。
-- 实施前对原计划（quantum-vortex-newton.md）逐条核验：8 处修正全部属实，另补 1 处硬伤（ProcessPage.h 缺 class QPushButton; 前置声明）。Debug+Release 编译 + Sim 冒烟通过（TEST_RECORD 已记 🟢），GUI 点击交互待真机验证。
+- 实施前对原计划（quantum-vortex-newton.md）逐条核验：8 处修正全部属实，另补 1 处硬伤（ProcessPage.h 缺 class QPushButton; 前置声明）。Debug+Release 编译 + Sim 冒烟通过（TEST_RECORD 已记 🟢），GUI 点击交互已在 8-31 真机使用中实际执行验证。
 
 # 回零系列 bug 根因与修复方案
 
@@ -61,6 +61,7 @@
 # 真机联调进度
 
 - 阶段 1-4 已全部真机验证通过：连接使能/Home Offset、单轴点动 Go 全链路、Z 标定+运动学闭环（Go -100 钢卷尺实测精确 100mm；Z0=470/h1=175/tcpDown=130，回零 Z 显示 165mm、触桌面 0.0mm）、回零完整回归+停止/急停（2026-08-28 复测通过）。
+- 2026-08-31 真机验证通过：FK 三组摆位（伸直/正交/弯折，误差 ≤0.004mm）、J4 使能不再翻转、速度滑条随动生效、动作点间停顿修复（4 点连贯执行）。
 - J2 回零精度实测 -27.4/-27.2/-27.3（死区~1.5°+金属套松动），决定紧固后复测、暂不软件补偿；R 回零稳定 0.2° 系统性偏差暂不处理。
 - 阶段 2 遗留：J2 点动顿挫（用户决定暂不处理，专项排查从 kServoJogSendThreshold 与 FSUS_PARAM_ACCEL_SWITCH 入手）；J2 位置显示小误差（可接受）。
 - 下一步：阶段 5 SequenceWorker 方案真机验证（当前核心）→ 阶段 6-8（异常/回归/编译发布）。
@@ -117,6 +118,52 @@
 - 信号驱动状态清理：HardwareManager 新增 emergencyStopTriggered 信号；ManualControlPage/AutoRunPage 连接它做状态复位（原 OnEmergencyClicked 删除，改 OnEmergencyTriggered 槽）。
 - 用户 2026-08-28 15:15 要求「急停按钮调大一点」，顶栏圆形急停已设计为强视觉冲击大红圆钮（46px）。
 
+# 180° 角度表示三坑与执行链路修复（2026-08-31，真机验证通过）
+
+- XRServo 两个角度接口表示不同：cmd10 QUERY_ANGLE（int16，±180 回绕）与 cmd22 MONITOR（int32，0~360 宽范围），180° 边界处相差 360°，衍生三坑（均已修复并真机验证）：
+- 坑1 示教 R 角显示不一致：手动页坐标面板用 cmd22 遥测显示 180.1，示教读取经 ReadAngle(cmd10) 显示 −179.9；修复 QueryMonitor 统一 wrap 到 [−180,180]（待真机最终复测显示一致）。
+- 坑2 J4 使能自动翻转一圈（180→90→0→−90→−180 走 360° 路径）：TorqueOn 原用 SET_ANGLE(查询角 −179.8) 锁位，舵机走 359.8° 行程；修复 TorqueOn 改 CMD24 mode=1 停止保持锁定（与 Stop 同款），只锁定位不移位。
+- 坑3 动作点间停顿约 7 秒不连贯：MoveToAngle 目标 179.9 与查询角 −179.9 表示差 360° → dAngle=359.8° → interval≈7196ms 干等；修复 XRServo 新增 AlignNear(ref,target)（±360 归一），MoveToAngle/MoveAtSpeed 行程计算前对齐，interval 降到 50ms 级。
+- 速度滑条实时生效：原只「保存动作」写 speedPercent；新增 ApplySpeedPercentToCurrentAction 在 valueChanged 实时写回（改即生效）。
+- 教训：R 角度域（±180）与 config 限位域须一致——曾因示教 r=−179.9 撞 Axis_R 限位 [0,180] 被 IK 双解全拒（elbow_up 解本合法）；Axis_R 限位建议改 [−180,180]（待办）。
+
+# 运动学真机验证与 IK 边界容差（2026-08-31）
+
+- 三组真机摆位 FK 比对全部通过（误差 ≤0.004mm）：J(0,0.5,0,179.9)→x=358.68/y=1.92；J(−90,−0.1,0,180.1)→x=−0.38/y=−358.69；J(0,20.2,0,180.1)→x=345.17/y=75.92（z=165/r 均精确）。运动学标定验证完备。
+- 固化 tests/test_kinematics_check.cpp + tests/CMakeLists.txt（root CMakeLists 挂 tests 子目录，独立 target 不进主程序依赖链）：无参=内置真机摆位回归+限位内随机 FK↔IK 往返自检；fk/ik 手动查询模式；参数自动读 config；退出码 0/1 可脚本化。边界回归用例加入后 23/23 ALL PASS。
+- IK 甜甜圈边界容差 0.001→0.1mm：示教点_001 极径 358.6918mm 仅超理论最大半径 358.69mm 达 0.0018mm（显示舍入+浮点微差）被误拒（注释写"允许 1mm"但代码 0.001，注释与代码不符）。
+- 待改进：示教 posture（elbow）按 J2 符号记录 + 执行按姿态确定性 Inverse（当前示教硬编码 elbow_up、执行一律 InverseSmart）。
+
+# 强制开机回零互锁（Homing Interlock，2026-08-31）
+
+- 需求背景（Gemini 建议分析采纳 + 用户实测暴露漏洞）：开环步进断电丢坐标，未回零必须禁止绝对定位/自动运行；回零是事前防护、急停是事后处置，二者互补；JOG 点动放行用于脱困。用户实测场景：回零中途急停未完成 → 重新使能 → 手动 Go 成功运动（错误，必须拦截）。
+- 门禁矩阵实现：HardwareManager 新增 IsSystemHomed()/IsAxisHomed()/axisHomed_（无绑定轴恒 true）/homeStateChanged(bool) 信号；MoveAbs 使能门禁后加回零门禁（JOG/回零不受限）；RunSequence/RunSingleAction 加同门禁（报「系统未回零，请先一键回零」）；AutoRunPage 启动按钮初始禁用+homeStateChanged(true) 激活；ProcessPage 单步/执行选中按钮联动+槽内双保险弹窗；ManualControlPage Go 失败提示。
+- 完成判定关键设计：HomeAxis 指令下发成功≠已回零（回零异步，指令即返回、运动在后台）——首版「下发即 MarkAxisHomed」导致急停中途误判已回零；修复为完成判定基于实际到位观测：卡轴在 PollCardAxis（homingActive_ && !st.running && 过 1s 保护期）、舵机在 PollServoTelemetry（|逻辑角|≤1°）时 MarkAxisHomed；新增 AbortHoming（仅复位回零中的绑定轴，已完成轴保持）接入 EmergencyStop/DisableAll/StopAxis/StopJog。AGENTS.md 已注明勿回退为「下发即置位」。
+- 轴6（挤出）豁免：只接运动卡未接电机——AxisConfig 新增 enabled 字段（默认 true），config Axis_Extruder.enabled=false → LoadAxisConfigsFromConfig 显式 SetBinding(None)（防 AxisMap 默认表兜底），HomeAll 跳过 None 轴；接电机后 config 改回 enabled=true 即恢复，无需改代码。
+- 启动崩溃教训：enabled 豁免实现曾写在 Initialize 第 4 步（LoadAxisConfigsFromConfig）内直接写 axisHomed_[i]=true，而 axisHomed_ 第 5 步才 resize → 空 QVector 越界，启动断言崩 QList::operator[] index out of range（qlist.h:518）。**分步初始化时前序步骤禁止访问后续才 resize 的成员容器**。
+- 状态：Sim 验证通过；真机复测待做（TEST_RECORD 🟡，最高优先）：启动→使能→一键回零（5 轴）→中途急停→Go 被拒+启动/单步/执行选中全禁→重新完整回零后恢复。
+
+# Sim 冒烟测试规范（2026-08-31 定稿）
+
+- Sim 冒烟 = 就地临时改工程根 config.json（备份→SimCard/SimServo→启动 8s→恢复，try/finally 保证恢复）；标准脚本 out\smoke\sim_smoke.ps1。
+- 禁止拷贝 exe 输出目录做副本冒烟：开发机版程序硬编码 PROJECT_SOURCE_DIR 读工程根 config 与 log，副本不生效，且曾误生成 2.1GB C 盘拷贝（已清理）。
+- 存活判定须查工程根 log/creampuff_YYYY-MM-DD.log 含 Initialize complete（Qt 断言框挂起时会假报存活）。
+
+# 构建脚本规范与 LNK1168 自动处理
+
+- Windows 编译：Git Bash 调 cmd 会因引号嵌套/MSYS2 路径转换坏 vcvars 路径，必须用 PowerShell：cmd /c "call vcvars64.bat >nul && ninja CreamPuffRobot"（在 out\build\x64-Debug 下）；Release 用根 build_release.bat。
+- bat 必须纯 ASCII（中文注释被 cmd 按 GBK 解析成乱码命令）；ps1 含中文须带 UTF-8 BOM。
+- out\smoke\build_debug.bat 与根 build_release.bat 支持 TARGET 环境变量选 target（默认 CreamPuffRobot）；内置 LNK1168 自动处理：构建日志 findstr LNK1168 → taskkill /IM CreamPuffRobot.exe /F → 等 1s 自动重编一次。
+- PowerShell 执行 git 可避开 Git Bash 偶发 DLL 初始化崩溃（0xC0000142）。
+- Git Bash 的 /tmp 路径直接传给 Windows python.exe 会被解析为 d:\tmp（2026-09-01 踩坑）：脚本路径须用 $(cygpath -w /tmp/xxx.py) 转换后再传。
+
+# 项目历史压缩机制（WorkBuddy 版，2026-08-31 建立）
+
+- automation project-history-compress（每天 08:30）压缩项目历史到 .history/history.txt，与 OpenCode 插件 project-history.js 同文件同格式互通（pending.ndjson/history.txt/state.json/lock，NDJSON 最新在前，压缩后顶部插 marker 分隔）。
+- 双内容源：源 A .history/pending.ndjson（会话提问增量流）；源 B .workbuddy/memory/YYYY-MM-DD.md 与 doc/worklog/YYYY-MM-DD.md（压缩以源 B 为主——WorkBuddy 侧实质工作全落在日志，2026-08-31 全天工作曾因只看 pending 丢失，09-01 补录整合）。state.json 记 lastSyncedLogDate 做日志增量同步。
+- 2026-09-01 补救压缩完成（workbuddy-manual）：history.txt 新增 6 节 + 更新 4 处既有节，pending 补录 15 条 8-31 关键提问；automation prompt 已确认含双内容源与 lastSyncedLogDate 水位的修正版。
+- 采集约定：会话中有长期价值的用户提问须当场 prepend 到 pending.ndjson（2026-08-31 曾漏采导致历史缺失，此为教训，必须当场执行不可事后补）；寒暄/纯命令不记。
+
 # 持续测试机制与工作规约
 
 - 防回归硬规约（注入 AGENTS.md）：① 测试台账制度（根目录 TEST_RECORD.md）；② 强制记账法则（每次彻底解决 Bug 或完成新功能后必须追加一行：模块、测试场景/动作、期望结果、状态🟢 已通过、踩坑记录/备注）；③ 修改前验算（大范围重构/核心逻辑修改前先通读 TEST_RECORD.md 推演回归风险）。
@@ -139,3 +186,5 @@
 - 多模型协作下 config.json 等关键文件被覆盖风险长期存在，修改前需核对已标定参数完整性（如 Axis_Z home 参数），变更后须真机复测回零。
 - 计划文档中涉及硬件手册的具体信息需带用户确认（2026-08-27 用户要求）。
 - 阶段 5 单步执行已前置为首位测试，自动运行测试在其后——执行中如暴露新边界（如单步与全局急停交互）需补充用例。
+- 回零互锁真机复测（最高优先，TEST_RECORD 🟡）：急停中断回零后 Go/启动/单步/执行选中全禁，重新完整回零后恢复。
+- 示教 R 角 180° 边界显示一致性最终复测；示教 posture/elbow 确定性执行改进；Axis_R 限位建议改 [−180,180]。

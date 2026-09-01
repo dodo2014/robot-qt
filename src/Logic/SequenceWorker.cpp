@@ -145,6 +145,12 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme)
         emit errorOccurred(QStringLiteral("轴未使能，请先手动使能"));
         return false;
     }
+    // 回零互锁：开环步进断电丢坐标，未回零禁止自动运行（第二道安全门禁）
+    if (!InMainThread([] { return HardwareManager::instance().IsSystemHomed(); })) {
+        SPDLOG_WARN("[SequenceWorker] RunSequence rejected: system not homed");
+        emit errorOccurred(QStringLiteral("系统未回零，请先一键回零"));
+        return false;
+    }
 
     impl_->cancel.store(false);
     impl_->stepGo.store(false);
@@ -175,6 +181,12 @@ bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
     if (!InMainThread([] { return HardwareManager::instance().IsGlobalEnabled(); })) {
         SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: axes not enabled");
         emit errorOccurred(QStringLiteral("轴未使能，请先手动使能"));
+        return false;
+    }
+    // 回零互锁：与 RunSequence 同一安全门禁（未回零禁止绝对运动）
+    if (!InMainThread([] { return HardwareManager::instance().IsSystemHomed(); })) {
+        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: system not homed");
+        emit errorOccurred(QStringLiteral("系统未回零，请先一键回零"));
         return false;
     }
 

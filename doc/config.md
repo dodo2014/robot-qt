@@ -128,6 +128,7 @@ tcpCalibration
 | `name` | string | 轴名称（独立命名） |
 | `hardwareType` | int | 0=运动控制卡, 1=串口总线舵机 |
 | `portId` | int | 物理端口 ID |
+| `enabled` | bool | 硬件启用标志（默认 `true`）。`false`=未接硬件（如只接运动卡未接电机）→ 初始化绑定为 None：**不参与使能/回零互锁/运动判定**（`axisHomed_` 恒 true、`IsGlobalEnabled`/`HomeAll` 跳过）。接入电机后改回 `true` 即恢复参与（2026-08-31 新增，回零互锁配套；当前 `Axis_Extruder=false`） |
 | `axisType` | string | `"rotation"`(角度°)/`"linear"`(直线 mm)，仅卡轴（舵机轴无此字段）。换算用 360° 还是 导程×减速比 |
 | `direction` | int | 0=正向 Normal, 1=反向 Inverted |
 | `maxSpeed` | double | 最大速度，单位按轴类型：旋转轴 `°/s`、直线轴 `mm/s`（卡轴经 `AccelToPulse`/`SpeedToPulse` 换算下发） |
@@ -172,7 +173,7 @@ tcpCalibration
 | `Axis_Z` | 0 卡 | 1 | 0 | linear | 13.0 | 21.0 | 50.0 | 25600 / 1 / 0.5 / lead5（皮带20:40 + 丝杆导程5mm，10240 脉冲/mm；2026-08-26 阶段 3 已真机标定，`calibrationPending:false`） |
 | `Axis_R` | 1 舵机 | 1 | 0 | – | 55.0 | 180.0 | 240.0 | minPulse500 / maxPulse2500 / minAngle0 / maxAngle180 |
 | `Axis_Gripper` | 0 卡 | 3 | 0 | linear | 1.0 | 10.0 | 50.0 | 40000 / 1 / 1 / lead2（驱动器 XINJE DP3L1-224 拨码 SW5-SW8 全 OFF=40000 Pulse/rev，已标定；lead 暂定 2mm） |
-| `Axis_Extruder` | 0 卡 | 2 | 0 | rotation | 2.0 | 20.0 | 100.0 | 32000 / 1 / 1 / lead10 |
+| `Axis_Extruder` | 0 卡 | 2 | 0 | rotation | 2.0 | 20.0 | 100.0 | 32000 / 1 / 1 / lead10（**`enabled=false`：只接运动卡未接电机，暂不参与使能/回零/运动**） |
 
 > transmission 列格式（卡轴）：`encoderResolution / microSteps / gearRatio / lead`。
 
@@ -206,9 +207,9 @@ homeLocatVel(1°/s) = 1 × 7111.11 / 1000 ≈ 7.1  Pulse/ms
 | `Axis_Z` | [3] 轴3 (Z轴) | 运动控制卡 | 2 | -165 | 0 | 13.0 | homeDir=1, homeSns=-1, homeRapidVel=82.4, homeLocatVel=20.48, homeBackDis=5120, homeMaxDis=2,500,000 |
 | `Axis_R` | [4] 轴4 (翻转 R) | 串口总线舵机 | 3 | 0 | 180 | 55.0 | – |
 | `Axis_Gripper` | [5] 轴5 (夹爪) | 运动控制卡 | 4 | -5 | 0 | 1.0 | homeDir=1, homeSns=0, homeRapidVel=20.0, homeLocatVel=10.0, homeBackDis=0, homeMaxDis=600,000 |
-| `Axis_Extruder` | [6] 轴6 (挤出) | 运动控制卡 | 5 | 0 | 100 | 2.0 | – |
+| `Axis_Extruder` | [6] 轴6 (挤出) | 运动控制卡 | 5 | 0 | 100 | 2.0 | –（`enabled=false` 未接电机，不参与回零） |
 
-> `Axis_J1`/`Axis_Z`/`Axis_Gripper` 三个卡轴已配置回零参数（`homeDir/homeSns/homeRapidVel/homeLocatVel/homeBackDis/homeMaxDis`）；`Axis_Extruder` 未配置，使用代码默认值（`homeDir=1`、`homeSns=-1`、`homeRapidVel=5.0`、`homeLocatVel=1.0`、`homeBackDis=0`、`homeMaxDis=0`）。**所有卡轴 `homeMaxDis` 均应设非零值**（见字段说明）。
+> `Axis_J1`/`Axis_Z`/`Axis_Gripper` 三个卡轴已配置回零参数（`homeDir/homeSns/homeRapidVel/homeLocatVel/homeBackDis/homeMaxDis`）；`Axis_Extruder` 未配置，使用代码默认值（`homeDir=1`、`homeSns=-1`、`homeRapidVel=5.0`、`homeLocatVel=1.0`、`homeBackDis=0`、`homeMaxDis=0`），且当前 `enabled=false`（未接电机）**不参与回零互锁**。**所有卡轴 `homeMaxDis` 均应设非零值**（见字段说明）。
 
 ---
 

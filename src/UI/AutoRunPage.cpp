@@ -208,6 +208,8 @@ void AutoRunPage::SetupUI()
 
         if (b.text.contains("启动")) {
             m_btnStart = btn;
+            // 回零互锁：未回零禁止启动自动运行（开环步进断电丢坐标），回零完成后激活
+            m_btnStart->setEnabled(HardwareManager::instance().IsSystemHomed());
             connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartClicked);
         }
         else if (b.text.contains("复位"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnResetClicked);
@@ -221,6 +223,11 @@ void AutoRunPage::SetupUI()
     // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号做状态恢复
     connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
             this, &AutoRunPage::OnEmergencyTriggered);
+    // 回零互锁联动：全轴回零成功后激活启动按钮（HomeAll 成功发 homeStateChanged(true)）
+    connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
+            this, [this](bool homed) {
+        if (m_btnStart) m_btnStart->setEnabled(homed);
+    });
 
     // 底部提示
     m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));

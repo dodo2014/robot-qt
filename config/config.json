@@ -1,9 +1,10 @@
-{
+﻿{
     "$schema": "CreamPuffRobot configuration schema",
     "axes": {
         "Axis_Extruder": {
             "axisType": "rotation",
             "direction": 0,
+            "enabled": false,
             "hardwareType": 0,
             "homeOffset": 0.0,
             "jogSpeed": 2.0,

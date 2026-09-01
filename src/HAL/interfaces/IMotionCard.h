@@ -38,6 +38,8 @@ struct AxisConfig
     double  limitMax      = 180.0;
     bool    inverted      = false;
     double  pulsesPerUnit = 100.0;
+    bool    enabled       = true;   // 硬件启用：false=未接硬件（如只接卡未接电机），视为无绑定
+                                    // （不参与使能/回零/运动判定，axisHomed_ 恒 true）
 
     // 单位换算参数（由 HardwareManager 从 config 喂入）
     int     hardwareType  = 0;     // 0=运动控制卡(脉冲), 1=串口总线舵机

@@ -61,6 +61,14 @@ public:
     // 所有已配置的卡轴 + 舵机轴均已使能（供"一键回零"等全局操作判断）
     bool IsGlobalEnabled() const;
 
+    // ---- 回零互锁（Homing Interlock，2026-08-31 新增）----
+    // 开环步进（J1/Z/夹爪/挤出）断电丢失绝对坐标：未回零前禁止任何绝对定位/自动运行，
+    // 否则软件"以为"的坐标与机械实际位置不符，可能撞机（急停是事后补救，回零才是事前保障）。
+    // 放行集合：JOG 点动（脱困盲开）、使能/断使能、清报警、回零本身。
+    // 状态语义：程序实例内所有已绑定轴均回零成功后置 true，之后保持（断使能/急停不丢坐标）。
+    bool IsAxisHomed(LogicalAxis axis) const;
+    bool IsSystemHomed() const;
+
     // 轴是否"运动中/忙"（Go 发出去到估计到位之间）。UI 据此置灰 Go 按钮，
     // 防止多次点击导致重复打断与指令覆盖（曾引发舵机突然加速）。
     bool IsAxisBusy(LogicalAxis axis) const;
@@ -120,6 +128,8 @@ signals:
     // 急停已触发（EmergencyStop 内部发出）：各页面据此做自身状态清理
     // （手动页清状态点数组、自动页恢复启动按钮与状态标签），急停行为单点化
     void emergencyStopTriggered();
+    // 回零互锁状态变化（全轴回零成功 → true；构造/重初始化 → false），UI 据此启用/禁用绝对运动入口
+    void homeStateChanged(bool homed);
     // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
     void frameReady(const CameraFrame& frame);
 
@@ -137,6 +147,10 @@ private:
     // P1 拆分：PollTick 的两个子步骤（纯函数重排，无行为变化）
     void PollCardAxis();        // 卡轴：状态映射/软限位拦截/回零完成/报警边沿/异常签名
     void PollServoTelemetry();  // 舵机：离线降频遥测 + 热重连退避
+    // 回零互锁：标记本轴回零完成，全部完成后置系统 homed 并发 homeStateChanged
+    void MarkAxisHomed(int ai);
+    // 回零互锁：回零被打断（急停/断使能/手动停止）→ 回零中的绑定轴 homed 复位（部分完成不算完成）
+    void AbortHoming(int ai);
 
     QTimer* pollTimer_ = nullptr;
     QTimer* jogTimer_  = nullptr;
@@ -200,6 +214,10 @@ private:
     // 每个逻辑轴的使能状态（先使能再运动的安全门禁唯一事实源）。
     // 仅 EnableAll() 手动置 true；DisableAll()/EmergencyStop()/热重连置 false。
     QVector<bool> axisEnabled_;
+
+    // 每个逻辑轴的回零完成状态（回零互锁第二道门禁）。
+    // 无硬件绑定轴初始 true（无需回零）；HomeAxis/HomeAll 成功置 true；构造/重初始化复位。
+    QVector<bool> axisHomed_;
 
     // 每个逻辑轴的"忙"截止时间戳(ms，0=空闲)。Go/点动发出时更新为 now+估计到位时间，
     // PollTick 里到达后复位并发 axisMoveFinished。用于 UI 置灰 Go 按钮防连点。

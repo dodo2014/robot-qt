@@ -82,6 +82,7 @@ private:
 
     SequenceWorker* m_worker = nullptr;
     QPushButton* m_runSelectedBtn = nullptr;
+    QPushButton* m_stepBtn = nullptr;
     bool m_stepActive = false;
     void ResetStepSession();
 };

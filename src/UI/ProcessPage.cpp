@@ -163,10 +163,10 @@ void ProcessPage::SetupUI()
     deleteSchemeBtn->setCursor(Qt::PointingHandCursor);
     connect(deleteSchemeBtn, &QPushButton::clicked, this, &ProcessPage::OnDeleteScheme);
 
-    auto* stepBtn = new QPushButton(QStringLiteral("单步执行"));
-    stepBtn->setStyleSheet(makeBtnStyle("#8f7f3f", "#9f8f4f"));
-    stepBtn->setCursor(Qt::PointingHandCursor);
-    connect(stepBtn, &QPushButton::clicked, this, &ProcessPage::OnStepExecute);
+    m_stepBtn = new QPushButton(QStringLiteral("单步执行"));
+    m_stepBtn->setStyleSheet(makeBtnStyle("#8f7f3f", "#9f8f4f"));
+    m_stepBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_stepBtn, &QPushButton::clicked, this, &ProcessPage::OnStepExecute);
 
     // 单步调试的就地"刹车"：防走错轨迹时瞬间停止（后续接 SequenceWorker::Stop()，
     // 届时由 MainWindow 注入 worker；全局急停仍在 MainWindow 顶栏，与此业务停止区分）
@@ -185,7 +185,7 @@ void ProcessPage::SetupUI()
     topLayout->addWidget(m_schemeCombo);
     topLayout->addWidget(deleteSchemeBtn);
     topLayout->addWidget(confirmBtn);
-    topLayout->addWidget(stepBtn);
+    topLayout->addWidget(m_stepBtn);
     topLayout->addWidget(stopBtn);
     topLayout->addStretch();
 
@@ -760,6 +760,17 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
     // 顶栏全局急停也清单步会话（断使能 + worker 中断后需重置状态）
     connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
             this, &ProcessPage::ResetStepSession);
+    // 回零互锁联动：未回零禁用单步/执行选中（开环步进断电丢坐标），全轴回零后激活。
+    // 注：执行选中按钮执行中禁用由 singleActionFinished/interrupted/errorOccurred 恢复，
+    // 此处仅在 homed 状态变化时设置，不与执行中禁用冲突（执行中 homed 恒 true）。
+    const bool homed = HardwareManager::instance().IsSystemHomed();
+    if (m_stepBtn) m_stepBtn->setEnabled(homed);
+    if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(homed);
+    connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
+            this, [this](bool h) {
+        if (m_stepBtn) m_stepBtn->setEnabled(h);
+        if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(h);
+    });
     // 「执行选中动作」按钮复位：单动作结束/中断/出错三路径均恢复（含停止按钮 → interrupted 路径）
     connect(m_worker, &SequenceWorker::singleActionFinished, this, [this] {
         if (m_runSelectedBtn) m_runSelectedBtn->setEnabled(true);
@@ -797,6 +808,12 @@ void ProcessPage::OnStepExecute()
         SPDLOG_WARN("[Process] 单步执行：未使能，拒绝（请先手动使能所有轴）");
         return;
     }
+    // 回零互锁（双保险，按钮联动之外兜底）：未回零禁止单步自动运动
+    if (!HardwareManager::instance().IsSystemHomed()) {
+        SPDLOG_WARN("[Process] 单步执行：系统未回零，拒绝（请先一键回零）");
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("系统未回零，请先执行一键回零"));
+        return;
+    }
     if (m_currentSchemeIdx < 0) {
         SPDLOG_WARN("[Process] 单步执行：未选择方案");
         return;
@@ -821,6 +838,12 @@ void ProcessPage::OnRunSelectedAction()
 {
     if (!m_worker) {
         SPDLOG_WARN("[Process] 执行选中动作：引擎未初始化");
+        return;
+    }
+    // 回零互锁（双保险，按钮联动之外兜底）：未回零禁止单动作自动运动
+    if (!HardwareManager::instance().IsSystemHomed()) {
+        SPDLOG_WARN("[Process] 执行选中动作：系统未回零，拒绝（请先一键回零）");
+        QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("系统未回零，请先执行一键回零"));
         return;
     }
     if (m_currentSchemeIdx < 0) {

@@ -16,7 +16,7 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
   ```
 - **Run**: `out\build\x64-Debug\CreamPuffRobot.exe`
 - **Release**: root `build_release.bat` (relocatable via `%~dp0`, ASCII-only; builds Release + one-click packaging)
-- **用户实际运行 Debug 版**（真机验证用 `out\build\x64-Debug\CreamPuffRobot.exe`）。改动代码后**务必同时编译 Debug + Release**，否则用户拿到的 exe 不含修复。编译前若 `LNK1168 无法写入 exe`，先结束正在运行的 `CreamPuffRobot.exe` 进程。CLI 编译（无需开 VS）：先 `cmd /c "call vcvars64.bat && ninja CreamPuffRobot"`（vcvars 在 `D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\`，Debug 用 VS 自带 ninja，Release 用 `D:\Qt\Tools\Ninja\ninja.exe`）。
+- **用户实际运行 Debug 版**（真机验证用 `out\build\x64-Debug\CreamPuffRobot.exe`）。改动代码后**务必同时编译 Debug + Release**，否则用户拿到的 exe 不含修复。编译前若 `LNK1168 无法写入 exe`，先结束正在运行的 `CreamPuffRobot.exe` 进程——**`out\smoke\build_debug.bat` 与根 `build_release.bat` 已内置 LNK1168 自动处理**（检测到 LNK1168 → `taskkill /IM CreamPuffRobot.exe /F` → 等 1s → 自动重编一次，无需手动干预）。CLI 编译（无需开 VS）：先 `cmd /c "call vcvars64.bat && ninja CreamPuffRobot"`（vcvars 在 `D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\`，Debug 用 VS 自带 ninja，Release 用 `D:\Qt\Tools\Ninja\ninja.exe`）。
 - **Shell 注意（2026-08-31 踩坑）**：CLI 编译须在 **PowerShell** 执行（`cmd /c "call ""...vcvars64.bat"" >nul && ninja CreamPuffRobot"`，在 out\build\x64-Debug 下）；**Git Bash 直接调 `cmd //c` 会因引号嵌套/MSYS2 路径转换坏掉 vcvars 路径**（报 `'ommunity' 不是内部或外部命令`），勿用。现成编译脚本：`out\smoke\build_debug.bat`（可经 PowerShell `&` 调用）。**`.bat` 文件必须纯 ASCII**（含中文注释会被 cmd 按 GBK 解析成乱码命令，报 `'橀噺' 不是内部或外部命令`）；`.ps1` 若含中文须带 UTF-8 BOM（PowerShell 5.1 无 BOM 按 ANSI 解析）。
 
 ## 项目记忆与日志（三套，勿混用）
@@ -229,6 +229,14 @@ HAL 多品牌硬件接入全部完成：
   - **断使能/急停先停止运动中**：`DisableAll`/`EmergencyStop` 先 `jogTimer_->stop()` + `StopAll`/`EmergencyStop` 再断使能，避免「点动中断使能后仍运动」。
   - **门禁位置**：`MoveAbs`/`MoveJog`/`HomeAxis`/`HomeAll` 入口（单点拦截，UI 和未来自动流程统一走此门面）。`PickCycleController::StartCycle`/`ExecuteOneShot` 入口加 `IsGlobalEnabled` 检查。UI 状态灯改为读 `IsAxisEnabled`（不再用 servo online 冒充使能）。
   - **热重连后**：舵机扭矩归零，对应轴使能标志复位，需重新手动使能。
+
+- **回零互锁（Homing Interlock，2026-08-31 新增，第二道安全门禁）**：J1/Z/夹爪/挤出为开环步进，**断电丢失绝对坐标**——未回零前软件"以为"的坐标与机械实际不符，发绝对定位可能撞机（急停是事后补救，回零是事前保障）。实现：
+  - **状态**：`HardwareManager::IsSystemHomed()`/`IsAxisHomed(axis)` + `axisHomed_`（无硬件绑定轴恒 true）+ 信号 `homeStateChanged(bool)`。程序实例内**全轴回零成功后置 true 并保持**（断使能/急停不丢坐标不清位）。
+  - **未接硬件轴豁免（`AxisConfig.enabled=false`）**：config `axes.Axis_X.enabled=false`（未接电机，如轴6 只接卡）→ 初始化 `SetBinding(None)`（显式覆盖，防 AxisMap 默认表兜底回 Card）→ 绑定后 `axisHomed_[i]=true` 同步（构造时按默认表置 false，须纠正）→ 不参与回零互锁/使能判定（`IsGlobalEnabled` 本就跳过 None）。`HomeAll` 跳过 None 轴。接电机后 config 改回 `enabled=true` 即恢复参与。
+  - **完成判定（2026-08-31 修正，勿回退为"下发即置位"）**：`HomeAxis` 只是**下发**回零指令（卡轴/舵机异步运动），**成功下发不置 homed**，只置 `homingActive_` + `homeStartedMs_`。置位点必须在**轴实际到位观测**：卡轴 = `PollCardAxis` 检测 `homingActive_ && !st.running && 过 1s 保护期`（回零真正结束）→ `MarkAxisHomed`；**舵机 = `PollServoTelemetry` 检测 `homingActive_ && |机械角|≤1°`**（`MarkAxisHomed`）。否则回零中途急停会被误判已回零 → 系统未回零却放行绝对定位（曾真机复现：一键回零中途急停 → Go 成功运动）。**⚠ 舵机判定必须用机械角，绝不能用逻辑角（2026-09-01 真机踩坑）**：`HomeAxis` 下发给舵机的是 `MoveToAngle(0.0)` 即**机械角 0**；`ReadTelemetry()` 原始 `angleDeg` 即为机械角，而 `toLogicalAngle` 会减 `homeOffset`（J2 offset=28）→ 逻辑角≈**−28°**，`|逻辑角|≤1°` 永不满足 → **J2（axis1）永不 MarkAxisHomed → `IsSystemHomed()` 恒 false → 一键回零完成后 Go 仍被拒「系统未回零」**（日志实证 axis1 全程无 `home done`，而 axis0/2/4/R 均有）。UI 推送仍用逻辑角副本（toLogicalAngle 包一层再 push）；R 轴 offset=0 两种判定等价不受影响。**打断复位**：`AbortHoming(ai)`（回零被打断 → 回零中的绑定轴 homed 复位 false，部分完成不算完成，须重新回零；已回零完成轴保持）接入 `EmergencyStop`/`DisableAll`/`StopAxis`/`StopJog`。
+  - **拦截（`MoveAbs` 入口，使能门禁之后）**：未回零拒绝绝对定位（`MoveAbs rejected: system not homed`）。**JOG 点动（MoveJog）不设限**（供操作员脱困盲开）；回零本身（HomeAxis/HomeAll）不受限。
+  - **引擎**：`RunSequence`/`RunSingleAction` 使能检查后加 `IsSystemHomed` → `errorOccurred("系统未回零，请先一键回零")`。
+  - **UI 联动**：AutoRunPage 启动按钮初始禁用 + `homeStateChanged(true)` 激活；ProcessPage 单步（`m_stepBtn`）/执行选中按钮联动 + 两槽内双保险弹窗；ManualControlPage Go 失败提示「系统未回零，禁止绝对定位！请先执行一键回零（点动可脱困）」。
 
 - **真机 J1 换算/方向/回零/按钮门禁（已完成并真机验证）**：J1 驱动器 25600 Pulse/rev + 谐波 1:100 → rotation `gearRatio=0.01`（`AxisConverter` 补除 gearRatio）；`inverted` 统一逻辑坐标（下发+回读同步取反）；软限位校验坐标系修正（`MoveJog` 改用逻辑方向 `direction` 而非物理方向 `effDir`，修复 inverted 轴上边界误拦/反向放行）。回零通过三轮根因定位后完整修复：(1) `MC_HomeSns` 位掩码 bug（曾永远传 0x1 导致 homeSns=0/1 行为一致，已改为读-改-写单 bit）；(2) `ulHomeMaxDis` 设非零值→卡实际搜索（部分固件 0="不搜"）；(3) **PollTick 软限位误杀回零**——软限位 0-90° 且位置=0 时 `position<=lo`→`st.running`→`StopJog` 终止回零，修复为 `!homingActive_[i]` 门禁。回零速度配置化（`homeRapidVel/homeLocatVel/homeBackDis/homeMaxDis`，Pulse/ms 或 Pulse，`homeMaxDis` 由 config 驱动替代曾硬编码的 4000000）。`MotorStatus` 增 `homeSwitch`/`homeFail` 诊断位。回零动作到位、数值归零。
 

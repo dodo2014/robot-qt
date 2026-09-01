@@ -575,7 +575,9 @@ void ManualControlPage::OnGoClicked(int axis)
             RefreshStatusDot(axis);
             RefreshSoftLimitHint();
         } else {
-            if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
+            if (!HardwareManager::instance().IsSystemHomed())
+                SetHint(QStringLiteral("系统未回零，禁止绝对定位！请先执行一键回零（点动可脱困）"), "#e0a520");
+            else if (!HardwareManager::instance().IsAxisEnabled(static_cast<LogicalAxis>(axis)))
                 SetHint(QStringLiteral("请先执行全局轴使能，再进行移动"), "#e0a520");
             else if (axis < alarmState_.size() && alarmState_[axis])
                 SetHint(QStringLiteral("轴%1 处于报警状态，禁止移动").arg(axis + 1), "#e0a520");

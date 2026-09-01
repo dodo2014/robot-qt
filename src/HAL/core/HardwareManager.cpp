@@ -214,6 +214,13 @@ bool HardwareManager::Initialize()
     homeStartedMs_.fill(0, static_cast<int>(LogicalAxis::Count));
     axisBusyNotified_.fill(false, static_cast<int>(LogicalAxis::Count));
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
+    // 回零互锁：有硬件绑定（Card/Servo）的轴初始未回零；无绑定轴视为无需回零（恒 true）。
+    // 开环步进断电丢坐标，未回零禁止绝对定位/自动运行（MoveAbs 入口拦截，JOG 放行脱困）。
+    axisHomed_.fill(true, static_cast<int>(LogicalAxis::Count));
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        if (AxisMap::Get(static_cast<LogicalAxis>(i)).type != AxisBinding::Type::None)
+            axisHomed_[i] = false;
+    }
     // 用真实位置初始化软限位方向判断基线，避免首轮 delta 以 0 为基准误判（上电位置非 0 时）
     for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
         auto b = AxisMap::Get(static_cast<LogicalAxis>(i));
@@ -311,6 +318,7 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         ac.homeLocatVel = cfg.getValue<double>(base + "homeLocatVel", 1.0);
         ac.homeBackDis  = static_cast<long>(cfg.getValue<double>(base + "homeBackDis", 0.0));
         ac.homeMaxDis   = static_cast<long>(cfg.getValue<double>(base + "homeMaxDis", 0.0));
+        ac.enabled      = (cfg.getValue<int>(base + "enabled", 1) != 0);   // false=未接硬件
         // 换算公式（参考 bopai\puff\MotionController.cpp）：
         //   rotation: pulsesPerUnit = 每圈脉冲 / 360          (脉冲/度)
         //   linear:   pulsesPerUnit = 每圈脉冲 / (lead×gearRatio) (脉冲/mm)
@@ -329,10 +337,16 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         // 以 config 的 hardwareType/portId 覆盖 AxisMap 绑定：
         //   卡轴 index = BoPai 卡 axis 号，舵机 index = 总线 ID。
         // 缺省 portId 时保留 AxisMap 默认兜底值。
-        if (portId >= 0)
-            AxisMap::SetBinding(static_cast<LogicalAxis>(i),
-                                (ac.hardwareType == 1) ? AxisBinding::Type::Servo : AxisBinding::Type::Card,
-                                portId);
+        // enabled=false（未接硬件，如轴6 只接卡未接电机）→ 显式置 None 绑定：
+        // 不参与使能/回零/运动判定（axisHomed_ 恒 true、IsGlobalEnabled/HomeAll 跳过）。
+        if (portId >= 0) {
+            if (ac.enabled)
+                AxisMap::SetBinding(static_cast<LogicalAxis>(i),
+                                    (ac.hardwareType == 1) ? AxisBinding::Type::Servo : AxisBinding::Type::Card,
+                                    portId);
+            else
+                AxisMap::SetBinding(static_cast<LogicalAxis>(i), AxisBinding::Type::None, -1);
+        }
 
         auto binding = AxisMap::Get(static_cast<LogicalAxis>(i));
         if (binding.type == AxisBinding::Type::Card && motionCard_) {
@@ -359,6 +373,12 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
     // 使能门禁：未使能禁止运动（安全门禁，先使能再运动）
     if (!IsAxisEnabled(axis)) {
         SPDLOG_WARN("[HardwareManager] MoveAbs rejected: axis {} not enabled", (int)axis);
+        return false;
+    }
+    // 回零互锁：未回零禁止绝对定位（开环步进断电丢坐标，绝对位置无意义可能撞机）。
+    // JOG 点动（MoveJog）不设限，供操作员脱困盲开；回零本身（HomeAxis/HomeAll）也不走 MoveAbs。
+    if (!IsSystemHomed()) {
+        SPDLOG_WARN("[HardwareManager] MoveAbs rejected: system not homed (axis {})", (int)axis);
         return false;
     }
     // 报警门禁：轴报警状态禁止运动（停止/急停除外）
@@ -523,9 +543,10 @@ void HardwareManager::StopJog(LogicalAxis axis)
         SPDLOG_INFO("[HardwareManager] StopJog axis={}", (int)axis);
     }
     jogInProgress_ = false;
-    // 停止回零/点动 → 解除回零门禁 + 忙结束，恢复 Go 按钮
+    // 停止回零/点动 → 解除回零门禁 + 忙结束，恢复 Go 按钮。
+    // 若是回零中的轴被打断 → homed 复位（须重新回零，回零互锁）
     int i = static_cast<int>(axis);
-    if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
+    AbortHoming(i);
     if (i >= 0 && i < axisBusyUntilMs_.size()) {
         axisBusyUntilMs_[i] = 0;
         if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
@@ -562,6 +583,9 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
             if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;   // 回零门禁
             if (ai >= 0 && ai < homeStartedMs_.size())
                 homeStartedMs_[ai] = QDateTime::currentMSecsSinceEpoch();   // 完成检测保护期基准
+            // 注意：此处【不】MarkAxisHomed——HomeAxis 只是成功下发回零指令，卡轴回零是异步的
+            // （指令即返回，实际运动在后台）。homed 置位统一在 PollCardAxis 检测到 running 复位
+            // （回零真正结束）时进行，否则"中途急停/停止"会被误判为已回零 → 系统未回零却放行绝对定位。
             MarkAxisBusy(axis, 30000);   // 回零最长 30s，超时后 CheckAxisBusy 自动释放忙态
         }
         return ok;
@@ -574,6 +598,7 @@ bool HardwareManager::HomeAxis(LogicalAxis axis)
             if (ok) {
                 jogInProgress_ = false;   // 回零接管：点动状态终止
                 if (ai >= 0 && ai < homingActive_.size()) homingActive_[ai] = true;
+                // 同卡轴：不在此 MarkAxisHomed，等 PollServoTelemetry 检测到角度≈0 到位再置位
                 MarkAxisBusy(axis, 5000);   // 舵机回零按 5s 上限
             }
             return ok;
@@ -593,10 +618,11 @@ bool HardwareManager::StopAxis(LogicalAxis axis)
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
         if (servo) ok = servo->Stop();
     }
-    // 停止当前运动（点动/Go/回零）→ 解除回零门禁 + 忙结束，恢复 Go 按钮
+    // 停止当前运动（点动/Go/回零）→ 解除回零门禁 + 忙结束，恢复 Go 按钮。
+    // 若是回零中的轴被打断 → homed 复位（须重新回零，回零互锁）
     jogInProgress_ = false;
     int i = static_cast<int>(axis);
-    if (i >= 0 && i < homingActive_.size()) homingActive_[i] = false;
+    AbortHoming(i);
     if (i >= 0 && i < axisBusyUntilMs_.size()) {
         axisBusyUntilMs_[i] = 0;
         if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
@@ -657,9 +683,51 @@ bool HardwareManager::HomeAll()
         return false;
     }
     bool ok = true;
-    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i)
-        ok = HomeAxis(static_cast<LogicalAxis>(i)) && ok;
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        auto axis = static_cast<LogicalAxis>(i);
+        if (AxisMap::Get(axis).type == AxisBinding::Type::None) continue;   // 未绑定硬件轴无需回零
+        ok = HomeAxis(axis) && ok;
+    }
     return ok;
+}
+
+// 回零互锁：标记本轴回零完成；所有已绑定轴均完成后置系统 homed 并发信号（UI 启用绝对运动入口）。
+void HardwareManager::MarkAxisHomed(int ai)
+{
+    if (ai >= 0 && ai < axisHomed_.size()) axisHomed_[ai] = true;
+    bool allHomed = true;
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        if (i >= axisHomed_.size() || !axisHomed_[i]) { allHomed = false; break; }
+    }
+    if (allHomed) emit homeStateChanged(true);
+}
+
+// 回零互锁：回零被打断（急停/断使能/手动停止）→ 该轴 homed 复位（部分完成不算完成，须重新回零）。
+// 仅复位"正在回零中"的绑定轴：已回零完成的轴机械位置未变（急停不断电不位移），保持 homed 不受影响。
+void HardwareManager::AbortHoming(int ai)
+{
+    if (ai < 0 || ai >= homingActive_.size()) return;
+    if (!homingActive_[ai]) return;
+    homingActive_[ai] = false;
+    if (ai < axisHomed_.size()
+        && AxisMap::Get(static_cast<LogicalAxis>(ai)).type != AxisBinding::Type::None) {
+        axisHomed_[ai] = false;
+        SPDLOG_WARN("[HardwareManager] axis {} homing aborted, homed reset (must re-home)", ai);
+    }
+}
+
+bool HardwareManager::IsAxisHomed(LogicalAxis axis) const
+{
+    int i = static_cast<int>(axis);
+    return i >= 0 && i < axisHomed_.size() && axisHomed_[i];
+}
+
+bool HardwareManager::IsSystemHomed() const
+{
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        if (i >= axisHomed_.size() || !axisHomed_[i]) return false;
+    }
+    return true;
 }
 
 bool HardwareManager::EnableAll()
@@ -709,8 +777,9 @@ bool HardwareManager::DisableAll()
     if (jogTimer_->isActive()) jogTimer_->stop();
     if (motionCard_) motionCard_->StopAll();
 
-    // 断使能视为回零中止
+    // 断使能视为回零中止：回零中的轴 homed 复位（须重新回零）
     jogInProgress_ = false;
+    for (int i = 0; i < homingActive_.size(); ++i) AbortHoming(i);
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     // 清除忙态时间戳，避免急停/断使能后 30s 内再回零/Go 被 IsAxisBusy 拒绝
     for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
@@ -746,6 +815,9 @@ bool HardwareManager::EmergencyStop()
     // 急停后需重新手动使能才能继续点动/移动/回零
     axisEnabled_.fill(false, static_cast<int>(LogicalAxis::Count));
     jogInProgress_ = false;
+    // 回零互锁：急停打断进行中的回零 → 回零中轴 homed 复位（部分完成不算完成，须重新回零）。
+    // 已回零完成的轴机械位置未变，保持 homed 不受影响。
+    for (int i = 0; i < homingActive_.size(); ++i) AbortHoming(i);
     homingActive_.fill(false, static_cast<int>(LogicalAxis::Count));
     // 清除忙态时间戳，避免急停后 30s 内再回零/Go 被 IsAxisBusy 拒绝
     for (int i = 0; i < axisBusyUntilMs_.size(); ++i) {
@@ -1003,6 +1075,7 @@ void HardwareManager::PollCardAxis()
                             && i < homeStartedMs_.size()
                             && QDateTime::currentMSecsSinceEpoch() - homeStartedMs_[i] > 1000) {
                             homingActive_[i] = false;
+                            MarkAxisHomed(i);   // 回零互锁：卡轴 running 复位 = 回零真正结束才置位
                             if (i < axisBusyUntilMs_.size()) {
                                 axisBusyUntilMs_[i] = 0;
                                 if (i < axisBusyNotified_.size() && !axisBusyNotified_[i]) {
@@ -1082,9 +1155,41 @@ void HardwareManager::PollServoTelemetry()
                 t.angleDeg -= off;   // 界面统一显示逻辑角度 = 机械角度 - homeOffset
                 return t;
             };
-            if (servoJ2_) servos.push_back(toLogicalAngle(LogicalAxis::J2, servoJ2_->ReadTelemetry()));
-            if (servoJ3_) servos.push_back(toLogicalAngle(LogicalAxis::R,  servoJ3_->ReadTelemetry()));
+            ServoTelemetry tJ2, tR;
+            if (servoJ2_) {
+                tJ2 = servoJ2_->ReadTelemetry();   // 机械角（wrap 后），供回零完成判定
+                servos.push_back(toLogicalAngle(LogicalAxis::J2, tJ2));   // UI 用逻辑角副本
+            }
+            if (servoJ3_) {
+                tR = servoJ3_->ReadTelemetry();
+                servos.push_back(toLogicalAngle(LogicalAxis::R, tR));
+            }
             emit servoStateUpdated(servos);
+
+            // 舵机回零完成检测：回零中的舵机【机械角】回到 0° 附近（±1°）→ 回零真正到位才置 homed。
+            // 必须用机械角而非逻辑角：HomeAxis 下发 MoveToAngle(0.0) 是机械角 0，而逻辑角 = 机械角 - homeOffset
+            // （J2 homeOffset=28 → 回零到位后逻辑角 ≈ -28°，用逻辑角判定永不满足 → IsSystemHomed 恒 false，
+            // Go 全被拒——2026-09-01 真机踩坑）。与卡轴同理：HomeAxis 只是下发指令（异步），不在此前置位，
+            // 避免"回零中途急停/停止"被误判为已回零 → 系统未回零却放行绝对定位。
+            auto checkServoHomeDone = [this](LogicalAxis axis, const ServoTelemetry& rawMech) {
+                int idx = static_cast<int>(axis);
+                if (idx >= 0 && idx < homingActive_.size() && homingActive_[idx]
+                    && idx < axisHomed_.size() && !axisHomed_[idx]
+                    && std::fabs(rawMech.angleDeg) <= 1.0) {
+                    homingActive_[idx] = false;
+                    MarkAxisHomed(idx);
+                    if (idx < axisBusyUntilMs_.size()) {
+                        axisBusyUntilMs_[idx] = 0;
+                        if (idx < axisBusyNotified_.size() && !axisBusyNotified_[idx]) {
+                            axisBusyNotified_[idx] = true;
+                            emit axisMoveFinished(idx);
+                        }
+                    }
+                    SPDLOG_INFO("[HardwareManager] servo axis {} home done (mech angle={:.2f})", idx, rawMech.angleDeg);
+                }
+            };
+            if (servoJ2_) checkServoHomeDone(LogicalAxis::J2, tJ2);
+            if (servoJ3_) checkServoHomeDone(LogicalAxis::R,  tR);
 
             // 热重连：任一舵机离线 → 先 Ping 确认再重连共享串口。
             // 失败指数退避（2s→4s→…→30s cap）；成功也冷却 30s——设备"半死"时

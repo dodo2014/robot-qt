@@ -104,6 +104,16 @@ void MainWindow::ApplyGlobalStyle()
             color: #b8cce3;
             font-size: 13px;
         }
+        /* 全局 tooltip：白底深字，避免 Fusion 默认深色 tip 与深色 UI 混淆看不清
+           （应用级 stylesheet 生效后，QToolTip 不再可靠走 main.cpp 的 ToolTipBase/ToolTipText 调色板） */
+        QToolTip {
+            background-color: #ffffff;
+            color: #1a1a1a;
+            border: 1px solid #cfd8e0;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 13px;
+        }
         QPushButton {
             border: none;
             border-radius: 10px;
