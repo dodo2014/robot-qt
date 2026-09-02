@@ -60,13 +60,17 @@ void ManualControlPage::OnConnectionChanged()
     if (!connStatusLabel_) return;
     bool cardOk = HardwareManager::instance().IsMotionCardConnected();
     bool servoOk = HardwareManager::instance().IsServoConnected();
-    QString text = QStringLiteral("运动卡: %1 | 舵机: %2")
-                       .arg(cardOk ? QStringLiteral("已连接") : QStringLiteral("未连接"),
-                            servoOk ? QStringLiteral("已连接") : QStringLiteral("未连接"));
-    connStatusLabel_->setText(text);
+    // 富文本分段着色：整段"运动卡: X" / "舵机: X" 各自按连接状态着色
+    // （此前 span 只包状态词、前缀用默认 palette 在深色主题下发暗，2026-09-02 真机反馈）
+    const QString green = QStringLiteral("#7ed67e");
+    const QString yellow = QStringLiteral("#e0a520");
+    connStatusLabel_->setTextFormat(Qt::RichText);
+    connStatusLabel_->setText(QStringLiteral(
+        "<span style=\"color:%1\">运动卡: %2</span> | <span style=\"color:%3\">舵机: %4</span>")
+        .arg(cardOk ? green : yellow, cardOk ? QStringLiteral("已连接") : QStringLiteral("未连接"),
+             servoOk ? green : yellow, servoOk ? QStringLiteral("已连接") : QStringLiteral("未连接")));
     connStatusLabel_->setStyleSheet(
-        QStringLiteral("color: %1; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 0 6px;")
-            .arg((cardOk || servoOk) ? QStringLiteral("#7ed67e") : QStringLiteral("#e0a520")));
+        QStringLiteral("font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 0 6px;"));
 
     // 从配置回填每轴点动速度（Initialize 完成后 connectionChanged 会再次触发）
     for (int i = 0; i < speedSpins_.size(); ++i) {

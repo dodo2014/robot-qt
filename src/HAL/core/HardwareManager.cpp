@@ -230,6 +230,10 @@ bool HardwareManager::Initialize()
     pollTimer_->start();
 
     initialized_ = true;
+    // 同步连接状态边沿缓存（PollTick 的边沿检测从此处状态起算，避免首次 tick 重复广播）
+    lastCardConnected_ = IsMotionCardConnected();
+    lastServoConnected_ = IsServoConnected();
+    connStateInited_ = true;
     emit connectionChanged();
     SPDLOG_INFO("[HardwareManager] Initialize complete");
     return true;
@@ -1025,6 +1029,19 @@ void HardwareManager::PollTick()
 
     if (motionCard_) PollCardAxis();
     if (servoJ2_ || servoJ3_) PollServoTelemetry();
+
+    // 连接状态边沿检测：舵机离线/热重连、运动卡掉线时广播 connectionChanged。
+    // 此前该信号仅 Initialize 发一次——舵机离线/重连后手动页状态标签卡在旧颜色、
+    // 自动运行页日志无任何连接事件（2026-09-02 用户报告"未连接也是绿色"的根因之一）
+    const bool cardOk = IsMotionCardConnected();
+    const bool servoOk = IsServoConnected();
+    if (!connStateInited_ || cardOk != lastCardConnected_ || servoOk != lastServoConnected_) {
+        lastCardConnected_ = cardOk;
+        lastServoConnected_ = servoOk;
+        connStateInited_ = true;
+        SPDLOG_INFO("[HardwareManager] connection state: card={} servo={}", cardOk, servoOk);
+        emit connectionChanged();
+    }
 }
 
 // 卡轴轮询：脉冲→逻辑坐标映射、软限位方向拦截、回零完成检测（保护期）、

@@ -126,7 +126,8 @@ signals:
     // 轴已到达软限位边界（点动撞限被自动停止，或点动启动方向已在边界）。
     // positive=true 表示撞到 Max，false 表示撞到 Min。
     void softLimitTriggered(int logicalAxis, bool positive);
-    // 连接状态变化（Initialize 之后或重连后发出）
+    // 连接状态变化（Initialize 之后或运行中连接状态边沿变化时发出：
+    // 舵机离线/热重连、运动卡掉线，PollTick 内边沿检测）
     void connectionChanged();
     // 使能状态变化（EnableAll/DisableAll/EmergencyStop/热重连后发出），UI 据此刷新
     void enableStateChanged();
@@ -175,6 +176,12 @@ private:
     qint64 servoReconnectBackoffMs_ = 0;
     // Ping 门卫连续放行计数：skip reconnect 间隔 2s→4s→8s→15s cap（恢复在线清零）
     int servoPingSkipCount_ = 0;
+
+    // 连接状态边沿缓存（PollTick 检测变化才 emit connectionChanged，
+    // 此前该信号仅在 Initialize 发一次，舵机离线/热重连后 UI 状态标签与日志均不更新）
+    bool connStateInited_ = false;
+    bool lastCardConnected_ = false;
+    bool lastServoConnected_ = false;
 
     // 舵机连续点动状态（jogTimer_ 驱动）
     // 目标按时间累积推进（速度 = jogSpeed_），发送节流 ≥2°（越过 FashionStar

@@ -26,6 +26,22 @@ AutoRunPage::AutoRunPage(QWidget* parent)
     : QWidget(parent)
 {
     SetupUI();
+
+    // HardwareManager 信号在构造函数即连接：连接状态/遥测/帧不依赖 m_worker。
+    // 关键：connectionChanged 只在 Initialize 完成与运行中状态边沿时发一次，
+    // 若等 SetSequenceWorker（MainWindow 在 HardwareManager::Initialize 之后才调用）
+    // 会错过启动那次连接状态日志（2026-09-02 真机反馈：自动运行页日志框无连接事件）
+    connect(&HardwareManager::instance(), &HardwareManager::stateUpdated,
+            this, &AutoRunPage::OnStateUpdated);
+    connect(&HardwareManager::instance(), &HardwareManager::servoStateUpdated,
+            this, &AutoRunPage::OnServoStateUpdated);
+    connect(&HardwareManager::instance(), &HardwareManager::frameReady,
+            this, &AutoRunPage::OnFrameReady);
+    connect(&HardwareManager::instance(), &HardwareManager::connectionChanged,
+            this, [this]() {
+        OnLogMessage(QStringLiteral("硬件连接状态变更：%1")
+                         .arg(HardwareManager::instance().ConnectionStatus()));
+    });
 }
 
 void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
@@ -38,13 +54,6 @@ void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
     connect(m_worker, &SequenceWorker::schemeFinished, this, &AutoRunPage::OnSchemeFinished);
     connect(m_worker, &SequenceWorker::interrupted, this, &AutoRunPage::OnInterrupted);
     connect(m_worker, &SequenceWorker::errorOccurred, this, &AutoRunPage::OnError);
-
-    connect(&HardwareManager::instance(), &HardwareManager::stateUpdated,
-            this, &AutoRunPage::OnStateUpdated);
-    connect(&HardwareManager::instance(), &HardwareManager::servoStateUpdated,
-            this, &AutoRunPage::OnServoStateUpdated);
-    connect(&HardwareManager::instance(), &HardwareManager::frameReady,
-            this, &AutoRunPage::OnFrameReady);
 }
 
 void AutoRunPage::SetupUI()
