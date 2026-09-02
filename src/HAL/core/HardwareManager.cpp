@@ -393,6 +393,12 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
         return false;
     }
 
+    // 舵机轴 ±180 wrap 归一化：示教/旧方案数据可能携带 wrap 表示（R 域 [0,185] 收到 -179.9 ≡ 180.1），
+    // 先折算回限位域内等价角再校验，否则被软限位误拒（2026-09-02 真机：示教 R=-179.9 执行失败）。
+    // 下发无需再 wrap：XRServo::MoveToAngle 内部已有 ±180 硬 clamp（与官方软件行为一致）。
+    if (AxisMap::Get(axis).type == AxisBinding::Type::Servo)
+        mmOrDeg = NormalizeRotationAngle(axis, mmOrDeg);
+
     // 方向反转（config direction=反向）+ Home Offset（机械零点→逻辑零点）：
     // 逻辑角度 = 机械角度 - homeOffset，故下发目标机械角度 = 逻辑 + homeOffset；
     // inverted 轴在机械方向坐标上再取反。界面/软限位恒用逻辑坐标。
@@ -862,7 +868,9 @@ double HardwareManager::GetPosition(LogicalAxis axis) const
         IAxisServo* servo = (static_cast<int>(axis) == static_cast<int>(LogicalAxis::J2)) ? servoJ2_.get() : servoJ3_.get();
         if (servo) {
             double ang = servo->ReadAngle();
-            return (inv ? -ang : ang) - off;  // 逻辑角度 = 机械角度 - homeOffset
+            // ±180 wrap 归一化：舵机域 [-180,180]，限位边界处读数会跳 wrap 值（R=180° 处 -179.9），
+            // 示教/显示必须用域内等价角（见 NormalizeRotationAngle 注释）
+            return NormalizeRotationAngle(axis, (inv ? -ang : ang) - off);
         }
     }
     return 0.0;
@@ -910,6 +918,15 @@ bool HardwareManager::IsWithinSoftLimits(LogicalAxis axis, double pos) const
 {
     return axisCfgSvc_ ? axisCfgSvc_->IsWithinSoftLimits(axis, pos)
                        : (pos >= -1e6 && pos <= 1e6);
+}
+
+double HardwareManager::NormalizeRotationAngle(LogicalAxis axis, double angleDeg) const
+{
+    const double lo = GetLimitMin(axis);
+    const double hi = GetLimitMax(axis);
+    if (!(lo < hi)) return angleDeg;   // 限位未配置（lo>=hi）原样返回，交给下游校验
+    const double center = (lo + hi) / 2.0;
+    return angleDeg - 360.0 * std::round((angleDeg - center) / 360.0);
 }
 
 bool HardwareManager::IsAxisEnabled(LogicalAxis axis) const
@@ -1153,6 +1170,9 @@ void HardwareManager::PollServoTelemetry()
                 double off = (idx >= 0 && idx < static_cast<int>(axisConfigs_.size()))
                                  ? axisConfigs_[idx].homePos : 0.0;
                 t.angleDeg -= off;   // 界面统一显示逻辑角度 = 机械角度 - homeOffset
+                // ±180 wrap 归一化：限位边界（R=180°）处读数跳 -179.9 会让 UI 显示/示教/FK 全链路
+                // 拿到 wrap 值，统一折算回限位域内等价角（见 NormalizeRotationAngle 注释）
+                t.angleDeg = NormalizeRotationAngle(axis, t.angleDeg);
                 return t;
             };
             ServoTelemetry tJ2, tR;

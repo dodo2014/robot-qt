@@ -99,7 +99,7 @@
             "hardwareType": 1,
             "homeOffset": 0.0,
             "jogSpeed": 55.0,
-            "limitMax": 180.0,
+            "limitMax": 185.0,
             "limitMin": 0.0,
             "maxAccel": 240.0,
             "maxSpeed": 55.0,

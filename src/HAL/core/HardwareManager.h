@@ -90,6 +90,13 @@ public:
     double GetLimitMax(LogicalAxis axis) const;
     bool   IsWithinSoftLimits(LogicalAxis axis, double pos) const;
 
+    // ---- 舵机轴 ±180° 角度环绕归一化（2026-09-02） ----
+    // 舵机角度域 [-180,180]，物理位置在软限位边界（如 R=180°）时读数会在 ±180 表示边界
+    // 跳动（实测 {179.9, 180, -179.9}），wrap 值进入示教/执行链路会被 IK 限位校验与
+    // MoveAbs 软限位拒绝。以 [GetLimitMin, GetLimitMax] 中心为基准把角度 wrap 到中心 ±180
+    // 窗口：R 域 [0,185] 下 -179.9→180.1，179.9/180 不变；J2 域内读数恒等不受影响。
+    double NormalizeRotationAngle(LogicalAxis axis, double angleDeg) const;
+
     // ---- 连接状态 ----
     bool IsMotionCardConnected() const;
     bool IsServoConnected() const;

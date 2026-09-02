@@ -350,6 +350,9 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
     const double curJ2 = InMainThread([&] { return hw.GetPosition(LogicalAxis::J2); });
 
     Pose target{ pt.x, pt.y, pt.z, pt.r };
+    // R 目标 ±180 wrap 归一化（必须在 IK 之前）：旧方案/边界示教可能存 wrap 值（-179.9 ≡ 180.1），
+    // Kinematics::ValidateJoints 按 [rMin,rMax] 拒绝 wrap 值会报"目标点不可达"
+    target.r = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, target.r); });
     Joints joints;
     if (!impl_->kin.InverseSmart(target, joints, curJ2)) {
         SPDLOG_WARN("[SequenceWorker] IK failed for point ({:.1f}, {:.1f}, {:.1f}) r={:.1f}",
