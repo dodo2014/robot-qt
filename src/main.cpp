@@ -153,13 +153,6 @@ int main(int argc, char* argv[])
     app.setApplicationVersion("1.0.0");
     app.setStyle(QStyleFactory::create("Fusion"));
 
-    {
-        QPalette pal = app.palette();
-        pal.setColor(QPalette::ToolTipBase, QColor(255, 255, 255));
-        pal.setColor(QPalette::ToolTipText, QColor(26, 26, 26));
-        app.setPalette(pal);
-    }
-
     // spdlog — daily file logger
     // 日志目录优先级：工程源码 log 目录(开发机) > exe 旁 log(便携部署) > %APPDATA%
     QString logDir;

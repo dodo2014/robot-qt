@@ -17,6 +17,110 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QToolTip>
+#include <QPalette>
+#include <QFont>
+
+namespace
+{
+    // =====================================================================
+    // Tooltip 实例级样式过滤器（2026-09-01 定稿，决定性保险）：
+    //
+    // 前序失败史（tipcheck 像素级实证 out/smoke/tipcheck/）：
+    //   ① QSS `QToolTip {}` 选择器不匹配实际弹出的 QTipLabel（私有类）→ 无效；
+    //   ② `QToolTip::setPalette()` 在 application stylesheet 存在时被
+    //      QStyleSheetStyle 完全绕过（设几个 color group 都一样）→ 无效；
+    //   ③ QSS `QTipLabel {}` 规则有效，但依赖层叠优先级，曾多轮反复失效。
+    //
+    // 本过滤器在 tooltip 窗口首次 Polish/Show 时对其【实例】直接 setStyleSheet。
+    // Qt 样式机制中【实例级样式表优先级高于 application 级】，
+    // 架构上不存在任何能覆盖它的层叠路径 → 不可能失效。
+    // 幂等保护：仅在实例 styleSheet 为空时设置一次。
+    // =====================================================================
+    class TipStyleFilter : public QObject
+    {
+    public:
+        explicit TipStyleFilter(QObject* parent) : QObject(parent) {}
+
+    protected:
+        bool eventFilter(QObject* obj, QEvent* ev) override
+        {
+            const QEvent::Type t = ev->type();
+            if ((t == QEvent::Polish || t == QEvent::Show) && obj->isWidgetType()) {
+                QWidget* w = static_cast<QWidget*>(obj);
+                if (w->windowType() == Qt::ToolTip && w->styleSheet().isEmpty()) {
+                    w->setStyleSheet(QStringLiteral(
+                        "QTipLabel, QLabel {"
+                        " background-color: #ffffff;"
+                        " color: #1a1a1a;"
+                        " border: 1px solid #cfd8e0;"
+                        " border-radius: 4px;"
+                        " padding: 4px 8px;"
+                        "}"));
+                }
+            }
+            return QObject::eventFilter(obj, ev);
+        }
+    };
+
+    void SetupToolTipStyle()
+    {
+        QPalette pal = QToolTip::palette();
+
+        // ---------------------------------------------------------
+        // QToolTip 使用 QPalette::Inactive 颜色组。
+        // 只设置 setColor(role, color) 在 Qt6/Windows 下不够可靠，
+        // 必须明确设置 Inactive。
+        // ---------------------------------------------------------
+
+        const QColor tipBackground("#ffffff");
+        const QColor tipText("#1a1a1a");
+
+        pal.setColor(QPalette::Inactive,
+            QPalette::ToolTipBase,
+            tipBackground);
+
+        pal.setColor(QPalette::Inactive,
+            QPalette::ToolTipText,
+            tipText);
+
+        // Active / Disabled 也一起设置，作为保险
+        pal.setColor(QPalette::Active,
+            QPalette::ToolTipBase,
+            tipBackground);
+
+        pal.setColor(QPalette::Active,
+            QPalette::ToolTipText,
+            tipText);
+
+        pal.setColor(QPalette::Disabled,
+            QPalette::ToolTipBase,
+            tipBackground);
+
+        pal.setColor(QPalette::Disabled,
+            QPalette::ToolTipText,
+            tipText);
+
+        QToolTip::setPalette(pal);
+
+        QToolTip::setFont(
+            QFont(QStringLiteral("Microsoft YaHei"), 10)
+        );
+
+        qDebug() << "[Tooltip] palette configured";
+        qDebug() << "[Tooltip] Inactive Base:"
+            << QToolTip::palette()
+            .color(QPalette::Inactive, QPalette::ToolTipBase);
+
+        qDebug() << "[Tooltip] Inactive Text:"
+            << QToolTip::palette()
+            .color(QPalette::Inactive, QPalette::ToolTipText);
+
+        // 决定性保险：实例级样式（优先级高于 application 级，见 TipStyleFilter 注释）
+        qApp->installEventFilter(new TipStyleFilter(qApp));
+        qDebug() << "[Tooltip] instance-level style filter installed";
+    }
+}
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -51,6 +155,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
         sequenceWorker_->ReloadFromConfig();
     });
+
+
+    // ======================================================== =
+    // 最后设置 Tooltip。
+    //
+    // 必须放在 ApplyGlobalStyle() 和 SetupUI() 之后。
+    // =========================================================
+    SetupToolTipStyle();
+
     SPDLOG_INFO("[MainWindow] SequenceWorker thread started");
 
     qDebug() << "[MainWindow] UI initialized";
@@ -94,19 +207,18 @@ void MainWindow::ShutdownWorker()
 void MainWindow::ApplyGlobalStyle()
 {
     qApp->setStyleSheet(R"(
-        * {
-            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-        }
-        QMainWindow {
+        /* 1. 作用域限定的基底样式：利用 QObject 树的继承机制，绝对不污染无父控件的 QToolTip */
+        QMainWindow, QDialog {
             background: #1a1e24;
-        }
-        QWidget {
             color: #b8cce3;
             font-size: 13px;
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
         }
-        /* 全局 tooltip：白底深字，避免 Fusion 默认深色 tip 与深色 UI 混淆看不清
-           （应用级 stylesheet 生效后，QToolTip 不再可靠走 main.cpp 的 ToolTipBase/ToolTipText 调色板） */
-        QToolTip {
+
+        /* 2. ToolTip 白底深字（2026-09-01 tipcheck 像素级实证：QSS 必须显式匹配
+              QTipLabel（实际弹出的私有类名），单写 QToolTip 选择器不匹配、
+              QToolTip::setPalette 会被 application stylesheet 绕过 */
+        QToolTip, QTipLabel {
             background-color: #ffffff;
             color: #1a1a1a;
             border: 1px solid #cfd8e0;
@@ -114,6 +226,8 @@ void MainWindow::ApplyGlobalStyle()
             padding: 4px 8px;
             font-size: 13px;
         }
+        
+
         QPushButton {
             border: none;
             border-radius: 10px;
