@@ -26,6 +26,9 @@ struct ActionData {
     double suckBackSpeed = 0.0;
     int delayMs = 0;
     bool isGripperOpen = false;
+    // 夹爪动作行程 = 轴5（LogicalAxis::Gripper）绝对目标坐标，单位 mm。
+    // 物理语义（用户 2026-09-02 确认）：0 = 夹紧，负值 = 松开，受轴5 软限位约束（-5.00 ~ 0.00）。
+    double gripperTarget = 0.0;
 };
 
 struct SchemeData {

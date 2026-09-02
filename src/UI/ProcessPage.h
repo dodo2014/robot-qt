@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QSlider>
 #include <QLabel>
 
@@ -45,6 +46,8 @@ private slots:
 private:
     void SetupUI();
     void ApplySpeedPercentToCurrentAction(int v);
+    void ApplyGripperTargetToCurrentAction(double v);
+    void RefreshGripperLimitRange();
     void RefreshActionList();
     void RefreshActionDetail(int idx);
     void RefreshSchemeCombo();
@@ -79,6 +82,12 @@ private:
     QSpinBox* m_delaySpin = nullptr;
 
     QComboBox* m_gripperCombo = nullptr;
+    QDoubleSpinBox* m_gripperTargetSpin = nullptr;
+    QLabel* m_gripperUnitLabel = nullptr;
+    QLabel* m_gripperHintLabel = nullptr;
+    // 按方向各记一份最近行程值（mm）：切换下拉时恢复用户自己的数，不覆盖已填值
+    double m_lastOpenTarget = -3.0;
+    double m_lastCloseTarget = 0.0;
 
     SequenceWorker* m_worker = nullptr;
     QPushButton* m_runSelectedBtn = nullptr;

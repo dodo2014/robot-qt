@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QLabel>
+#include <QFont>
 #include <QPushButton>
 #include <QLineEdit>
 #include <QComboBox>
@@ -462,7 +463,38 @@ void ProcessPage::SetupUI()
         QComboBox:hover { border: 1px solid #4f7faf; }
         QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }
     )");
-    gf->addRow(makeLabel(QStringLiteral("夹爪动作")), m_gripperCombo);
+    // 行程输入框 = 轴5 绝对目标坐标（mm），与手动控制页轴5 Go 语义一致：
+    // 0 = 夹紧、负值 = 松开，填什么值执行什么值（执行层仍按轴5 软限位硬性拦截越界）。
+    // 注意：QDoubleSpinBox 样式表禁止写 font-size（Qt6 polish 崩溃），字号用 setFont()。
+    m_gripperTargetSpin = new QDoubleSpinBox();
+    m_gripperTargetSpin->setRange(-5.0, 0.0);
+    m_gripperTargetSpin->setDecimals(2);
+    m_gripperTargetSpin->setSingleStep(0.5);
+    m_gripperTargetSpin->setFixedHeight(30);
+    m_gripperTargetSpin->setFixedWidth(110);
+    m_gripperTargetSpin->setAlignment(Qt::AlignRight);
+    {
+        QFont f = m_gripperTargetSpin->font();
+        f.setPointSizeF(9.75);
+        m_gripperTargetSpin->setFont(f);
+    }
+    m_gripperTargetSpin->setStyleSheet("QDoubleSpinBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 4px 8px; }");
+    m_gripperUnitLabel = new QLabel(QStringLiteral("mm"));
+    m_gripperUnitLabel->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+    m_gripperUnitLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    auto* gripperField = new QWidget();
+    auto* gripperFieldLay = new QHBoxLayout(gripperField);
+    gripperFieldLay->setContentsMargins(0, 0, 0, 0);
+    gripperFieldLay->setSpacing(6);
+    gripperFieldLay->addWidget(m_gripperCombo);
+    gripperFieldLay->addWidget(m_gripperTargetSpin);
+    gripperFieldLay->addWidget(m_gripperUnitLabel);
+    gripperFieldLay->addStretch();
+    gf->addRow(makeLabel(QStringLiteral("夹爪动作/行程")), gripperField);
+    m_gripperHintLabel = new QLabel();
+    m_gripperHintLabel->setStyleSheet("color: #6a7a8a; font-size: 12px; background: transparent; border: none;");
+    gf->addRow(m_gripperHintLabel);
+    RefreshGripperLimitRange();
     auto* gripperSaveLayout = new QHBoxLayout();
     gripperSaveLayout->addStretch();
     auto* gripperSaveBtn = new QPushButton(QStringLiteral("保存动作"));
@@ -534,6 +566,19 @@ void ProcessPage::SetupUI()
         m_speedPercentSpin->setValue(v);
         m_speedPercentSpin->blockSignals(false);
         ApplySpeedPercentToCurrentAction(v);
+    });
+
+    // 夹爪行程实时写回当前动作（改即生效，不必先点「保存动作」；落盘仍由保存按钮负责）
+    connect(m_gripperTargetSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, &ProcessPage::ApplyGripperTargetToCurrentAction);
+    // 切换张开/闭合：把当前值记入旧方向，再恢复另一方向的最近值（首次为该方向默认：闭合 0.00 / 张开 -3.00）
+    connect(m_gripperCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        const bool nowOpen = (idx == 1);
+        const double cur = m_gripperTargetSpin->value();
+        if (nowOpen) m_lastCloseTarget = cur;
+        else         m_lastOpenTarget = cur;
+        m_gripperTargetSpin->setValue(nowOpen ? m_lastOpenTarget : m_lastCloseTarget);
     });
 
     rightLayout->addWidget(m_speedPercentRow);
@@ -670,7 +715,13 @@ void ProcessPage::RefreshActionDetail(int idx)
         m_delaySpin->setValue(action.delayMs);
         break;
     case ActionType::Gripper:
+        RefreshGripperLimitRange();
+        m_gripperCombo->blockSignals(true);
         m_gripperCombo->setCurrentIndex(action.isGripperOpen ? 1 : 0);
+        m_gripperCombo->blockSignals(false);
+        m_gripperTargetSpin->setValue(action.gripperTarget);
+        if (action.isGripperOpen) m_lastOpenTarget = action.gripperTarget;
+        else                      m_lastCloseTarget = action.gripperTarget;
         break;
     }
 }
@@ -796,6 +847,38 @@ void ProcessPage::ApplySpeedPercentToCurrentAction(int v)
     auto& actions = schemes[m_currentSchemeIdx].actions;
     if (m_currentActionIdx >= actions.size()) return;
     actions[m_currentActionIdx].speedPercent = v;
+}
+
+void ProcessPage::ApplyGripperTargetToCurrentAction(double v)
+{
+    if (m_currentSchemeIdx < 0 || m_currentActionIdx < 0) return;
+    auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx >= schemes.size()) return;
+    auto& actions = schemes[m_currentSchemeIdx].actions;
+    if (m_currentActionIdx >= actions.size()) return;
+    if (actions[m_currentActionIdx].type != ActionType::Gripper) return;
+    actions[m_currentActionIdx].gripperTarget = v;
+}
+
+void ProcessPage::RefreshGripperLimitRange()
+{
+    // 轴5（LogicalAxis::Gripper）软限位实时读 config，与手动控制页 Go 的校验同源。
+    // GetLimitMin/Max 在 config 异常（lo>=hi）时返回无效区间 → 放宽 UI 限位，
+    // 真正的拦截由执行层 IsWithinSoftLimits 兜底（拒绝而非夹紧）。
+    auto& hw = HardwareManager::instance();
+    const double lo = hw.GetLimitMin(LogicalAxis::Gripper);
+    const double hi = hw.GetLimitMax(LogicalAxis::Gripper);
+    if (lo < hi) {
+        m_gripperTargetSpin->setRange(lo, hi);
+        m_gripperHintLabel->setStyleSheet("color: #6a7a8a; font-size: 12px; background: transparent; border: none;");
+        m_gripperHintLabel->setText(QStringLiteral("轴5 软限位 %1 ~ %2 mm（0 = 夹紧，负值 = 松开）")
+                                        .arg(QString::number(lo, 'f', 2), QString::number(hi, 'f', 2)));
+    } else {
+        m_gripperTargetSpin->setRange(-999.0, 999.0);
+        m_gripperHintLabel->setStyleSheet("color: #e0a520; font-size: 12px; background: transparent; border: none;");
+        m_gripperHintLabel->setText(QStringLiteral("轴5 软限位未配置（%1 ~ %2），行程不受界面限制，执行时将被拒绝")
+                                        .arg(QString::number(lo, 'f', 2), QString::number(hi, 'f', 2)));
+    }
 }
 
 void ProcessPage::OnStepExecute()
@@ -983,6 +1066,7 @@ void ProcessPage::OnEditAction()
         action.extrudeAmount = 0; action.extrudeSpeed = 0; action.suckBackAmount = 0; action.suckBackSpeed = 0;
         action.delayMs = 0;
         action.isGripperOpen = false;
+        action.gripperTarget = 0.0;
     }
     RefreshActionList();
     RefreshActionDetail(m_currentActionIdx);
@@ -1155,6 +1239,9 @@ void ProcessPage::OnSaveAction()
 
     auto& action = ProcessManager::instance().schemes()[m_currentSchemeIdx].actions[m_currentActionIdx];
 
+    // 保存前按最新轴5 软限位刷新行程输入框范围（config 改限位后无需切换动作也能夹正）
+    RefreshGripperLimitRange();
+
     if (m_speedPercentSpin)
         action.speedPercent = m_speedPercentSpin->value();
 
@@ -1198,6 +1285,7 @@ void ProcessPage::OnSaveAction()
         break;
     case ActionType::Gripper:
         action.isGripperOpen = (m_gripperCombo->currentIndex() == 1);
+        action.gripperTarget = m_gripperTargetSpin->value();
         break;
     }
 

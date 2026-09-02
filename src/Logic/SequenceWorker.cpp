@@ -477,14 +477,32 @@ bool SequenceWorker::ExecuteDelay(const ActionData& action)
 bool SequenceWorker::ExecuteGripper(const ActionData& action)
 {
     auto& hw = HardwareManager::instance();
-    const double min = InMainThread([&] { return hw.GetLimitMin(LogicalAxis::Gripper); });
-    const double max = InMainThread([&] { return hw.GetLimitMax(LogicalAxis::Gripper); });
-    const double target = action.isGripperOpen ? max : min;
-    emit logMessage(action.isGripperOpen ? QStringLiteral("夹爪打开") : QStringLiteral("夹爪闭合"));
-    if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Gripper, target); }))
+    // 行程 = 轴5 绝对目标坐标（mm），语义与手动控制页轴5 Go 一致：0 = 夹紧、负值 = 松开
+    const double lo = InMainThread([&] { return hw.GetLimitMin(LogicalAxis::Gripper); });
+    const double hi = InMainThread([&] { return hw.GetLimitMax(LogicalAxis::Gripper); });
+    const double target = action.gripperTarget;
+    // 软限位硬性拦截（与手动页 Go / MoveAbs 内部同源）：越界拒绝，绝不静默改写目标
+    if (!InMainThread([&] { return hw.IsWithinSoftLimits(LogicalAxis::Gripper, target); })) {
+        SPDLOG_WARN("[SequenceWorker] Gripper target {:.2f} out of soft limits [{:.2f}, {:.2f}]",
+                    target, lo, hi);
+        emit errorOccurred(QStringLiteral("夹爪目标行程 %1 mm 超出轴5软限位（%2 ~ %3 mm）")
+                               .arg(QString::number(target, 'f', 2),
+                                    QString::number(lo, 'f', 2), QString::number(hi, 'f', 2)));
         return false;
+    }
+    // 速度映射到轴5：maxSpeed × speedPercent（与 MoveToPoint 同源），MoveAbs 内部再按卡上限截断
+    const double speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
+    const double speed = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::Gripper); }) * speedScale;
+    emit logMessage(QStringLiteral("夹爪%1 → 目标 %2 mm（速度 %3 mm/s）")
+                        .arg(action.isGripperOpen ? QStringLiteral("张开") : QStringLiteral("闭合"),
+                             QString::number(target, 'f', 2), QString::number(speed, 'f', 2)));
+    if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Gripper, target, speed); }))
+        return false;
+    // 到位等待：按 MoveAbs 里 MarkAxisBusy 估算的耗时动态兜底——
+    // 低速（如 10% ≈ 0.2mm/s 走 3mm 需 15s）时固定 10s 会误判超时；下限 3000 防 est=0 无限等待
+    const int estMs = InMainThread([&] { return hw.GetAxisBusyMs(LogicalAxis::Gripper); });
     QVector<LogicalAxis> axes{ LogicalAxis::Gripper };
-    if (!WaitForAxes(axes, 10000)) {
+    if (!WaitForAxes(axes, qMax(3000, static_cast<int>(estMs * 1.2) + 3000))) {
         if (impl_->cancel.load()) return false;
         emit errorOccurred(QStringLiteral("夹爪到位超时"));
         return false;

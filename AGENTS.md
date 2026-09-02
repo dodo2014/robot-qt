@@ -112,7 +112,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 2. **强制记账法则**：每次彻底解决一个 Bug 或完成一个新功能后，**必须**主动用文件编辑工具在 `TEST_RECORD.md` 追加一行测试记录：模块、测试场景/动作、期望结果、状态（**🟢 已通过**）、踩坑记录/备注。
 3. **修改前验算**：计划大范围重构或修改核心逻辑（`HardwareManager`、`ProcessManager`、`PollTick/JogTick`、换算/软限位/回零等）前，**必须先读取 `TEST_RECORD.md`**，脑内推演改动是否会破坏已标为 **🟢 已通过** 的用例；有风险则调整方案或补回归验证。
 4. **Git 提交须用户明确要求**：**禁止主动执行 `git commit/push`**——即使完成一批改动并整理好提交信息，也必须等用户明确说"提交/commit"才执行；push 同理。工作完成时最多提示"可提交"，由用户决定时机。
-5. **Sim 冒烟规范（2026-08-31 定稿）**：用标准脚本 `out\smoke\sim_smoke.ps1`——就地临时改**工程根** `config/config.json` 为 SimCard/SimServo → `-WindowStyle Hidden` 独立窗口启动 8s 验证存活 → try/finally 保证恢复配置。**禁止拷贝 exe 输出目录做副本冒烟**——开发机版程序路径硬编码 `PROJECT_SOURCE_DIR`（main.cpp 读 `PROJECT_SOURCE_DIR/config/config.json` 与 `log/`），拷贝副本无效（曾误生成 2.1GB C 盘副本）。产物仅工程根 `log/creampuff_YYYY-MM-DD.log`；通过标准 = 进程存活 + 日志 SimCard/SimServo/SimAlgo/SimCamera 初始化正常。
+5. **Sim 冒烟规范（2026-08-31 定稿，2026-09-02 修订）**：用标准脚本 `out\smoke\sim_smoke.ps1`——就地临时改**工程根** `config/config.json` 为 SimCard/SimServo → `-WindowStyle Hidden` 独立窗口启动 **15s**（Debug 版从进程启动到 `HardwareManager::Initialize` 实测约 7s，原 8s 会在初始化完成前 kill 进程导致日志截断、被误读成"初始化卡死"）验证存活 → try/finally 保证恢复配置 → **新增 `SMOKE_INIT_COMPLETE` 日志判定**（存活≠通过：断言框挂起时进程也存活，必须查当日日志含 `Initialize complete`）。**禁止拷贝 exe 输出目录做副本冒烟**——开发机版程序路径硬编码 `PROJECT_SOURCE_DIR`（main.cpp 读 `PROJECT_SOURCE_DIR/config/config.json` 与 `log/`），拷贝副本无效（曾误生成 2.1GB C 盘副本）。产物仅工程根 `log/creampuff_YYYY-MM-DD.log`。
 6. **运动学验证程序（2026-08-31 固化）**：`tests/test_kinematics_check.cpp`（root CMake 已挂 tests 子目录，独立 target 不进主程序依赖链）。无参运行 = 内置真机摆位回归（2026-08-31 两组实测）+ 限位内 20 组 FK↔IK 往返自检，退出码 0/1 可脚本调用；`fk <j1> <j2> <z> <r>` / `ik <x> <y> <z> <r> [curJ2]` 手动查询。参数自动读 config（改 config 无需改程序）。编译：`$env:TARGET='test_kinematics_check'` 后跑 `out\smoke\build_debug.bat` 或根 `build_release.bat`（两脚本已支持 TARGET 环境变量选 target，默认 CreamPuffRobot 不变；PowerShell→bat 传参用环境变量，`%~1` 在该链路曾失真）。
 
 ## Code Conventions
@@ -177,7 +177,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
    - 识别动作: 识别类型/曝光时间/匹配模板/置信度阈值
    - 挤压动作: 挤出量/挤出速度/回抽量/回抽速度
    - 延时动作: 延时时间 ms
-   - 夹爪动作: 闭合/张开 选择
+   - 夹爪动作: 闭合/张开 选择 + 行程输入框（mm，2026-09-02 新增：值为轴5 绝对目标坐标，0=夹紧、负=松开，默认闭合 0.00/张开 -3.00，实时写回 `action.gripperTarget`，与手动页轴5 Go 同语义）
    - **动作运行速度**（`m_speedPercentRow`，仅移动/挤压/夹爪动作显示，其余隐藏）: `QSpinBox`(1-100, 后缀 " %") + `QSlider`(横向) 双向同步，各自 `blockSignals` 防回环；保存时读 `m_speedPercentSpin->value()`。**拖动即实时写回当前动作 `action.speedPercent`（`ApplySpeedPercentToCurrentAction`，2026-08-31 起改即生效，不必先点保存）**。滑块 `setFixedWidth(240)` 固定长度、无拉伸（`addWidget` 不带 stretch），长度调整改 `ProcessPage.cpp:469`
 4. **VisionTestPage** — 视觉检测（导航第 4 项，位于「设备与配置」前）: 相机控制（型号下拉/序列号/分辨率/FPS/打开关闭/开始停止采集 + 状态点）＋ 预览（RGB/深度切换、识别框叠加开关、FPS/时间戳/分辨率、保存截图）＋ 算法测试（型号下拉/单次检测/连续检测/结果表格，表格列 = 序号/置信度/X/Y/Z/偏航/U/V/宽/高）＋ 离线图片加载（`getOpenFileName`→`CameraFrame`→`Detect`）＋ 参数（置信度阈值/Zmin/Zmax/曝光，`QDoubleSpinBox::valueChanged` 实时写 `ConfigManager`）。
    - 采集来源统一走 `HardwareManager::frameReady`（采集线程）→ `OnFrameReady` 存 `latestFrame_` 渲染；检测结果存 `lastResults_`，RGB/深度/截图共用 `BuildDisplayImage()`（含叠加）。截图经 `FrameSaver` 异步写盘。
@@ -249,7 +249,7 @@ HAL 多品牌硬件接入全部完成：
 - **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 已接线（T7–T10，2026-08-20/21 完成）。
 - **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/ **`RunSingleAction(const SchemeData&, int actionIndex)`（2026-08-31 新增，单动作独立执行，与 RunSequence 共用 running 门禁互斥；未使能发 errorOccurred，运行中/越界静默返回 false）** /`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/`**`singleActionFinished`**`/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
 - **线程模型**：`moveToThread` 到独立 QThread（worker 线程执行循环），**全部 HardwareManager 调用经 `InMainThread` 辅助用 `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` 回主线程执行**，与 PollTick 串行避免数据竞争；`RunSequence` 内 `invokeMethod("StartExecution", QueuedConnection)` 排队到 worker 线程。主线程只短暂执行硬件操作，UI 不卡（S08 已验）。
-- **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=打开取 `GetLimitMax`/闭合取 `GetLimitMin`。
+- **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=取 `action.gripperTarget`（轴5 绝对目标 mm，0=夹紧/负=松开），`IsWithinSoftLimits` 越界拒绝（不静默夹紧），速度=`GetMaxSpeed(Gripper)×speedPercent`，到位超时按 `GetAxisBusyMs` 动态兜底（2026-09-02 重写，旧版 `isGripperOpen?GetLimitMax:GetLimitMin` 与物理方向相反已废弃）。
 - **中断语义**：`cancel_` 原子标志 + 等待循环（`WaitForCancelOrTime`/`WaitForAxes`/`WaitForStep`）20ms 轮询退出 → `ExecuteActions` 检测后发 `interrupted("用户停止")`。
 - **参数来源**：`ReloadFromConfig()` 从 config 实时读 `kinematics.links.*`/`tcpCalibration.*`/`axes.*.limit*` 喂入 Kinematics/CoordTransform，与 ConfigPage 编辑一致。
 - **自测**：临时驱动 17/17 通过（2026-08-20，仿真 Sim 全家桶）：S01 完整方案 5 动作、S03 Vision 闭环（基座 8.6,-0.8,55.0 conf=1.00）、S04 单步 5 次 NextStep、S05 Stop、S06 EmergencyStop、S07 未使能拒绝、S08 线程不卡。测试驱动已清理。

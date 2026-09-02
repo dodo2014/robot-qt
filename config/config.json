@@ -1,4 +1,4 @@
-﻿{
+{
     "$schema": "CreamPuffRobot configuration schema",
     "axes": {
         "Axis_Extruder": {
@@ -38,7 +38,7 @@
             "limitMax": 0.0,
             "limitMin": -5.0,
             "maxAccel": 50.0,
-            "maxSpeed": 10.0,
+            "maxSpeed": 2.0,
             "name": "[5] 轴5 (夹爪)",
             "portId": 3,
             "sortOrder": 4,

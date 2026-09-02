@@ -68,7 +68,7 @@ void ProcessManager::load()
         a1.points.push_back(p1);
         def.actions.push_back(a1);
 
-        ActionData a2; a2.name = QStringLiteral("打开夹爪"); a2.type = ActionType::Gripper; a2.isGripperOpen = true;
+        ActionData a2; a2.name = QStringLiteral("打开夹爪"); a2.type = ActionType::Gripper; a2.isGripperOpen = true; a2.gripperTarget = -3.0;
         def.actions.push_back(a2);
 
         ActionData a3; a3.name = QStringLiteral("等待视觉结果"); a3.type = ActionType::Vision;
@@ -85,7 +85,7 @@ void ProcessManager::load()
         a5.extrudeAmount = 5.0; a5.extrudeSpeed = 2.0; a5.suckBackAmount = 1.0; a5.suckBackSpeed = 3.0;
         def.actions.push_back(a5);
 
-        ActionData a6; a6.name = QStringLiteral("关闭夹爪"); a6.type = ActionType::Gripper; a6.isGripperOpen = false;
+        ActionData a6; a6.name = QStringLiteral("关闭夹爪"); a6.type = ActionType::Gripper; a6.isGripperOpen = false; a6.gripperTarget = 0.0;
         def.actions.push_back(a6);
 
         ActionData a7; a7.name = QStringLiteral("移动到放置点"); a7.type = ActionType::Move;
@@ -121,6 +121,8 @@ void ProcessManager::load()
                         a.suckBackSpeed = aj.value("suckBackSpeed", 0.0);
                         a.delayMs = aj.value("delayMs", 0);
                         a.isGripperOpen = aj.value("isGripperOpen", false);
+                        // 旧 json 无 gripperTarget：按方向给默认（张开=-3.00 松开3mm / 闭合=0.00 夹紧）
+                        a.gripperTarget = aj.value("gripperTarget", a.isGripperOpen ? -3.0 : 0.0);
 
                         if (aj.contains("points") && aj["points"].is_array()) {
                             for (const auto& pj : aj["points"]) {
@@ -176,6 +178,7 @@ void ProcessManager::save()
             aj["suckBackSpeed"] = action.suckBackSpeed;
             aj["delayMs"] = action.delayMs;
             aj["isGripperOpen"] = action.isGripperOpen;
+            aj["gripperTarget"] = action.gripperTarget;
             aj["points"] = nlohmann::json::array();
 
             for (const auto& pt : action.points) {
