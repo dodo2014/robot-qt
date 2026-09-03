@@ -895,6 +895,10 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
     });
     connect(m_worker, &SequenceWorker::actionStarted, this, [this, setStepEnabled](int i, const QString& name) {
         SPDLOG_INFO("[Process] 单步 actionStarted {}/{}", i, name.toStdString());
+        // 自动选中当前正在执行的动作（单步/自动/单动作共用）：setCurrentRow 经
+        // currentRowChanged 同步 m_currentActionIdx 并刷新右侧详情，执行进度在动作列表可见
+        if (i >= 0 && i < m_actionList->count())
+            m_actionList->setCurrentRow(i);
         setStepEnabled(false);  // 动作已开始执行，禁用单步按钮
     });
     connect(m_worker, &SequenceWorker::actionFinished, this, [this](int i, const QString& name) {
