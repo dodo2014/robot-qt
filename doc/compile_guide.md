@@ -105,14 +105,14 @@ ninja/CMake 自动加；手敲时缺一即编译失败：
 - `/std:c++17` — Qt 6.11 要求 C++17。
 - `/utf-8` — 让编译器把源码/字符串当 UTF-8（中文注释/字面量不乱码）。
 
-参考命令（编译 `out/smoke/tipcheck/tipcheck.cpp` 等独立 Qt 小工具，复用第 3 节 env，
+参考命令（手敲编译独立 Qt 小工具（`out/smoke/` 下的自测程序，`tool.cpp` 为示例源文件），复用第 3 节 env，
 加 Qt include 多版本子目录转发头）：
 
 ```bash
 export MSYS2_ARG_CONV_EXCL="*"
 export INCLUDE="<MSVC>/include;<SDK>/Include/10.0.26100.0/ucrt;<SDK>/Include/10.0.26100.0/shared;<SDK>/Include/10.0.26100.0/um;<QT>/include;<QT>/include/QtWidgets;<QT>/include/QtGui;<QT>/include/QtCore;<QT>/include/QtWidgets/6.11.1;<QT>/include/QtGui/6.11.1;<QT>/include/QtCore/6.11.1;<QT>/include/QtWidgets/6.11.1/QtWidgets;<QT>/include/QtGui/6.11.1/QtGui;<QT>/include/QtCore/6.11.1/QtCore"
 export PATH="<MSVC>/bin/Hostx64/x64;<SDK>/Bin/10.0.26100.0/x64;<QT>/bin:$PATH"
-"<MSVC>/bin/Hostx64/x64/cl.exe" /nologo /std:c++17 /permissive- /Zc:__cplusplus /EHsc /O2 /utf-8 tipcheck.cpp /Fe:tipcheck.exe /link /LIBPATH:"<QT>/lib" Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib /LIBPATH:"<MSVC>/lib/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/ucrt/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/um/x64" /SUBSYSTEM:CONSOLE
+"<MSVC>/bin/Hostx64/x64/cl.exe" /nologo /std:c++17 /permissive- /Zc:__cplusplus /EHsc /O2 /utf-8 tool.cpp /Fe:tool.exe /link /LIBPATH:"<QT>/lib" Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib /LIBPATH:"<MSVC>/lib/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/ucrt/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/um/x64" /SUBSYSTEM:CONSOLE
 ```
 
 **windeployqt 陷阱**：对 release exe（链接 Qt6Widgets.lib）跑 windeployqt 会部署
@@ -125,18 +125,3 @@ mkdir -p plugins/platforms && cp "<QT>/plugins/platforms/qwindows.dll" plugins/p
 **Git Bash PATH 陷阱**：`export PATH="$QT/bin:$PATH"` 后运行 Windows exe 报
 `Qt6Core.dll cannot open` — DLL 加载走的是 Windows 进程的 PATH 而非 bash PATH，
 解决 = 把 dll 放到 exe 旁（同上拷贝），不要依赖 PATH。
-
-## 9. Tooltip 验证工具 tipcheck（2026-09-01 落盘）
-
-`out/smoke/tipcheck/tipcheck.cpp` —— 复刻主程序 QSS + Fusion + 深色 UI，弹出真实 tooltip，
-`QScreen::grabWindow(0)` 截图分析像素白底占比。**任何后续 tooltip 样式改动都必须
-跑它做像素级验证**，避免再次踩"以为修好了但用户侧仍暗色"的坑。
-
-四模式对比：
-- `tipcheck.exe nopal` — 仅 QSS QToolTip 规则（验证旧 QSS 方案 → 实测无效）
-- `tipcheck.exe palette` — QSS QToolTip + setPalette（验证 setPalette 方案 → 实测无效）
-- `tipcheck.exe qtiplabel` — QSS QToolTip, QTipLabel 规则无 setPalette（验证纯 QSS 方案）
-- `tipcheck.exe current` — QSS QTipLabel + setPalette（当前主程序方案，最强）
-
-编译命令见第 8 节。运行需 Qt6Core/Gui/Widgets.dll + plugins/platforms/qwindows.dll
-部署在 exe 旁（见第 8 节末尾）。

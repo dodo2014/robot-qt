@@ -215,6 +215,16 @@ void MainWindow::ApplyGlobalStyle()
             font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
         }
 
+        /* 1.5 QLabel 浅字基底（2026-09-03 补，勿删）：
+              全局 stylesheet 生效后，QMessageBox 这类被 QDialog 规则命中的弹窗，
+              其内部消息文本 QLabel 无匹配规则 → 文字用默认 palette 的 WindowText
+              渲染为深色（深底黑字看不清）。显式 QLabel 规则兜底为浅字。
+              本规则必须位于 QToolTip/QTipLabel 之前，使 tooltip 的深字规则保持
+              更高优先级（同 specificity 后出现者胜）。 */
+        QLabel {
+            color: #b8cce3;
+        }
+
         /* 2. ToolTip 白底深字（2026-09-01 tipcheck 像素级实证：QSS 必须显式匹配
               QTipLabel（实际弹出的私有类名），单写 QToolTip 选择器不匹配、
               QToolTip::setPalette 会被 application stylesheet 绕过 */
