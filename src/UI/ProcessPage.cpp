@@ -122,20 +122,25 @@ void ProcessPage::SetupUI()
     mainLayout->setContentsMargins(14, 14, 14, 14);
     mainLayout->setSpacing(12);
 
-    // Top bar
+    // Top bar：两行布局——第一行方案管理，第二行执行控制 + 执行状态
     auto* topBar = new QWidget();
     topBar->setStyleSheet("background: #1b222b; border-radius: 12px;");
     topBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto* topLayout = new QHBoxLayout(topBar);
+    auto* topLayout = new QVBoxLayout(topBar);
     topLayout->setContentsMargins(16, 8, 16, 8);
-    topLayout->setSpacing(14);
+    topLayout->setSpacing(8);
+
+    auto* schemeRow = new QHBoxLayout();
+    schemeRow->setSpacing(14);
+    auto* execRow = new QHBoxLayout();
+    execRow->setSpacing(14);
 
     auto* newSchemeBtn = new QPushButton(QStringLiteral("新增方案"));
     newSchemeBtn->setStyleSheet(makeBtnStyle("#2f6f9f", "#3a84b8"));
     newSchemeBtn->setCursor(Qt::PointingHandCursor);
     connect(newSchemeBtn, &QPushButton::clicked, this, &ProcessPage::OnNewScheme);
 
-    auto* label = new QLabel(QStringLiteral("当前方案:"));
+    auto* label = new QLabel(QStringLiteral("当前方案"));
     label->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
 
     m_schemeNameEdit = new QLineEdit();
@@ -154,7 +159,7 @@ void ProcessPage::SetupUI()
         QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }
     )");
 
-    auto* confirmBtn = new QPushButton(QStringLiteral("确认切换"));
+    auto* confirmBtn = new QPushButton(QStringLiteral("切换方案"));
     confirmBtn->setStyleSheet(makeBtnStyle("#2f6f9f", "#3a84b8"));
     confirmBtn->setCursor(Qt::PointingHandCursor);
     connect(confirmBtn, &QPushButton::clicked, this, &ProcessPage::OnConfirmSwitch);
@@ -177,18 +182,36 @@ void ProcessPage::SetupUI()
     connect(stopBtn, &QPushButton::clicked, this, [this]() {
         if (m_worker) m_worker->Stop();
         ResetStepSession();
+        // 立刻覆盖上一次的终态（如「✅ 完成」），避免下次点击前误导。
+        // 若 worker 正在运行，后续 interrupted 会给出更准确的终态并覆盖此处。
+        SetStatusText(QStringLiteral("■ 已停止（保持使能）"), QStringLiteral("#b8cce3"));
         SPDLOG_INFO("[ProcessPage] 停止按钮：业务停止（保持使能，可重新单步）");
     });
 
-    topLayout->addWidget(newSchemeBtn);
-    topLayout->addWidget(label);
-    topLayout->addWidget(m_schemeNameEdit);
-    topLayout->addWidget(m_schemeCombo);
-    topLayout->addWidget(deleteSchemeBtn);
-    topLayout->addWidget(confirmBtn);
-    topLayout->addWidget(m_stepBtn);
-    topLayout->addWidget(stopBtn);
-    topLayout->addStretch();
+    // 执行状态标签：stateChanged 由 worker 线程 emit，此处仅在主线程更新 UI
+    m_statusLabel = new QLabel(QStringLiteral("● 空闲"));
+    m_statusLabel->setMinimumWidth(130);
+    m_statusLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 600; background: transparent; border: none;");
+
+    schemeRow->addWidget(label);
+    schemeRow->addWidget(m_schemeNameEdit);
+    schemeRow->addWidget(m_schemeCombo);
+    schemeRow->addWidget(newSchemeBtn);
+    schemeRow->addWidget(confirmBtn);
+    schemeRow->addWidget(deleteSchemeBtn);
+    schemeRow->addStretch();
+
+    auto* execLabel = new QLabel(QStringLiteral("方案调试"));
+    execLabel->setStyleSheet("color: #b8cce3; font-size: 13px; font-weight: 500; background: transparent; border: none;");
+
+    execRow->addWidget(execLabel);
+    execRow->addWidget(m_stepBtn);
+    execRow->addWidget(stopBtn);
+    execRow->addWidget(m_statusLabel);
+    execRow->addStretch();
+
+    topLayout->addLayout(schemeRow);
+    topLayout->addLayout(execRow);
 
     mainLayout->addWidget(topBar);
 
@@ -746,6 +769,15 @@ void ProcessPage::OnDeleteScheme()
     const auto& schemes = ProcessManager::instance().schemes();
     if (m_currentSchemeIdx < 0 || schemes.isEmpty()) return;
 
+    // 单步执行进行中禁止删除方案：worker 跑的是启动时值拷贝的 scheme，
+    // 删除后继续点「单步执行」会按旧拷贝继续推进，与界面的方案列表不一致
+    if (IsExecutionActive()) {
+        SPDLOG_WARN("[Process] 删除方案被拒：单步执行进行中 idx={}", m_currentSchemeIdx);
+        QMessageBox::warning(this, QStringLiteral("提示"),
+            QStringLiteral("单步执行尚未结束，请先点击「停止」结束当前调试，再删除方案"));
+        return;
+    }
+
     auto reply = QMessageBox::question(this,
         QStringLiteral("删除方案"),
         QStringLiteral("确定要删除方案 \"%1\" 吗？\n此操作不可撤销。").arg(schemes[m_currentSchemeIdx].schemeName),
@@ -777,6 +809,15 @@ void ProcessPage::OnConfirmSwitch()
     if (idx < 0 || idx >= schemes.size()) return;
     if (idx == m_currentSchemeIdx) return;
 
+    // 单步执行进行中禁止切换方案：SequenceWorker 跑的是启动时值拷贝的 scheme，
+    // 切换后继续点「单步执行」会按旧拷贝继续推进，与界面显示的方案不一致
+    if (IsExecutionActive()) {
+        SPDLOG_WARN("[Process] 切换方案被拒：单步执行进行中 idx={}", idx);
+        QMessageBox::warning(this, QStringLiteral("提示"),
+            QStringLiteral("单步执行尚未结束，请先点击「停止」结束当前调试，再切换方案"));
+        return;
+    }
+
     if (m_currentSchemeIdx >= 0) {
         auto reply = QMessageBox::question(this,
             QStringLiteral("确认切换"),
@@ -799,8 +840,62 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
     connect(m_worker, &SequenceWorker::logMessage, this, [this](const QString& msg) {
         SPDLOG_INFO("[Process] worker: {}", msg.toStdString());
     });
-    connect(m_worker, &SequenceWorker::actionStarted, this, [this](int i, const QString& name) {
+
+    // 执行状态标签（顶栏第二行，单步执行的唯一界面反馈）
+    auto setFinalStatus = [this](const QString& text, const QString& color) {
+        m_finalStatus = text;
+        m_finalColor  = color;
+        SetStatusText(text, color);
+    };
+    // 单步按钮只在「单步暂停」期可点，动作执行期间一律禁用（D2 修复）：
+    // stepGo 是 bool 非计数，执行期点击会预置放行，使下一个暂停点被跳过、两个动作连着跑，
+    // 单步调试本该有的逐步确认机会随之丢失。禁用后每次点击必然落在暂停期，语义收敛为
+    // 「走一步 → 停 → 确认 → 再走一步」。
+    auto setStepEnabled = [this](bool on) {
+        if (m_stepBtn) m_stepBtn->setEnabled(on && HardwareManager::instance().IsSystemHomed());
+    };
+    connect(m_worker, &SequenceWorker::stateChanged, this, [this, setStepEnabled](const QString& s) {
+        SPDLOG_INFO("[Process] worker state: {}", s.toStdString());
+        if (s == QStringLiteral("单步暂停")) {
+            SetStatusText(QStringLiteral("● 单步暂停"), QStringLiteral("#e0a520"));
+            setStepEnabled(true);   // 暂停期：允许释放下一步
+        }
+        else if (s == QStringLiteral("运行中")) {
+            SetStatusText(QStringLiteral("● 运行中"), QStringLiteral("#7ed67e"));
+            setStepEnabled(false);  // 动作执行中：禁用，杜绝提前放行
+        }
+        else if (s == QStringLiteral("执行选中动作")) {
+            SetStatusText(QStringLiteral("● 执行选中动作"), QStringLiteral("#4fb0d8"));
+            setStepEnabled(false);
+        }
+        else if (s == QStringLiteral("空闲")) {
+            // 会话结束：优先保留终态（完成/已停止/出错），否则回到空闲
+            SetStatusText(m_finalStatus.isEmpty() ? QStringLiteral("● 空闲") : m_finalStatus,
+                          m_finalColor.isEmpty() ? QStringLiteral("#b8cce3") : m_finalColor);
+            setStepEnabled(true);   // 会话结束，使能交回 homed 联动
+        }
+        else
+            SetStatusText(QStringLiteral("● ") + s, QStringLiteral("#b8cce3"));
+    });
+    connect(m_worker, &SequenceWorker::schemeFinished, this, [setFinalStatus]() {
+        setFinalStatus(QStringLiteral("✅ 完成"), QStringLiteral("#7ed67e"));
+    });
+    connect(m_worker, &SequenceWorker::interrupted, this, [this, setFinalStatus]() {
+        // 急停与业务停止都发 interrupted，靠使能状态区分：急停断使能、业务停止保持使能
+        // （HardwareManager::EmergencyStop 先 fill(false) 再 emit，此处读到的一定是终态）
+        if (HardwareManager::instance().IsGlobalEnabled())
+            setFinalStatus(QStringLiteral("■ 已停止（保持使能）"), QStringLiteral("#b8cce3"));
+        else
+            setFinalStatus(QStringLiteral("⏹ 已急停（需重新使能）"), QStringLiteral("#d14444"));
+    });
+    connect(m_worker, &SequenceWorker::errorOccurred, this,
+            [this, setFinalStatus](const QString& msg) {
+        SPDLOG_WARN("[Process] 执行出错: {}", msg.toStdString());
+        setFinalStatus(QStringLiteral("✖ 出错"), QStringLiteral("#d14444"));
+    });
+    connect(m_worker, &SequenceWorker::actionStarted, this, [this, setStepEnabled](int i, const QString& name) {
         SPDLOG_INFO("[Process] 单步 actionStarted {}/{}", i, name.toStdString());
+        setStepEnabled(false);  // 动作已开始执行，禁用单步按钮
     });
     connect(m_worker, &SequenceWorker::actionFinished, this, [this](int i, const QString& name) {
         SPDLOG_INFO("[Process] 单步 actionFinished {}/{}", i, name.toStdString());
@@ -837,6 +932,20 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
 void ProcessPage::ResetStepSession()
 {
     m_stepActive = false;
+}
+
+void ProcessPage::SetStatusText(const QString& text, const QString& color)
+{
+    if (!m_statusLabel) return;
+    m_statusLabel->setText(text);
+    m_statusLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 13px; font-weight: 600; background: transparent; border: none;")
+            .arg(color));
+}
+
+bool ProcessPage::IsExecutionActive() const
+{
+    return m_stepActive || (m_worker && m_worker->IsRunning());
 }
 
 void ProcessPage::ApplySpeedPercentToCurrentAction(int v)
@@ -906,13 +1015,31 @@ void ProcessPage::OnStepExecute()
     const auto& scheme = schemes[m_currentSchemeIdx];
 
     if (!m_stepActive) {
+        // 新会话开始：清空上一次的终态，避免「✅ 完成」残留到本次运行
+        m_finalStatus.clear();
+        m_finalColor.clear();
         m_worker->ReloadFromConfig();
         m_worker->SetStepMode(true);
-        m_worker->RunSequence(scheme);
+        if (!m_worker->RunSequence(scheme)) {
+            // 拒绝（运行中/引擎忙）：不进入单步会话，按钮维持当前状态，避免 m_stepActive 卡死
+            // （D1：原实现不检查返回值，被拒后 m_stepActive 仍置 true → 此后所有点击都走 NextStep，
+            //   会话永久卡死，只能靠停止/急停复位）
+            SPDLOG_WARN("[Process] 单步执行启动被拒：引擎忙或不可用（会话未激活）");
+            return;
+        }
         m_stepActive = true;
+        // 同步禁用（不等 worker 的 stateChanged 跨线程回传）：释放后的动作即将启动，
+        // 若等到信号到达才禁用，快速连点的第 2 下会穿透窗口期 → 跳过暂停点连跑两个动作（D2 竞态）
+        if (m_stepBtn) m_stepBtn->setEnabled(false);
         SPDLOG_INFO("[Process] 单步执行启动：方案={}", scheme.schemeName.toStdString());
     } else {
-        m_worker->NextStep();
+        if (!m_worker->NextStep()) {
+            // NextStep 仅在 running/stepMode 都成立时有效；无效则按钮不应灰
+            SPDLOG_WARN("[Process] 单步执行：释放失败（引擎不在单步运行态）");
+            return;
+        }
+        // 同步禁用，同上：下一次「单步暂停」信号到达时再由 stateChanged 处理器重新点亮
+        if (m_stepBtn) m_stepBtn->setEnabled(false);
         SPDLOG_INFO("[Process] 单步执行：释放下一步");
     }
 }
@@ -948,6 +1075,8 @@ void ProcessPage::OnRunSelectedAction()
     if (m_stepActive) ResetStepSession();
     // 每次执行前刷新运动学/手眼（与 OnStepExecute 一致，保证与 ConfigPage 编辑同步）
     m_worker->ReloadFromConfig();
+    m_finalStatus.clear();
+    m_finalColor.clear();
     bool ok = m_worker->RunSingleAction(scheme, row);
     if (!ok) {
         // 拒绝（未使能/运行中/越界）不发完成信号，立即恢复按钮，避免永久禁用

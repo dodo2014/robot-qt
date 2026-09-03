@@ -4,6 +4,32 @@
 
 SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机双模式。
 
+## 速查（Quick Start，新会话先读）
+
+### 本文档地图
+
+| 章节 | 内容（详细权威版见各节内指针） |
+| --- | --- |
+| Build | 编译/运行/Release 全流程；PowerShell 必需、LNK1168、沙箱编译（`doc/compile_guide.md`） |
+| 项目记忆与日志（三套，勿混用） | AGENTS.md / doc/worklog / .history 三套记忆的职责边界 |
+| Architecture | 分层依赖（UI→Logic→Core→HAL）、HAL 多品牌体系、Home Offset；详细版见 `doc/architecture.md` |
+| Continuous QA & Testing | TEST_RECORD.md 强制记账法则、Sim 冒烟规范、运动学验证程序 |
+| Code Conventions | C++17/W4、命名、QSS、spdlog（`SPDLOG_*` 宏）约定 |
+| Config | config.json schema 要点 + ConfigManager / ProcessManager（schema 详版 `doc/config.md`、process.json 见 `doc/process.md`） |
+| UI Pages / UI Conventions | 五页职责 + QSS/布局/DPI/线程陷阱 |
+| Current Phase | 已完成里程碑、SequenceWorker 引擎文档、真机踩坑硬知识、下一步 |
+
+### 常用命令速查（细节与坑见下方对应章节）
+
+- **Debug 编译**：PowerShell 下 `& out\smoke\build_debug.bat`（默认 target `CreamPuffRobot`，已内置 LNK1168 自动重试）
+- **Release 编译**：根目录 `build_release.bat`；两脚本用环境变量 `$env:TARGET='<target>'` 切换 target（如 `test_kinematics_check`）。**必须在 PowerShell 执行**（Git Bash 调 `cmd /c` 会坏 vcvars 路径）
+- **运行**：`out\build\x64-Debug\CreamPuffRobot.exe`；程序**硬编码读工程根 `config/config.json`**（勿拷 exe 副本冒烟）；改动代码须**同时编 Debug + Release**
+- **运动学验证（本仓库唯一 CMake 测试 target）**：`$env:TARGET='test_kinematics_check'` 后编译 → exe 在 `out\build\<config>\tests\test_kinematics_check.exe`（无参=内置回归，退出码 0/1）
+- **Sim 冒烟**：PowerShell `& out\smoke\sim_smoke.ps1`；**通过判定 = 当日日志含 `Initialize complete`**（存活≠通过），日志 `log/creampuff_YYYY-MM-DD.log`
+- **Tooltip 像素验证**：`out/smoke/tipcheck`（编译/运行见 `doc/compile_guide.md` §8-9）
+- **Git**：禁止未经用户明确要求执行 commit/push
+- **测试台账**：每修完 bug / 完成功能后强制在 `TEST_RECORD.md` 追加一行；大改核心逻辑前先读它防回归
+
 ## Build
 
 - **VS**: Open folder in VS, `Ctrl+Shift+B` (x64-Debug)
@@ -37,7 +63,7 @@ CMakeLists.txt  — root: find_package(Qt6/Eigen3/OpenCV/spdlog) + 5 subdirs
 ├─ src/HAL/     — Hardware Abstraction Layer（interfaces/core/motioncard/servo/camera/algorithm 六子目录）
 ├─ src/Core/    — Kinematics, CoordTransform, Trajectory（2026-08 重构：`Pose{x,y,z,r}`/`Joints{j1,j2,z,r}`，2D SCARA L1=138.83/L2=166.86，R 独立透传；`Forward/Inverse/InverseSmart/SetTCP`；**TCP 已内化为等效小臂**（`l2_eff = L2 + tcpForward_`，Z 扣 `tcpDown_`，旧 `ApplyTCPOffset/AddTCPOffset` 已删除）；**甜甜圈工作空间校验**（`rInner=|L1−L2_eff|`，原点不可达；**内外边界容差 0.1mm**——曾 0.001mm 太紧，完全伸直位示教点极径因显示舍入微超理论最大半径被误拒，2026-08-31 修复）；`CoordTransform` 为 Eigen 4×4 手眼矩阵；旧 `Pose3D`/`JointAngles` 已删除。**L1 大臂水平投影 2026-08 重测：174.35 → 138.83**）
 ├─ src/Logic/   — PickCycleController (视觉抓取单周期模板) + SequenceWorker（大脑执行引擎，2026-08-20 新增）
-└─ src/UI/      — MainWindow + 5 pages + ToggleSwitch
+└─ src/UI/      — MainWindow + 5 pages + ToggleSwitch + KinematicsHelper.h（header-only FK 工具，供 AutoRun/Manual 页坐标刷新）
 ```
 
 Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (HardwareManager 读配置喂给底层卡)
@@ -47,7 +73,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 - **目录结构（已重组，2026-08）**：`src/HAL/` 下分六子目录——
   `interfaces/`（纯接口 I*.h）、`core/`（HardwareManager、AxisConverter、AxisMap、HALFactory、AxisConfigService）、`motioncard/`（BoPaiCard、SimCard）、`servo/`（XRServo、SimServo）、`camera/`（SimCamera、CameraCaptureWorker、FrameSaver、FrameConverter、SimVision、CameraManager）、`algorithm/`（SimAlgo）。
   **include 约定**：HAL 内部互 include 用平铺文件名（`#include "SimCard.h"`），靠 CMake include dir 追加全部子目录解析；外部引用用 `HAL/<子目录>/Xxx.h`（如 `HAL/core/HardwareManager.h`、`HAL/interfaces/IMotionCard.h`）。
-- **接口层**（纯虚，`src/HAL/interfaces/`）: `IMotionCard`(脉冲单位)、`IAxisServo`、`IEndEffector`、`ICamera`、`IPuffAlgorithm`
+- **接口层**（纯虚，`src/HAL/interfaces/`）: `IMotionCard`(脉冲单位)、`IAxisServo`、`IEndEffector`、`ICamera`、`IPuffAlgorithm`。注：`IEndEffector` + `REGISTER_END_EFFECTOR` 目前为**预留空槽**（无实现注册、从未实例化，HardwareManager 仅一处防御性 `Disconnect`）；夹爪实际是逻辑轴 `Axis_Gripper`（BoPai 卡通用运动轴 + 软限位），不走末端执行器分支
 - **工厂**: `HALFactory.h` 运行时字符串注册工厂，`REGISTER_MOTION_CARD/AXIS_SERVO/END_EFFECTOR/CAMERA/PUFF_ALGORITHM` 宏自动注册
 - **仿真实现**: `SimCard`("SimCard")、`SimServo`("SimServo")、`SimCamera`("SimCamera")、`SimAlgo`("SimAlgo")。`SimCamera` 生成含移动目标（粉/蓝泡芙斑块 + 深度图 mm）的测试图案帧；`SimAlgo` 按 `SimVision.h` 的 `TargetSpec` 颜色匹配检测目标→`PuffResult`（像素框 + 相机内参换算的物理坐标，`z` 取深度并受 `vision.depthZMin/ZMax` 过滤，`confidence`≈覆盖率）。`SimVision.h` 是两者共用的目标规格（改图案颜色/半径必须同步，保证"生成→识别"闭环）
 - **相机采集线程**: `CameraCaptureWorker`（QObject + QTimer，被移入 `QThread`）每帧调 `ICamera::CaptureFrame()` 并经 `frameReady(const CameraFrame&)` 信号广播（值类型，`qRegisterMetaType<CameraFrame>` 已注册，跨线程自动深拷贝）。`HardwareManager` 负责生命周期：`CameraOpen/Close`、`StartCameraStream(fps)/StopCameraStream`、`IsCameraStreaming`，并把 worker 的 `frameReady` 转发为自身信号供 UI 订阅
@@ -113,7 +139,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 3. **修改前验算**：计划大范围重构或修改核心逻辑（`HardwareManager`、`ProcessManager`、`PollTick/JogTick`、换算/软限位/回零等）前，**必须先读取 `TEST_RECORD.md`**，脑内推演改动是否会破坏已标为 **🟢 已通过** 的用例；有风险则调整方案或补回归验证。
 4. **Git 提交须用户明确要求**：**禁止主动执行 `git commit/push`**——即使完成一批改动并整理好提交信息，也必须等用户明确说"提交/commit"才执行；push 同理。工作完成时最多提示"可提交"，由用户决定时机。
 5. **Sim 冒烟规范（2026-08-31 定稿，2026-09-02 修订）**：用标准脚本 `out\smoke\sim_smoke.ps1`——就地临时改**工程根** `config/config.json` 为 SimCard/SimServo → `-WindowStyle Hidden` 独立窗口启动 **15s**（Debug 版从进程启动到 `HardwareManager::Initialize` 实测约 7s，原 8s 会在初始化完成前 kill 进程导致日志截断、被误读成"初始化卡死"）验证存活 → try/finally 保证恢复配置 → **新增 `SMOKE_INIT_COMPLETE` 日志判定**（存活≠通过：断言框挂起时进程也存活，必须查当日日志含 `Initialize complete`）。**禁止拷贝 exe 输出目录做副本冒烟**——开发机版程序路径硬编码 `PROJECT_SOURCE_DIR`（main.cpp 读 `PROJECT_SOURCE_DIR/config/config.json` 与 `log/`），拷贝副本无效（曾误生成 2.1GB C 盘副本）。产物仅工程根 `log/creampuff_YYYY-MM-DD.log`。
-6. **运动学验证程序（2026-08-31 固化）**：`tests/test_kinematics_check.cpp`（root CMake 已挂 tests 子目录，独立 target 不进主程序依赖链）。无参运行 = 内置真机摆位回归（2026-08-31 两组实测）+ 限位内 20 组 FK↔IK 往返自检，退出码 0/1 可脚本调用；`fk <j1> <j2> <z> <r>` / `ik <x> <y> <z> <r> [curJ2]` 手动查询。参数自动读 config（改 config 无需改程序）。编译：`$env:TARGET='test_kinematics_check'` 后跑 `out\smoke\build_debug.bat` 或根 `build_release.bat`（两脚本已支持 TARGET 环境变量选 target，默认 CreamPuffRobot 不变；PowerShell→bat 传参用环境变量，`%~1` 在该链路曾失真）。
+6. **运动学验证程序（2026-08-31 固化）**：`tests/test_kinematics_check.cpp`（root CMake 已挂 tests 子目录，独立 target 不进主程序依赖链）。无参运行 = 内置真机摆位回归（2026-08-31 两组实测）+ 限位内 20 组 FK↔IK 往返自检，退出码 0/1 可脚本调用；`fk <j1> <j2> <z> <r>` / `ik <x> <y> <z> <r> [curJ2]` 手动查询。参数自动读 config（改 config 无需改程序）。编译：`$env:TARGET='test_kinematics_check'` 后跑 `out\smoke\build_debug.bat` 或根 `build_release.bat`（两脚本已支持 TARGET 环境变量选 target，默认 CreamPuffRobot 不变；PowerShell→bat 传参用环境变量，`%~1` 在该链路曾失真）。产物在 `out\build\<config>\tests\test_kinematics_check.exe`（**在 tests/ 子目录**，CMake 定义于 tests 作用域；Debug 目录可能仅剩 .ilk/.pdb，缺失时以 Release 产物为准）。
 
 ## Code Conventions
 
@@ -172,6 +198,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 1. **AutoRunPage** — 自动运行: camera views, LCD display, coord panel, log, 5 control buttons
 2. **ManualControlPage** — 手动控制: enable/disable, 6-axis JOG table
 3. **ProcessPage** — 工艺与流程: scheme management, action list (QListWidget), detail stack (QStackedWidget × 5 action types). Data stored in `process.json` via `ProcessManager`. 动作与方案的新增/编辑/删除/保存完整闭环，实时同步 JSON。
+   - **单步执行 UI 现状（2026-09-03 真机验证通过，阶段 5）**：顶栏两行——第一行「当前方案: [名称框] [方案下拉] 新增方案 **切换方案**(原「确认切换」仅改文案) 删除方案」，第二行「**方案调试** | 单步执行 | 停止 | [状态标签]」（`ProcessPage.cpp:125-214`）。`m_statusLabel`（:192）接 `SequenceWorker::stateChanged` + `schemeFinished`/`interrupted`/`errorOccurred` 显示 ● 空闲/● 运行中/● 单步暂停/● 执行选中动作/✅ 完成/■ 已停止/⏹ 已急停/✖ 出错——**此前 stateChanged 全项目 6 处 emit、0 处 connect，界面无任何执行状态反馈，2026-09-03 补齐接线**。实现要点：① 终态保留（StartExecution 在 schemeFinished/interrupted 后补发 `stateChanged("空闲")`，会用 `m_finalStatus/m_finalColor` 保留终态，新会话启动清空）；② 急停与业务停止都发 interrupted，靠 `IsGlobalEnabled()` 区分文案（急停断使能）。单步按钮**执行期同步禁用**（`OnStepExecute` 点击栈内即 `setEnabled(false)`，ProcessPage.cpp:1033/1042，非等信号）——D2：stepGo 是 bool 非计数，执行期点击会预置放行使下一个暂停点被跳过连跑两个动作，同步禁用把点击收敛到暂停期。切换/删除方案执行期门禁 `IsExecutionActive()`（:946 = m_stepActive || worker->IsRunning()，:774 删除、:814 切换，弹窗「单步执行尚未结束…」）。
    - **执行选中动作（2026-08-31）**: 动作列表按钮行「下移」后绿色运行图标按钮（仅图标 + tooltip）→ `OnRunSelectedAction` → `SequenceWorker::RunSingleAction` 单动作独立执行（详见 SequenceWorker 节）；未选动作弹窗、与单步会话互斥（启动前 `ResetStepSession`）。
    - 移动动作: 点位 QTableWidget (点名称/X/Y/Z/R/姿态) + 添加/删除/上移/下移/示教按钮。内存仍为扁平 PointData，仅 JSON 序列化为 `coord`/`joints` 嵌套结构
    - 识别动作: 识别类型/曝光时间/匹配模板/置信度阈值
@@ -181,7 +208,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
    - **动作运行速度**（`m_speedPercentRow`，仅移动/挤压/夹爪动作显示，其余隐藏）: `QSpinBox`(1-100, 后缀 " %") + `QSlider`(横向) 双向同步，各自 `blockSignals` 防回环；保存时读 `m_speedPercentSpin->value()`。**拖动即实时写回当前动作 `action.speedPercent`（`ApplySpeedPercentToCurrentAction`，2026-08-31 起改即生效，不必先点保存）**。滑块 `setFixedWidth(240)` 固定长度、无拉伸（`addWidget` 不带 stretch），长度调整改 `ProcessPage.cpp:469`
 4. **VisionTestPage** — 视觉检测（导航第 4 项，位于「设备与配置」前）: 相机控制（型号下拉/序列号/分辨率/FPS/打开关闭/开始停止采集 + 状态点）＋ 预览（RGB/深度切换、识别框叠加开关、FPS/时间戳/分辨率、保存截图）＋ 算法测试（型号下拉/单次检测/连续检测/结果表格，表格列 = 序号/置信度/X/Y/Z/偏航/U/V/宽/高）＋ 离线图片加载（`getOpenFileName`→`CameraFrame`→`Detect`）＋ 参数（置信度阈值/Zmin/Zmax/曝光，`QDoubleSpinBox::valueChanged` 实时写 `ConfigManager`）。
    - 采集来源统一走 `HardwareManager::frameReady`（采集线程）→ `OnFrameReady` 存 `latestFrame_` 渲染；检测结果存 `lastResults_`，RGB/深度/截图共用 `BuildDisplayImage()`（含叠加）。截图经 `FrameSaver` 异步写盘。
-   - 型号下拉在构造函数从工厂 `AvailableTypes()` 填充（`Initialize()` 前的 `ForceLinkHALImpls` 未执行时可能为空，回退 "SimCamera"/"SimAlgo" 字符串，与工厂注册名一致）。
+   - 型号下拉在构造函数从工厂 `AvailableTypes()` 填充（主程序以 `$<LINK_LIBRARY:WHOLE_ARCHIVE,HAL>` 整库链接 HAL，工厂静态注册进程启动即生效，下拉通常非空；为空时回退 "SimCamera"/"SimAlgo" 字符串，与工厂注册名一致）。
 5. **ConfigPage** — 设备与配置: 5 tabs (通信与连接/运动学参数/视觉与工艺参数/TCP与标定/电控与映射)
    - **电控与映射** tab: 左侧轴列表按 `sortOrder` 升序排列。每个轴存储在 `axes` 对象中，key 为**不可变的逻辑身份名**（如 `Axis_J1`），与物理端口解耦。修改 `hardwareType` 或 `portId` 时仅更新对应属性字段（不重命名 key），并自动校验同类型端口不重复（重复则弹窗回退）。
 
@@ -248,10 +275,14 @@ HAL 多品牌硬件接入全部完成：
 
 - **HAL 目录重组 + HardwareManager 拆分（已完成，编译+冒烟通过）**：`src/HAL/` 拆六子目录（interfaces/core/motioncard/servo/camera/algorithm）；相机生命周期拆出 `CameraManager`（HardwareManager 保留 `CameraOpen/Close/Start/Stop/IsStreaming` 转发与 `frameReady` 信号）；每轴速度/单位/软限位查询拆出 `AxisConfigService`（HardwareManager 保留转发方法，UI 层零改动）。**对外 API 不变**，Debug/Release 编译通过、仿真启动存活。经验：拆分共享 `HardwareManager.h/.cpp` 与 `CMakeLists.txt` 的模块**不能并行**；外部 include 用 `HAL/<子目录>/Xxx.h`，HAL 内部平铺靠 include dir 追加子目录解析。
 
+- **工艺流程单步执行真机验证 + UI 收口（2026-09-03，阶段 5 单步部分全通过 🟢）**：ProcessPage「单步执行」真机验证 5.1-5.5 + 边界补 1/3/4/5 全部 🟢（TEST_RECORD.md:66-71）。三项 UI 改动：① 顶栏两行布局 + 执行状态标签（`stateChanged` 接线补齐，见 UI Pages·ProcessPage 节）；② 单步按钮执行期**同步禁用**（D2 修复，改动仅在 UI 层，SequenceWorker 零改动）；③ 切换/删除方案执行期门禁 `IsExecutionActive()`。三个实测结论（防回归）：**点击次数 N+1**（WaitForStep 在循环体内，最后一个动作也挂起）；**Stop 非就近刹车**（只置 cancel 不走停轴，执行完当前动作才停，见急停节）；**急停后 IsSystemHomed 仍 true → 单步按钮不置灰，点击被使能门禁静默拦（只写日志不弹窗）**；未使能拒绝同样仅日志无弹窗。**遗留**：三页操作互斥（手动/工艺流程/自动运行）未实现（单步暂停中切自动运行页可被 running 门禁拒，但无跨页主动互斥与提示）；ProcessPage 按钮无 objectName（自动化需按文本定位）；单步执行/运行期间 UI 的 `m_currentActionLabel` 不随执行刷新（仅列表选中驱动）。
+
+
 ### SequenceWorker 大脑执行引擎（2026-08-20 阶段 2 轮 A 落地，引擎层自测通过）
 
 - **定位**：按 `SchemeData` 逐动作执行的流程编排引擎（`src/Logic/SequenceWorker.h/.cpp`），与 `PickCycleController`（视觉抓取单周期模板）职责互补。UI 已接线（T7–T10，2026-08-20/21 完成）。
 - **接口**：`RunSequence(const SchemeData&)`（使能门禁 `IsGlobalEnabled`，未使能拒绝+errorOccurred）/ **`RunSingleAction(const SchemeData&, int actionIndex)`（2026-08-31 新增，单动作独立执行，与 RunSequence 共用 running 门禁互斥；未使能发 errorOccurred，运行中/越界静默返回 false）** /`Stop()`（安全停止+interrupted，保持使能）/`EmergencyStop()`（+断使能）/`SetStepMode(bool)`/`NextStep()`；信号 `actionStarted/actionFinished/`**`singleActionFinished`**`/schemeFinished/interrupted/errorOccurred/logMessage/stateChanged`。
+- **单步语义（N+1 次点击，勿按 N 次预期）**：单步 = `SetStepMode(true)` + `RunSequence`，与连续运行共用同一 `ExecuteActions()` 主循环，唯一分歧在 `SequenceWorker.cpp:306-314`——每动作 `ExecuteAction` 成功后 `emit stateChanged("单步暂停")` → `WaitForStep()`（20ms 轮询 `cancel||stepGo` 的 QEventLoop，退出时 `stepGo.store(false)`）→ `NextStep()` 置 `stepGo=true` 唤醒。**`WaitForStep` 在 for 循环体内：最后一个动作执行完也会暂停**，须再点一次才退出循环发 `schemeFinished` → **N 个动作需 1 次启动 + N 次释放 = N+1 次点击**（引擎层自测 S04「5 动作 5 次 NextStep」即含启动首点）。`NextStep()` 返回 false（非 running/非 stepMode）时 UI 不应置灰按钮。
 - **线程模型**：`moveToThread` 到独立 QThread（worker 线程执行循环），**全部 HardwareManager 调用经 `InMainThread` 辅助用 `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` 回主线程执行**，与 PollTick 串行避免数据竞争；`RunSequence` 内 `invokeMethod("StartExecution", QueuedConnection)` 排队到 worker 线程。主线程只短暂执行硬件操作，UI 不卡（S08 已验）。
 - **动作实现**：Move=`InverseSmart`（TCP 已内化）→ 逐轴 `MoveAbs`（先 J2/R 舵机后 J1/Z 卡轴）→ `WaitForAxes` 轮询 `IsAxisBusy` 到位（30s 兜底）；Vision=SimCamera 采帧+SimAlgo 检测+`CoordTransform::CameraToRobot` 手眼换算（无相机/算法时模拟延时）；Extrude=挤出量/回抽量（绝对目标=挤出量−回抽量，Extruder 限位 [0,100] 恒正）；Delay=`QEventLoop`+20ms 轮询可被 cancel 打断；Gripper=取 `action.gripperTarget`（轴5 绝对目标 mm，0=夹紧/负=松开），`IsWithinSoftLimits` 越界拒绝（不静默夹紧），速度=`GetMaxSpeed(Gripper)×speedPercent`，到位超时按 `GetAxisBusyMs` 动态兜底（2026-09-02 重写，旧版 `isGripperOpen?GetLimitMax:GetLimitMin` 与物理方向相反已废弃）。
 - **中断语义**：`cancel_` 原子标志 + 等待循环（`WaitForCancelOrTime`/`WaitForAxes`/`WaitForStep`）20ms 轮询退出 → `ExecuteActions` 检测后发 `interrupted("用户停止")`。
@@ -272,13 +303,14 @@ HAL 多品牌硬件接入全部完成：
 - **关键修复（D1–D17，评审发现全部修复，清单见 TEST_RECORD.md / doc/worklog/2026-08-21.md）**：D1 方案下拉时序（`ProcessManager::load()` 提前到 MainWindow SetupUI 前 + showEvent 刷新）；D2 失败后启动按钮恢复；D4 ShutdownWorker；D5/D6 坐标面板用 stateUpdated/servoStateUpdated 缓存关节位 + Kinematics 成员缓存（避免 50ms 读舵机串口）；D11 急停无条件先 HardwareManager::EmergencyStop；D16 抽 `src/UI/KinematicsHelper.h`（UI 层统一 FromConfig/ReadConfigParams，Core 不依赖 Config）。
 - **moc 陷阱**：信号参数类型前向声明不够，AutoRunPage.h 需 include `HAL/interfaces/ICamera.h` 等完整定义；外层 lambda 必须捕获 this（内层捕 this 报 C3493）。
 
-### 全局急停升舱 + 业务停止就近（2026-08-28，待真机复测）
+### 全局急停升舱 + 业务停止就近（2026-08-28；2026-09-03 阶段 5 真机验证通过）
 
 - **理念**：急停全局唯一入口（MainWindow 顶栏圆形红色按钮），业务停止就近跟随场景（ProcessPage 单步执行旁停止按钮）。
 - **MainWindow 顶栏**：右侧新增 46px 圆形急停（完整 QSS selector）；点击 = `HardwareManager::EmergencyStop()` + `sequenceWorker_` 判空调 `EmergencyStop()`（**必须含 worker 中断**，否则方案运行中急停后 SequenceWorker 会继续跑下一动作）。
 - **信号驱动状态清理**：`HardwareManager` 新增 `emergencyStopTriggered` 信号（`EmergencyStop()` 内 emit，唯一触发点）；ManualControlPage 连接它做 `ResetAxisStates()`+提示，AutoRunPage 连接它恢复启动按钮/状态标签/日志（原 `OnEmergencyClicked` 删除，UI 响应改 `OnEmergencyTriggered` 槽）。
 - **按钮变化**：AutoRunPage 5→4（删"⚔ 急停"）；ManualControlPage 顶部 4→3（使能/断使能/一键回零）；ProcessPage「单步执行」右侧红色「停止」已接 `SequenceWorker::Stop()`（业务停止就近，经 `SetSequenceWorker` 注入 worker，与 AutoRunPage 同模式）；ProcessPage「单步执行」经 `SetStepMode(true)+RunSequence` / `NextStep` 接单步模式（此前为 stub，本轮补齐）。
 - **语义区分**：停止=业务（可恢复、保持使能）、急停=安全（断使能、需重新使能）。TEST_RECORD 记 🟡，阶段 5 用例 5.6/5.7 覆盖真机验证。
+- **⚠ 停止语义实测修正（2026-09-03，勿按"就近刹车"预期）**：标题/上文"业务停止就近"仅指"按钮位置就近跟随场景"——`SequenceWorker::Stop()` 实际**只置 `cancel` 原子标志、不下发任何停轴命令**（SequenceWorker.cpp:210-215，卡轴/舵机继续走完当前 MoveAbs 才被 WaitFor* 循环感知停止），并非"立即刹车"。真机实测（TEST_RECORD.md:68）：单步中点「停止」会**执行完当前动作才停**，然后会话复位、可重新单步（从第一个动作开始）。`Stop()` 首行 `if (!running) return;`（:212），非运行态调用静默无效无日志。急停（EmergencyStop）才是真刹车（硬断使能）。
 
 ### 真机联调进展（2026-08-24/25 进行中）
 
@@ -290,7 +322,7 @@ HAL 多品牌硬件接入全部完成：
 - **舵机失联硬件定性（2026-08-28，官方软件复测实锤）**：现场用官方 FashionStar 测试软件**也连不上 id=0（J2）**，断电重连后恢复，舵机已连续通电 24h+ → **排除本软件全部链路**，属舵机侧状态类故障（最可能：MCU 长时间运行异常/过热/供电劣化；J2 负载最重+全程锁力发热大，日志失联多以 `ping J2=false` 呈现与之吻合）。**与 8-26 的 `COM3 Open failed` 是两个不同故障**（那次 PC 侧 USB 打不开串口；这次串口能开、舵机不应答），排查方向勿混淆。运维规程：不要 24h 连续通电、不用时断使能（释放锁力降温）或断电、失联先断电重启舵机；复现时记录周期/摸 J2 外壳温度/带载测电压；证据齐全后向供应商反馈。舵机死机期软件重连无效属预期（冷却 30s 设计合理）；TEST_RECORD 相关 🟡 复测需等硬件稳定后进行。
 - **连接状态分段着色 + 全局使能连接门禁（2026-08-25，已真机验证；2026-09-02 修正补全）**：① 手动页顶部「运动卡/舵机」连接状态标签（`ManualControlPage::OnConnectionChanged`）富文本**分段着色**：未连接黄 `#e0a520`、已连接绿 `#7ed67e`——**span 必须整段包裹「运动卡: X」**（初版只包状态词，前缀走默认 palette 在深色主题下发暗，2026-09-02 真机反馈后改整段）；② `connectionChanged` 信号从"仅 Initialize emit"改为 **`PollTick` 连接状态边沿检测**（成员 `connStateInited_/lastCardConnected_/lastServoConnected_`，Initialize 同步初值防首次 tick 重复广播）——舵机离线/热重连/运动卡掉线都会广播，手动页标签与自动运行页日志实时更新；③ **AutoRunPage 的 HardwareManager 连接（stateUpdated/servoStateUpdated/frameReady/connectionChanged）必须在构造函数连接**，不能放 `SetSequenceWorker`（MainWindow 在 `HardwareManager::Initialize()` 之后才调它 → 会错过 Initialize 那次 connectionChanged emit，启动连接日志丢失，2026-09-02 真机踩坑）；连接变更经 lambda 写入自动运行页日志框「硬件连接状态变更：运动卡: X | 舵机: X」；④ EnableAll 入口连接门禁（任一未连接直接拒绝，axisEnabled_ 保持全 false），UI 判据同步 AND、提示「未连接硬件，命令可能无效」。DisableAll 不设门禁（安全操作）。
 
-**下一步**：真机联调**阶段 4 重做修复已全部真机复测通过（2026-08-28 🟢）**；舵机重连抖动治理真机观察中（硬件定性见上）。随后 SequenceWorker 方案真机验证（阶段 5-6，**本轮核心**）、异常/回归（阶段 7-8）。奥比中光（Orbbec）真实相机 SDK 实现 `ICamera` 待同事提供 SDK 后接入。
+**下一步**：真机联调**阶段 4 重做修复已全部真机复测通过（2026-08-28 🟢）**；舵机重连抖动治理真机观察中（硬件定性见上）。SequenceWorker 方案真机验证阶段 5 **单步部分（5.1-5.5）已全通过（2026-09-03）**，待做**阶段 5 自动运行（5.6-5.15，先单步后自动）与阶段 6-7**。待补：**三页操作互斥**（手动/工艺流程/自动运行，2026-09-03 用户确认后续补充）。奥比中光（Orbbec）真实相机 SDK 实现 `ICamera` 待同事提供 SDK 后接入。
 
 ### 真机联调阶段 3 已完成（2026-08-26，Z 标定 + 运动学全链路闭环）
 

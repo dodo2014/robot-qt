@@ -48,6 +48,10 @@ private:
     void ApplySpeedPercentToCurrentAction(int v);
     void ApplyGripperTargetToCurrentAction(double v);
     void RefreshGripperLimitRange();
+    // 执行状态标签统一入口：text 已含状态符号，color 为前景色
+    void SetStatusText(const QString& text, const QString& color);
+    // 单步/自动执行进行中：此时禁止切换/删除方案（worker 跑的是启动时值拷贝的 scheme）
+    bool IsExecutionActive() const;
     void RefreshActionList();
     void RefreshActionDetail(int idx);
     void RefreshSchemeCombo();
@@ -62,6 +66,7 @@ private:
 
     QStackedWidget* m_detailStack = nullptr;
     QLabel* m_currentActionLabel = nullptr;
+    QLabel* m_statusLabel = nullptr;
 
     QWidget* m_speedPercentRow = nullptr;
     QSpinBox* m_speedPercentSpin = nullptr;
@@ -93,5 +98,9 @@ private:
     QPushButton* m_runSelectedBtn = nullptr;
     QPushButton* m_stepBtn = nullptr;
     bool m_stepActive = false;
+    // 会话终态（完成/已停止/出错）：StartExecution 在 emit 终态信号后还会补发 stateChanged("空闲")，
+    // 不做保留的话终态会被紧随其后的「空闲」覆盖。新会话启动时清空。
+    QString m_finalStatus;
+    QString m_finalColor;
     void ResetStepSession();
 };

@@ -1,7 +1,7 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-09-01T09:26:54+08:00
+最后更新时间：2026-09-02T12:35:30+08:00
 
 # 项目概述
 
@@ -143,17 +143,39 @@
 - 启动崩溃教训：enabled 豁免实现曾写在 Initialize 第 4 步（LoadAxisConfigsFromConfig）内直接写 axisHomed_[i]=true，而 axisHomed_ 第 5 步才 resize → 空 QVector 越界，启动断言崩 QList::operator[] index out of range（qlist.h:518）。**分步初始化时前序步骤禁止访问后续才 resize 的成员容器**。
 - 状态：Sim 验证通过；真机复测待做（TEST_RECORD 🟡，最高优先）：启动→使能→一键回零（5 轴）→中途急停→Go 被拒+启动/单步/执行选中全禁→重新完整回零后恢复。
 
-# Sim 冒烟测试规范（2026-08-31 定稿）
+# Tooltip 白底修复（四修定稿，2026-09-01/02）
 
-- Sim 冒烟 = 就地临时改工程根 config.json（备份→SimCard/SimServo→启动 8s→恢复，try/finally 保证恢复）；标准脚本 out\smoke\sim_smoke.ps1。
+- 需求：工艺流程页动作列表下方按钮（新建/编辑/删除/上移/下移等）的 tooltip 黑底与界面同色看不清，要求白底深字。
+- 真根因（沙箱 tipcheck 像素级 4 模式实证）：QSS 的 QToolTip 选择器不匹配实际弹出的 QTipLabel 私有类；QToolTip::setPalette() 在 application stylesheet 下被 QStyleSheetStyle 完全绕过；唯一真生效的是 QSS QTipLabel { ... } 规则。
+- 定稿三层保险（MainWindow.cpp SetupToolTipStyle）：① QSS 同时写 QToolTip, QTipLabel 规则；② setPalette（Active/Inactive/Disabled 三组色）；③ TipStyleFilter 实例级样式事件过滤器（实例级 stylesheet 优先级高于 application 级，架构上不可能失效）。
+- 修复历经四轮，两次多模型协作回退：gemini 注释掉 main.cpp 的 setPalette、gpt 删空 QSS 的 QTipLabel 规则（均切回 deepseek-v4-pro 修复）。AGENTS.md 已写明 tooltip 条目改为三层保险描述（旧「main.cpp 174 行 setPalette」行号引用已失效），**禁止把任一层「优化」掉或注释掉**（已发生 3 次回退）。
+- 2026-09-02 收尾：main.cpp 死代码清理（被注释的 SetupToolTipStyle/setPalette 块/调用与失效 include，setPalette 本体在 MainWindow.cpp 三组色仍在）；Debug+Release 双编译通过。
+- 验证工具 tipcheck 永久保留（out/smoke/tipcheck，nopal/palette/qtiplabel/current 4 模式像素统计）；最终白底效果待用户运行 09-02 新编 exe 目视确认。
+
+# 夹爪动作行程输入框（工艺流程页，2026-09-02）
+
+- 需求（用户拍板语义）：夹爪动作下拉（张开/闭合）后新增行程输入框（mm），与手动控制页轴5 Go 完全一致——输入即轴5 绝对目标坐标，「输入什么值就执行什么值」；物理事实 0 = 夹紧、负值 = 松开（闭合向 0 趋近、张开向 -5 逼近）；默认闭合 0.00 / 张开 -3.00；速度等参数映射到轴5。设计经 Plan 代理复核纠正 1 处（越界应拒绝而非 clamp）+ 补 2 处（实时写回、blockSignals）。
+- 旧行为翻转 bug 一并修复：旧 ExecuteGripper 用 isGripperOpen ? limitMax(0) : limitMin(-5)，即「打开夹爪」实际下发 0（夹紧）、「关闭夹爪」下发 -5（完全松开），与物理相反；改后「打开夹爪」= 松开 3mm。
+- 旧数据迁移注意：process.json 中「关闭夹爪」（156 行）的 isGripperOpen 本为 true → 迁移后默认拿 -3.00（松开），须在界面人工改成 0.00（全库仅 2 个夹爪动作）。
+- 实现要点：ActionData 新增 gripperTarget（load 按 isGripperOpen 默认 -3.0/0.0 向后兼容）；ProcessPage combo+spin+单位标签同一 form row（spin QSS 禁写 font-size 改 setFont 9.75pt）；RefreshGripperLimitRange 实时读轴5 软限位设范围 + hint「0 = 夹紧，负值 = 松开」（lo>=hi 异常时放宽容限并黄字警示，拦截交执行层）；valueChanged 实时写回动作数据；切换方向按记忆值回填（-3/0）不覆盖已填值；回显 combo 须 blockSignals 防覆盖。
+- 执行层：SequenceWorker::ExecuteGripper 重写——取 action.gripperTarget；IsWithinSoftLimits 越界拒绝 + errorOccurred（拒绝而非静默夹紧，与手动页 Go 同源）；速度 = GetMaxSpeed(Gripper)×speedPercent（旧版未传速度走卡内默认）；到位超时从固定 10s 改为 qMax(3000, GetAxisBusyMs×1.2+3000) 动态兜底（低速 10% 走 3mm 需 15s，固定 10s 会误报超时）。
+- 验证：Debug+Release 双编译通过；Sim 冒烟 SMOKE_ALIVE + SMOKE_INIT_COMPLETE 均 True；执行链路（使能→回零→执行选中动作→日志核目标/脉冲）待 GUI/真机验证。
+
+# Sim 冒烟测试规范（2026-08-31 定稿，2026-09-02 修订）
+
+- Sim 冒烟 = 就地临时改工程根 config.json（备份→SimCard/SimServo→启动 15s→恢复，try/finally 保证恢复）；标准脚本 out\smoke\sim_smoke.ps1。
+- 启动等待窗口 8s→15s（2026-09-02）：Debug 版从进程启动到 HardwareManager::Initialize 约需 7s（SetupUI 里 ElecMap/ConfigPage 加载慢），8s 只等会截断日志伪装成「初始化卡死」（假阴性，非回归）；并新增 SMOKE_INIT_COMPLETE 日志判定——存活≠通过（Qt 断言框挂起时进程也存活，AGENTS.md 已记录该陷阱）。
+- 冒烟脚本经后台管道调用偶发 exit -1 无输出，用 powershell -File 直调正常（2026-09-02）。
 - 禁止拷贝 exe 输出目录做副本冒烟：开发机版程序硬编码 PROJECT_SOURCE_DIR 读工程根 config 与 log，副本不生效，且曾误生成 2.1GB C 盘拷贝（已清理）。
-- 存活判定须查工程根 log/creampuff_YYYY-MM-DD.log 含 Initialize complete（Qt 断言框挂起时会假报存活）。
+- 判定须查工程根 log/creampuff_YYYY-MM-DD.log 含 Initialize complete（配合 SMOKE_INIT_COMPLETE）。
 
 # 构建脚本规范与 LNK1168 自动处理
 
 - Windows 编译：Git Bash 调 cmd 会因引号嵌套/MSYS2 路径转换坏 vcvars 路径，必须用 PowerShell：cmd /c "call vcvars64.bat >nul && ninja CreamPuffRobot"（在 out\build\x64-Debug 下）；Release 用根 build_release.bat。
 - bat 必须纯 ASCII（中文注释被 cmd 按 GBK 解析成乱码命令）；ps1 含中文须带 UTF-8 BOM。
 - out\smoke\build_debug.bat 与根 build_release.bat 支持 TARGET 环境变量选 target（默认 CreamPuffRobot）；内置 LNK1168 自动处理：构建日志 findstr LNK1168 → taskkill /IM CreamPuffRobot.exe /F → 等 1s 自动重编一次。
+- 判编译成败不能只看 exit code（2026-09-02 坑）：ninja 的 stderr 提示 "build log version is too new; starting over"（触发全量重编）会被 PowerShell 当 NativeCommandError 令退出码为 1（假失败）；要看日志里的 [N/N] Linking 行。
+- 沙箱/工具链权威编译参考 doc/compile_guide.md（2026-09-01 落盘并首次纳入版本库：MSVC/WinSDK/Qt 真实路径、手工 env + 内联 ninja 编译、tipcheck 编译运行等）。
 - PowerShell 执行 git 可避开 Git Bash 偶发 DLL 初始化崩溃（0xC0000142）。
 - Git Bash 的 /tmp 路径直接传给 Windows python.exe 会被解析为 d:\tmp（2026-09-01 踩坑）：脚本路径须用 $(cygpath -w /tmp/xxx.py) 转换后再传。
 
@@ -188,3 +210,5 @@
 - 阶段 5 单步执行已前置为首位测试，自动运行测试在其后——执行中如暴露新边界（如单步与全局急停交互）需补充用例。
 - 回零互锁真机复测（最高优先，TEST_RECORD 🟡）：急停中断回零后 Go/启动/单步/执行选中全禁，重新完整回零后恢复。
 - 示教 R 角 180° 边界显示一致性最终复测；示教 posture/elbow 确定性执行改进；Axis_R 限位建议改 [−180,180]。
+- Tooltip 白底最终目视确认（运行 09-02 新编 Debug/Release exe）。
+- 夹爪动作行程执行链路真机验证；process.json 两个旧夹爪动作的行程值须界面人工改 0.00（关闭）/确认 -3.00（张开）。
