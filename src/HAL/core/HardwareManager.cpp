@@ -150,21 +150,20 @@ bool HardwareManager::Initialize()
         double spdJ2 = cfg.getValue<double>("communication.servos[0].speed", 50.0);
         double spdR  = cfg.getValue<double>("communication.servos[1].speed", 50.0);
         if (servoJ2_) {
-            bool ok = servoJ2_->Connect(port, baud);
-            if (ok) {
-                servoJ2_->SetServoId(static_cast<uint8_t>(idJ2));
-                servoJ2_->SetSpeed(spdJ2);
-            } else {
+            // 先喂 id 再 Connect：Connect 内部用当前 id 做 Ping/WriteUserData(addr=44) 探测，
+            // 若 Connect 后才 SetServoId，J2(id=0) 的在线标志会错探成默认 id=1（2026-09-04 真机日志：
+            // 两次 "Servo id 1 online"、id=0 从未被探测）
+            servoJ2_->SetServoId(static_cast<uint8_t>(idJ2));
+            servoJ2_->SetSpeed(spdJ2);
+            if (!servoJ2_->Connect(port, baud)) {
                 SPDLOG_WARN("[HardwareManager] Servo J2 connect FAILED: {}",
                             servoJ2_->GetLastError());
             }
         }
         if (servoJ3_) {
-            bool ok = servoJ3_->Connect(port, baud);
-            if (ok) {
-                servoJ3_->SetServoId(static_cast<uint8_t>(idR));
-                servoJ3_->SetSpeed(spdR);
-            } else {
+            servoJ3_->SetServoId(static_cast<uint8_t>(idR));
+            servoJ3_->SetSpeed(spdR);
+            if (!servoJ3_->Connect(port, baud)) {
                 SPDLOG_WARN("[HardwareManager] Servo R connect FAILED: {}",
                             servoJ3_->GetLastError());
             }
@@ -251,7 +250,12 @@ bool HardwareManager::IsMotionCardConnected() const
 
 bool HardwareManager::IsServoConnected() const
 {
-    return (servoJ2_ && servoJ2_->IsConnected()) || (servoJ3_ && servoJ3_->IsConnected());
+    // "已连接" = 串口打开 且 所有已创建的舵机真实在线（Ping/遥测应答）。
+    // 仅查 IsConnected（串口句柄）会把"USB 已插但舵机未上电"误报为已连接
+    // （2026-09-04 真机反馈）。SimServo 的 IsOnline == connected_，仿真不受影响。
+    const bool j2Ok = !servoJ2_ || (servoJ2_->IsConnected() && servoJ2_->IsOnline());
+    const bool rOk  = !servoJ3_ || (servoJ3_->IsConnected() && servoJ3_->IsOnline());
+    return (servoJ2_ || servoJ3_) && j2Ok && rOk;
 }
 
 QString HardwareManager::ConnectionStatus() const
@@ -1304,15 +1308,17 @@ void HardwareManager::ReconnectServos()
     double spdJ2 = cfg.getValue<double>("communication.servos[0].speed", 50.0);
     double spdR  = cfg.getValue<double>("communication.servos[1].speed", 50.0);
 
-    bool j2Ok = servoJ2_ && servoJ2_->Connect(port, baud);
-    if (j2Ok) {
+    // 同 Initialize：先喂 id/速度再 Connect，确保探测面向配置的舵机 id
+    bool j2Ok = false, rOk = false;
+    if (servoJ2_) {
         servoJ2_->SetServoId(static_cast<uint8_t>(idJ2));
         servoJ2_->SetSpeed(spdJ2);
+        j2Ok = servoJ2_->Connect(port, baud);
     }
-    bool rOk = servoJ3_ && servoJ3_->Connect(port, baud);
-    if (rOk) {
+    if (servoJ3_) {
         servoJ3_->SetServoId(static_cast<uint8_t>(idR));
         servoJ3_->SetSpeed(spdR);
+        rOk = servoJ3_->Connect(port, baud);
     }
     if (!j2Ok || !rOk) {
         SPDLOG_WARN("[HardwareManager] Servo reconnect partial/failed: J2={} R={} (err J2={} R={})",
