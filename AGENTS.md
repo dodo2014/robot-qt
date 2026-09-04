@@ -135,7 +135,9 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 ## Continuous QA & Testing（防回归硬规约）
 
 1. **测试台账制度**：项目根目录存在 **`TEST_RECORD.md`**，记录所有已调通的功能与边界条件测试。
-2. **强制记账法则**：每次彻底解决一个 Bug 或完成一个新功能后，**必须**主动用文件编辑工具在 `TEST_RECORD.md` 追加一行测试记录：模块、测试场景/动作、期望结果、状态（**🟢 已通过**）、踩坑记录/备注。
+2. **强制记账法则**：每次彻底解决一个 Bug 或完成一个新功能后，**必须**主动用文件编辑工具在 `TEST_RECORD.md` 追加一行测试记录：编号、**模块**、测试场景/动作、期望结果、状态（**🟢 已通过**）、踩坑记录/备注。
+
+   **编号规则（`TR-###`，2026-09-03 起）**：首列为唯一编号 `TR-001`…`TR-0NN`，按追加顺序递增。**追加时用「当前最大号 +1」，禁止重排、禁止复用已删除记录的编号**；台账内及跨文件引用**一律用 `TR-###`，不得用行号**（行号随增删漂移，历史曾引用"TEST_RECORD.md 第 45 行"之类，2026-09-03 已全部改为编号）。编号一旦分配即与该条记录终身绑定，记录内容可调整但编号不变。
 3. **修改前验算**：计划大范围重构或修改核心逻辑（`HardwareManager`、`ProcessManager`、`PollTick/JogTick`、换算/软限位/回零等）前，**必须先读取 `TEST_RECORD.md`**，脑内推演改动是否会破坏已标为 **🟢 已通过** 的用例；有风险则调整方案或补回归验证。
 4. **Git 提交须用户明确要求**：**禁止主动执行 `git commit/push`**——即使完成一批改动并整理好提交信息，也必须等用户明确说"提交/commit"才执行；push 同理。工作完成时最多提示"可提交"，由用户决定时机。
 5. **Sim 冒烟规范（2026-08-31 定稿，2026-09-02 修订）**：用标准脚本 `out\smoke\sim_smoke.ps1`——就地临时改**工程根** `config/config.json` 为 SimCard/SimServo → `-WindowStyle Hidden` 独立窗口启动 **15s**（Debug 版从进程启动到 `HardwareManager::Initialize` 实测约 7s，原 8s 会在初始化完成前 kill 进程导致日志截断、被误读成"初始化卡死"）验证存活 → try/finally 保证恢复配置 → **新增 `SMOKE_INIT_COMPLETE` 日志判定**（存活≠通过：断言框挂起时进程也存活，必须查当日日志含 `Initialize complete`）。**禁止拷贝 exe 输出目录做副本冒烟**——开发机版程序路径硬编码 `PROJECT_SOURCE_DIR`（main.cpp 读 `PROJECT_SOURCE_DIR/config/config.json` 与 `log/`），拷贝副本无效（曾误生成 2.1GB C 盘副本）。产物仅工程根 `log/creampuff_YYYY-MM-DD.log`。
@@ -275,7 +277,7 @@ HAL 多品牌硬件接入全部完成：
 
 - **HAL 目录重组 + HardwareManager 拆分（已完成，编译+冒烟通过）**：`src/HAL/` 拆六子目录（interfaces/core/motioncard/servo/camera/algorithm）；相机生命周期拆出 `CameraManager`（HardwareManager 保留 `CameraOpen/Close/Start/Stop/IsStreaming` 转发与 `frameReady` 信号）；每轴速度/单位/软限位查询拆出 `AxisConfigService`（HardwareManager 保留转发方法，UI 层零改动）。**对外 API 不变**，Debug/Release 编译通过、仿真启动存活。经验：拆分共享 `HardwareManager.h/.cpp` 与 `CMakeLists.txt` 的模块**不能并行**；外部 include 用 `HAL/<子目录>/Xxx.h`，HAL 内部平铺靠 include dir 追加子目录解析。
 
-- **工艺流程单步执行真机验证 + UI 收口（2026-09-03，阶段 5 单步部分全通过 🟢）**：ProcessPage「单步执行」真机验证 5.1-5.5 + 边界补 1/3/4/5 全部 🟢（TEST_RECORD.md:66-71）。三项 UI 改动：① 顶栏两行布局 + 执行状态标签（`stateChanged` 接线补齐，见 UI Pages·ProcessPage 节）；② 单步按钮执行期**同步禁用**（D2 修复，改动仅在 UI 层，SequenceWorker 零改动）；③ 切换/删除方案执行期门禁 `IsExecutionActive()`。三个实测结论（防回归）：**点击次数 N+1**（WaitForStep 在循环体内，最后一个动作也挂起）；**Stop 非就近刹车**（只置 cancel 不走停轴，执行完当前动作才停，见急停节）；**急停后 IsSystemHomed 仍 true → 单步按钮不置灰，点击被使能门禁静默拦（只写日志不弹窗）**；未使能拒绝同样仅日志无弹窗。**遗留**：三页操作互斥（手动/工艺流程/自动运行）未实现（单步暂停中切自动运行页可被 running 门禁拒，但无跨页主动互斥与提示）；ProcessPage 按钮无 objectName（自动化需按文本定位）；单步执行/运行期间 UI 的 `m_currentActionLabel` 不随执行刷新（仅列表选中驱动）。
+- **工艺流程单步执行真机验证 + UI 收口（2026-09-03 单步全通过 🟢；2026-09-04 自动运行 5.6-5.15 亦全通过 🟢）**：ProcessPage「单步执行」真机验证 5.1-5.5 + 边界补 1/3/4/5 全部 🟢（TR-061–TR-066）；AutoRunPage 启动整跑 5.6-5.15 共 10 用例全部 🟢（TR-069）：Move 整跑无大甩臂、Gripper/Delay/Vision(无相机降级)/schemeFinished/运行中停止/运行中急停(5.12)/门禁/运行中改参/运行中关窗。已知开口：5.9 相机降级路径（接相机后复测）、5.11 跨页互斥待完善（TR-066）。三项 UI 改动：① 顶栏两行布局 + 执行状态标签（`stateChanged` 接线补齐，见 UI Pages·ProcessPage 节）；② 单步按钮执行期**同步禁用**（D2 修复，改动仅在 UI 层，SequenceWorker 零改动）；③ 切换/删除方案执行期门禁 `IsExecutionActive()`。三个实测结论（防回归）：**点击次数 N+1**（WaitForStep 在循环体内，最后一个动作也挂起）；**Stop 非就近刹车**（只置 cancel 不走停轴，执行完当前动作才停，见急停节）；**急停后 IsSystemHomed 仍 true → 单步按钮不置灰，点击被使能门禁静默拦（只写日志不弹窗）**；未使能拒绝同样仅日志无弹窗。**遗留**：三页操作互斥（手动/工艺流程/自动运行）未实现（单步暂停中切自动运行页可被 running 门禁拒，但无跨页主动互斥与提示）；ProcessPage 按钮无 objectName（自动化需按文本定位）；单步执行/运行期间 UI 的 `m_currentActionLabel` 不随执行刷新（仅列表选中驱动）。
 
 
 ### SequenceWorker 大脑执行引擎（2026-08-20 阶段 2 轮 A 落地，引擎层自测通过）
@@ -310,7 +312,7 @@ HAL 多品牌硬件接入全部完成：
 - **信号驱动状态清理**：`HardwareManager` 新增 `emergencyStopTriggered` 信号（`EmergencyStop()` 内 emit，唯一触发点）；ManualControlPage 连接它做 `ResetAxisStates()`+提示，AutoRunPage 连接它恢复启动按钮/状态标签/日志（原 `OnEmergencyClicked` 删除，UI 响应改 `OnEmergencyTriggered` 槽）。
 - **按钮变化**：AutoRunPage 5→4（删"⚔ 急停"）；ManualControlPage 顶部 4→3（使能/断使能/一键回零）；ProcessPage「单步执行」右侧红色「停止」已接 `SequenceWorker::Stop()`（业务停止就近，经 `SetSequenceWorker` 注入 worker，与 AutoRunPage 同模式）；ProcessPage「单步执行」经 `SetStepMode(true)+RunSequence` / `NextStep` 接单步模式（此前为 stub，本轮补齐）。
 - **语义区分**：停止=业务（可恢复、保持使能）、急停=安全（断使能、需重新使能）。TEST_RECORD 记 🟡，阶段 5 用例 5.6/5.7 覆盖真机验证。
-- **⚠ 停止语义实测修正（2026-09-03，勿按"就近刹车"预期）**：标题/上文"业务停止就近"仅指"按钮位置就近跟随场景"——`SequenceWorker::Stop()` 实际**只置 `cancel` 原子标志、不下发任何停轴命令**（SequenceWorker.cpp:210-215，卡轴/舵机继续走完当前 MoveAbs 才被 WaitFor* 循环感知停止），并非"立即刹车"。真机实测（TEST_RECORD.md:68）：单步中点「停止」会**执行完当前动作才停**，然后会话复位、可重新单步（从第一个动作开始）。`Stop()` 首行 `if (!running) return;`（:212），非运行态调用静默无效无日志。急停（EmergencyStop）才是真刹车（硬断使能）。
+- **⚠ 停止语义实测修正（2026-09-03，勿按"就近刹车"预期）**：标题/上文"业务停止就近"仅指"按钮位置就近跟随场景"——`SequenceWorker::Stop()` 实际**只置 `cancel` 原子标志、不下发任何停轴命令**（SequenceWorker.cpp:210-215，卡轴/舵机继续走完当前 MoveAbs 才被 WaitFor* 循环感知停止），并非"立即刹车"。真机实测（TR-063）：单步中点「停止」会**执行完当前动作才停**，然后会话复位、可重新单步（从第一个动作开始）。`Stop()` 首行 `if (!running) return;`（:212），非运行态调用静默无效无日志。急停（EmergencyStop）才是真刹车（硬断使能）。
 
 ### 真机联调进展（2026-08-24/25 进行中）
 
@@ -322,7 +324,7 @@ HAL 多品牌硬件接入全部完成：
 - **舵机失联硬件定性（2026-08-28，官方软件复测实锤）**：现场用官方 FashionStar 测试软件**也连不上 id=0（J2）**，断电重连后恢复，舵机已连续通电 24h+ → **排除本软件全部链路**，属舵机侧状态类故障（最可能：MCU 长时间运行异常/过热/供电劣化；J2 负载最重+全程锁力发热大，日志失联多以 `ping J2=false` 呈现与之吻合）。**与 8-26 的 `COM3 Open failed` 是两个不同故障**（那次 PC 侧 USB 打不开串口；这次串口能开、舵机不应答），排查方向勿混淆。运维规程：不要 24h 连续通电、不用时断使能（释放锁力降温）或断电、失联先断电重启舵机；复现时记录周期/摸 J2 外壳温度/带载测电压；证据齐全后向供应商反馈。舵机死机期软件重连无效属预期（冷却 30s 设计合理）；TEST_RECORD 相关 🟡 复测需等硬件稳定后进行。
 - **连接状态分段着色 + 全局使能连接门禁（2026-08-25，已真机验证；2026-09-02 修正补全）**：① 手动页顶部「运动卡/舵机」连接状态标签（`ManualControlPage::OnConnectionChanged`）富文本**分段着色**：未连接黄 `#e0a520`、已连接绿 `#7ed67e`——**span 必须整段包裹「运动卡: X」**（初版只包状态词，前缀走默认 palette 在深色主题下发暗，2026-09-02 真机反馈后改整段）；② `connectionChanged` 信号从"仅 Initialize emit"改为 **`PollTick` 连接状态边沿检测**（成员 `connStateInited_/lastCardConnected_/lastServoConnected_`，Initialize 同步初值防首次 tick 重复广播）——舵机离线/热重连/运动卡掉线都会广播，手动页标签与自动运行页日志实时更新；③ **AutoRunPage 的 HardwareManager 连接（stateUpdated/servoStateUpdated/frameReady/connectionChanged）必须在构造函数连接**，不能放 `SetSequenceWorker`（MainWindow 在 `HardwareManager::Initialize()` 之后才调它 → 会错过 Initialize 那次 connectionChanged emit，启动连接日志丢失，2026-09-02 真机踩坑）；连接变更经 lambda 写入自动运行页日志框「硬件连接状态变更：运动卡: X | 舵机: X」；④ EnableAll 入口连接门禁（任一未连接直接拒绝，axisEnabled_ 保持全 false），UI 判据同步 AND、提示「未连接硬件，命令可能无效」。DisableAll 不设门禁（安全操作）。
 
-**下一步**：真机联调**阶段 4 重做修复已全部真机复测通过（2026-08-28 🟢）**；舵机重连抖动治理真机观察中（硬件定性见上）。SequenceWorker 方案真机验证阶段 5 **单步部分（5.1-5.5）已全通过（2026-09-03）**，待做**阶段 5 自动运行（5.6-5.15，先单步后自动）与阶段 6-7**。待补：**三页操作互斥**（手动/工艺流程/自动运行，2026-09-03 用户确认后续补充）。奥比中光（Orbbec）真实相机 SDK 实现 `ICamera` 待同事提供 SDK 后接入。
+**下一步**：真机联调**阶段 4 重做修复已全部真机复测通过（2026-08-28 🟢）**；舵机重连抖动治理真机观察中（硬件定性见上）。SequenceWorker 方案真机验证**阶段 5 全部通过（2026-09-03 单步 5.1-5.5 + 2026-09-04 自动运行 5.6-5.15，TR-041/TR-040/TR-069）**，待做**阶段 6（AutoRunPage UI 接线真机）与阶段 7（异常/回归）**。待补：**三页操作互斥**（手动/工艺流程/自动运行，2026-09-03 用户确认后续补充，TR-066）；**5.9 真实相机未接走降级路径，接相机后需复测**（Orbbec SDK 待同事提供后接入 `ICamera`）。
 
 ### 真机联调阶段 3 已完成（2026-08-26，Z 标定 + 运动学全链路闭环）
 

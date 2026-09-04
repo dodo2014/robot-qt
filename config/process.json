@@ -60,7 +60,7 @@
                     "extrudeSpeed": 0.0,
                     "gripperTarget": 0.0,
                     "isGripperOpen": false,
-                    "name": "等待视觉结果",
+                    "name": "视觉识别",
                     "points": [],
                     "speedPercent": 100,
                     "suckBackAmount": 0.0,
@@ -69,6 +69,23 @@
                     "threshold": 0.85,
                     "type": 1,
                     "visionType": "CCD"
+                },
+                {
+                    "delayMs": 1000,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "isGripperOpen": false,
+                    "name": "等待1秒",
+                    "points": [],
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 3,
+                    "visionType": ""
                 },
                 {
                     "delayMs": 0,

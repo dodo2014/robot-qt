@@ -135,10 +135,30 @@ void AutoRunPage::SetupUI()
     rightLayout->addWidget(m_statusLabel);
 
     // 坐标面板
-    m_coordPanel = new QLabel(QStringLiteral("X: 0.00 mm  Y: 0.00 mm  Z: 0.00 mm  R: 0.00°"));
-    m_coordPanel->setStyleSheet("background: #0d141c; border-radius: 10px; padding: 8px 16px; border: 1px solid #2f7fb5; color: #7ed6ff; font-size: 16px; font-weight: 600; font-family: 'Consolas', monospace;");
-    m_coordPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    m_coordPanel->setFixedHeight(44);
+    //m_coordPanel = new QLabel(QStringLiteral("X: 0.00 mm  Y: 0.00 mm  Z: 0.00 mm  R: 0.00°"));
+    //m_coordPanel->setStyleSheet("background: #0d141c; border-radius: 10px; padding: 8px 16px; border: 1px solid #2f7fb5; color: #7ed6ff; font-size: 16px; font-weight: 600; font-family: 'Consolas', monospace;");
+    //m_coordPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    //m_coordPanel->setFixedHeight(44);
+    //rightLayout->addWidget(m_coordPanel);
+
+    // 坐标面板
+    m_coordPanel = new QLabel(QStringLiteral("X:0.00 mm  Y:0.00 mm  Z:0.00 mm  R:0.00"));
+
+    // 【修改 1】：字号改为 14px，左右 padding 改为 6px，让出大量水平空间
+    m_coordPanel->setStyleSheet(R"(
+        background: #0d141c; border-radius: 10px; padding: 8px 6px; 
+        border: 1px solid #2f7fb5; color: #7ed6ff; 
+        font-size: 14px; font-weight: 600; font-family: 'Consolas', monospace;
+    )");
+
+    // 【修改 2】：允许垂直方向根据内容自动伸缩 ( Minimum 策略 )
+    m_coordPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    m_coordPanel->setMinimumHeight(44);
+
+    // 【修改 3】：开启自动换行，并居中显示
+    m_coordPanel->setWordWrap(true);
+    m_coordPanel->setAlignment(Qt::AlignCenter);
+
     rightLayout->addWidget(m_coordPanel);
 
     // 日志框

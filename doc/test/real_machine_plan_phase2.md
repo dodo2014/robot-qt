@@ -113,20 +113,20 @@
 | # | 方案（按可用轴拼装） | 期望 |
 | --- | --- | --- |
 | 5.1 🟢 | ProcessPage「单步执行」首点（Move 2-3 点, speedPercent=50%） | 仅 action[0] 运行后暂停（状态"单步暂停"），不自动跑后续；日志 actionStarted[0]（SetStepMode+RunSequence 接线验证） |
-| 5.2 | 连续点「单步执行」（=NextStep 释放） | 每点跑下一动作并暂停；**N 个动作共需 N+1 次点击（1 次启动 + N 次释放）**——最后一个动作跑完也会挂在 WaitForStep，须再点一次才退出循环发 schemeFinished → 单步会话复位、状态「✅ 完成」（与 TEST_RECORD.md S04「5 动作需 5 次 NextStep」一致，原表述「N 次」有误，2026-09-03 修正） |
+| 5.2 🟢 | 连续点「单步执行」（=NextStep 释放） | 每点跑下一动作并暂停；**N 个动作共需 N+1 次点击（1 次启动 + N 次释放）**——最后一个动作跑完也会挂在 WaitForStep，须再点一次才退出循环发 schemeFinished → 单步会话复位、状态「✅ 完成」（与 TEST_RECORD.md S04「5 动作需 5 次 NextStep」一致，原表述「N 次」有误，2026-09-03 修正） |
 | 5.3 🟢 | 单步中按 ProcessPage「停止」 | Stop 业务停止（保持使能），单步会话复位；可重新单步（**从第一个动作重新开始**）。注：~~就近刹车原则~~ 表述有误——Stop 仅置 cancel 不下发停轴命令，**会执行完当前动作才停**（2026-09-03 真机实测，见 TEST_RECORD.md） |
 | 5.4 🟢 | 单步中按顶栏全局急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断，单步会话经 emergencyStopTriggered 复位；需重新手动使能。注：急停后 IsSystemHomed 仍 true → 「单步执行」按钮不置灰，点击被使能门禁静默拦截（只写日志不弹窗） |
 | 5.5 🟢 | 未使能时单步执行 | 拒绝（**仅日志 SPDLOG_WARN，无弹窗**；RunSequence 内部 IsGlobalEnabled 门禁，S07 已验）。可达路径：使能→回零→断使能→点单步 |
-| 5.6 | Move（示教读取 2-3 点，speedPercent=50%）整跑 | 逐点 InverseSmart → MoveAbs(J2→R→J1→Z) → 到位等待；日志逐步 actionStarted；无大甩臂（就近选解） |
-| 5.7 | 加 Gripper 开/合动作 | 夹爪按 GetLimitMax/Min 开合到位 |
-| 5.8 | 加 Delay 1s | 等待 1s 不卡 UI |
-| 5.9 | （可选）加 Vision | 真实相机未装 → 走模拟延时路径（无相机降级，验证不崩溃） |
-| 5.10 | 方案完成后 schemeFinished | 状态「✅ 完成」、启动按钮恢复 |
-| 5.11 | 运行中按 AutoRunPage「停止」 | 当前动作安全停止 + interrupted + 保持使能 |
-| 5.12 | 运行中顶栏全局急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断；需重新手动使能 |
-| 5.13 | 未使能时启动 | 拒绝 + 提示（门禁） |
-| 5.14 | **运行中编辑运动学参数** | ReloadFromConfig 被 running 门禁跳过（不竞争）；下次启动用新参数（D3 验证） |
-| 5.15 | **运行中关闭窗口** | 进程不挂死、10s 内退出（ShutdownWorker，D4 验证） |
+| 5.6 🟢 | Move（示教读取 2-3 点，speedPercent=50%）整跑 | 逐点 InverseSmart → MoveAbs(J2→R→J1→Z) → 到位等待；日志逐步 actionStarted；无大甩臂（就近选解） |
+| 5.7 🟢 | 加 Gripper 开/合动作 | 夹爪按 GetLimitMax/Min 开合到位 |
+| 5.8 🟢 | 加 Delay 1s | 等待 1s 不卡 UI |
+| 5.9 🟢 | （可选）加 Vision | 真实相机未装 → 走模拟延时路径（无相机降级，验证不崩溃）**🟢（真实相机未接，走无相机降级模拟延时路径；接相机后需复测，见 TR-069）** |
+| 5.10 🟢 | 方案完成后 schemeFinished | 状态「✅ 完成」、启动按钮恢复 |
+| 5.11 🟢 | 运行中按 AutoRunPage「停止」 | 当前动作安全停止 + interrupted + 保持使能**🟢（AutoRunPage 停止在自动流程中测通过）；工艺流程单步调试中操作 AutoRunPage 按钮属跨页互斥，逻辑待完善（TR-066）** |
+| 5.12 🟢 | 运行中顶栏全局急停 | **顶栏全局急停**（2026-08-28 升舱）：EmergencyStop + 断使能 + worker 中断；需重新手动使能 |
+| 5.13 🟢 | 未使能时启动 | 拒绝 + 提示（门禁） |
+| 5.14 🟢 | **运行中编辑运动学参数** | ReloadFromConfig 被 running 门禁跳过（不竞争）；下次启动用新参数（D3 验证） |
+| 5.15 🟢 | **运行中关闭窗口** | 进程不挂死、10s 内退出（ShutdownWorker，D4 验证） |
 
 ### 阶段 6：AutoRunPage UI 接线真机（0.5-1 天）
 
