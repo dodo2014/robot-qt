@@ -8,6 +8,7 @@
 #include <QMetaObject>
 
 #include <atomic>
+#include <cmath>
 #include <vector>
 
 #include "ConfigManager.h"
@@ -353,16 +354,44 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
     // R 目标 ±180 wrap 归一化（必须在 IK 之前）：旧方案/边界示教可能存 wrap 值（-179.9 ≡ 180.1），
     // Kinematics::ValidateJoints 按 [rMin,rMax] 拒绝 wrap 值会报"目标点不可达"
     target.r = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, target.r); });
-    Joints joints;
-    if (!impl_->kin.InverseSmart(target, joints, curJ2)) {
-        SPDLOG_WARN("[SequenceWorker] IK failed for point ({:.1f}, {:.1f}, {:.1f}) r={:.1f}",
-                    pt.x, pt.y, pt.z, pt.r);
-        emit errorOccurred(QStringLiteral("目标点不可达：(%1, %2, %3)").arg(pt.x).arg(pt.y).arg(pt.z));
-        return false;
-    }
 
-    SPDLOG_INFO("[SequenceWorker] IK → J({:.2f}, {:.2f}, {:.2f}, {:.2f})",
-                joints.j1, joints.j2, joints.z, joints.r);
+    Joints joints;
+    bool usedTeach = false;
+    if (pt.hasJoints) {
+        // 示教关节角路径：j1/j2=逻辑关节角、j3=Z 电机坐标（MoveAbs 同坐标系）、j4=R 角，
+        // 直接下发，确定性复现示教姿态（无 IK 双解歧义）
+        Joints j{ pt.j1, pt.j2, pt.j3, pt.j4 };
+        j.r = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, j.r); });
+        // FK 一致性校验（±0.5mm / ±0.5°）：joints 与 coord 不匹配（json 手改未走 UI 作废、
+        // 旧版硬编码全 0 占位残留等）时回退 IK，绝不按错误关节角运动。
+        // 例：旧版 save 对所有点硬编码写 joints=0.0，fill_start(85,92,22) 若采信 J(0,0,0)
+        // 会走到 (358.69,0,165)——校验失败即回退，位置仍正确
+        const Pose fk = impl_->kin.Forward(j);
+        double dr = std::fabs(fk.r - pt.r);
+        while (dr > 180.0) dr = std::fabs(dr - 360.0);   // ±180 回绕感知的角度差
+        if (std::fabs(fk.x - pt.x) <= 0.5 && std::fabs(fk.y - pt.y) <= 0.5 &&
+            std::fabs(fk.z - pt.z) <= 0.5 && dr <= 0.5) {
+            joints = j;
+            usedTeach = true;
+        } else {
+            SPDLOG_WARN("[SequenceWorker] joints/coord mismatch at '{}' "
+                        "(FK {:.2f},{:.2f},{:.2f} vs coord {:.2f},{:.2f},{:.2f}), fallback to IK",
+                        pt.name.toStdString(), fk.x, fk.y, fk.z, pt.x, pt.y, pt.z);
+        }
+    }
+    if (!usedTeach) {
+        if (!impl_->kin.InverseSmart(target, joints, curJ2)) {
+            SPDLOG_WARN("[SequenceWorker] IK failed for point ({:.1f}, {:.1f}, {:.1f}) r={:.1f}",
+                        pt.x, pt.y, pt.z, pt.r);
+            emit errorOccurred(QStringLiteral("目标点不可达：(%1, %2, %3)").arg(pt.x).arg(pt.y).arg(pt.z));
+            return false;
+        }
+        SPDLOG_INFO("[SequenceWorker] IK → J({:.2f}, {:.2f}, {:.2f}, {:.2f})",
+                    joints.j1, joints.j2, joints.z, joints.r);
+    } else {
+        SPDLOG_INFO("[SequenceWorker] Teach joints → J({:.2f}, {:.2f}, {:.2f}, {:.2f})",
+                    joints.j1, joints.j2, joints.z, joints.r);
+    }
 
     // 各轴速度：maxSpeed × speedPercent
     const double v1 = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::J1); }) * speedScale;

@@ -18,6 +18,7 @@
 #include <QMessageBox>
 #include <QDebug>
 #include <QPainter>
+#include <cmath>
 #include <QPixmap>
 #include <QIcon>
 
@@ -1352,6 +1353,13 @@ void ProcessPage::OnTeachRead()
     pt.z = pose.z;
     pt.r = cur.r;
     pt.posture = QStringLiteral("elbow_up");
+    // 示教同时记录关节角（j3=Z 电机坐标，非 coord.z 末端高度），执行时优先按关节角
+    // 确定性复现示教姿态（无 IK 双解歧义）；j4=cur.r 与 coord.r 同值冗余记录
+    pt.hasJoints = true;
+    pt.j1 = cur.j1;
+    pt.j2 = cur.j2;
+    pt.j3 = cur.z;
+    pt.j4 = cur.r;
     action.points.push_back(pt);
 
     RefreshActionDetail(m_currentActionIdx);
@@ -1396,6 +1404,17 @@ void ProcessPage::OnSaveAction()
             pt.r = item4->text().toDouble();
             auto* combo = qobject_cast<QComboBox*>(m_pointTable->cellWidget(r, 5));
             pt.posture = combo ? combo->currentText() : QStringLiteral("elbow_up");
+            // 关节角继承：坐标与示教存储值一致（容差 0.006 覆盖 2 位小数显示舍入 ≤0.005）
+            // → 沿用示教 joints；任一被手改 → 作废（执行回退 IK，避免按旧关节角走到错位）
+            if (r < action.points.size() && action.points[r].hasJoints) {
+                const auto& old = action.points[r];
+                constexpr double kEps = 0.006;
+                if (std::fabs(pt.x - old.x) <= kEps && std::fabs(pt.y - old.y) <= kEps &&
+                    std::fabs(pt.z - old.z) <= kEps && std::fabs(pt.r - old.r) <= kEps) {
+                    pt.hasJoints = true;
+                    pt.j1 = old.j1; pt.j2 = old.j2; pt.j3 = old.j3; pt.j4 = old.j4;
+                }
+            }
             pts.push_back(pt);
         }
         action.points = pts;

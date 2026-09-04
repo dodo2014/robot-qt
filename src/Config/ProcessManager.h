@@ -9,6 +9,12 @@ struct PointData {
     QString name;
     double x = 0.0, y = 0.0, z = 0.0, r = 0.0;
     QString posture;
+    // 示教关节角记录：j1/j2=逻辑关节角（GetPosition 值，MoveAbs 直接可用）；
+    // j3=Z 电机坐标（回零后=0、往下为负，与手动页 Z 轴 Go 同坐标系，≠coord.z 末端高度，
+    // 两者差固定偏移 Z0−h1−tcpDown）；j4=R 角（与 coord.r 同值冗余记录）。
+    // hasJoints=false = 无有效记录（坐标被手改/手工点/旧数据），执行回退 IK。
+    bool hasJoints = false;
+    double j1 = 0.0, j2 = 0.0, j3 = 0.0, j4 = 0.0;
 };
 
 struct ActionData {

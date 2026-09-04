@@ -136,6 +136,19 @@ void ProcessManager::load()
                                     p.r = cj.value("r", 0.0);
                                 }
                                 p.posture = QString::fromStdString(pj.value("posture", "elbow_up"));
+                                // joints 语义校验（FK 一致性）在执行层 SequenceWorker 做，
+                                // 此处纯读：有字段即记录，无字段/缺项 → hasJoints=false 走 IK
+                                if (pj.contains("joints") && pj["joints"].is_object()) {
+                                    const auto& jj = pj["joints"];
+                                    if (jj.contains("j1") && jj.contains("j2") &&
+                                        jj.contains("j3") && jj.contains("j4")) {
+                                        p.hasJoints = true;
+                                        p.j1 = jj.value("j1", 0.0);
+                                        p.j2 = jj.value("j2", 0.0);
+                                        p.j3 = jj.value("j3", 0.0);
+                                        p.j4 = jj.value("j4", 0.0);
+                                    }
+                                }
                                 a.points.push_back(p);
                             }
                         }
@@ -189,10 +202,14 @@ void ProcessManager::save()
                 pj["coord"]["y"] = pt.y;
                 pj["coord"]["z"] = pt.z;
                 pj["coord"]["r"] = pt.r;
-                pj["joints"]["j1"] = 0.0;
-                pj["joints"]["j2"] = 0.0;
-                pj["joints"]["j3"] = 0.0;
-                pj["joints"]["j4"] = 0.0;
+                // 仅示教记录有效时写 joints（缺失字段 = 无记录，执行回退 IK）。
+                // 不写全 0 占位：0 是合法关节角，无法与"作废/无记录"区分
+                if (pt.hasJoints) {
+                    pj["joints"]["j1"] = pt.j1;
+                    pj["joints"]["j2"] = pt.j2;
+                    pj["joints"]["j3"] = pt.j3;
+                    pj["joints"]["j4"] = pt.j4;
+                }
                 aj["points"].push_back(pj);
             }
 
