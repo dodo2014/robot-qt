@@ -70,14 +70,15 @@
 | &nbsp;&nbsp;`y` | double | Y 坐标 (mm) |
 | &nbsp;&nbsp;`z` | double | Z 坐标 (mm) |
 | &nbsp;&nbsp;`r` | double | R 旋转角 (°) |
-| `joints` | object | 关节角（占位，当前恒为 0.0） |
-| &nbsp;&nbsp;`j1`~`j4` | double | 轴1~4（J1/J2/Z/R）关节角 |
+| `joints` | object | 关节角（2026-09-04 TR-071 起落真实示教值；手改坐标保存时该字段删除） |
+| &nbsp;&nbsp;`hasJoints` | bool | 关节角有效标记（true 时执行优先按关节角直发） |
+| &nbsp;&nbsp;`j1`~`j4` | double | 轴1~4（J1/J2/Z/R）关节角；**j3=Z 电机坐标**（回零后=0、向下为负，与 coord.z 差固定偏移 165，勿混用） |
 
 注意事项：
 
-- 内存中 `PointData` 仍为扁平字段（`x,y,z,r,posture`），嵌套只影响 JSON 序列化格式。
+- 内存中 `PointData` 仍为扁平字段（`x,y,z,r,posture,hasJoints,j1~j4`），嵌套只影响 JSON 序列化格式。
 - **加载只读取 `coord` 下的 `x/y/z/r`**，不支持旧版扁平 `x/y/z/r` 格式。
-- `joints` 目前为占位（保存恒为 0.0），后续接入真机关节反馈后填充真实关节角。
+- ~~`joints` 目前为占位（保存恒为 0.0）~~ **已落地（TR-071，2026-09-04）**：示教读取落盘真实关节角 + `hasJoints=true`；执行 `MoveToPoint` 优先按 joints 直发（FK 一致性校验 ±0.5mm/0.5°，不匹配回退 IK——拦截旧版全 0 占位残留）；表格手改坐标保存 → 该点 joints **删字段**（非置 0，0 是合法关节角）。
 
 ---
 
@@ -109,7 +110,8 @@ SchemeData
     ├── points: QVector<PointData>  (仅 Move)
     │   ├── name, posture             (点层级)
     │   └── x, y, z, r                (序列化为 coord 子对象)
-    │   └── joints 占位 j1..j4=0      (序列化为 joints 子对象)
+    │   └── hasJoints + joints j1..j4 (序列化为 joints 子对象；示教落真实关节角，
+    │                                  手改坐标保存时删字段；见上文注意事项)
     ├── visionType, exposure, templateName, threshold  (仅 Vision)
     ├── extrudeAmount, extrudeSpeed, suckBackAmount, suckBackSpeed  (仅 Extrude)
     ├── delayMs  (仅 Delay)

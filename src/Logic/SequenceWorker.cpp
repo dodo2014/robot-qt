@@ -44,10 +44,23 @@ public:
     Kinematics     kin;
     CoordTransform coord;
 
+    // 显式状态机（S2）。running 保留仅为兼容既有并发读写点，最终由 state 统一表达：
+    //   state == Idle  ⇔ !running（正常/中断/故障清除后）
+    //   state != Idle  ⇔ running（Running / Paused / Fault 都算"会话持有中"）
+    std::atomic<WorkerState> state       {WorkerState::Idle};
+    std::atomic<PauseReason> pauseReason {PauseReason::None};
+
     std::atomic<bool> running    {false};
     std::atomic<bool> cancel     {false};
+    std::atomic<bool> paused     {false};   // 用户暂停请求（协作式，由 PauseGate 消费）
     std::atomic<bool> stepMode   {false};
     std::atomic<bool> stepGo     {false};
+    std::atomic<bool> stepGatePending {false};   // 单步：正挂起等待 NextStep 放行
+    std::atomic<bool> singleSession   {false};   // 单动作会话（RunSingleAction 入口）
+    std::atomic<bool> safeSession     {false};   // 回安全位会话（RunSafePos 临时方案）
+
+    // 暂停累计时长（ms）：Delay 等按"剩余时间"续算，暂停耗时不占用延时预算
+    std::atomic<long long> pauseAccumMs {0};
 
     SchemeData scheme;
     int        currentIndex = -1;
@@ -155,11 +168,18 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme)
 
     impl_->cancel.store(false);
     impl_->stepGo.store(false);
+    impl_->paused.store(false);
+    impl_->stepGatePending.store(false);
+    impl_->pauseAccumMs.store(0);
+    // 隐患 1 修复（2026-09-07）：RunSequence 原先不清 stepMode——单步会话残留 stepMode=true 时，
+    // 新会话 1 个动作跑完会挂起在 Paused(Step) 等 NextStep → 卡死（RunSingleAction:216 本就有清）。
+    impl_->stepMode.store(false);
+    impl_->safeSession.store(false);
     impl_->scheme = scheme;
     impl_->currentIndex = -1;
-    impl_->running.store(true);
+    impl_->singleSession.store(false);
 
-    emit stateChanged(QStringLiteral("运行中"));
+    SetState(WorkerState::Running);
     SPDLOG_INFO("[SequenceWorker] RunSequence: {} ({} actions)",
                 scheme.schemeName.toStdString(), static_cast<int>(scheme.actions.size()));
 
@@ -193,12 +213,15 @@ bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
 
     impl_->cancel.store(false);
     impl_->stepGo.store(false);
+    impl_->paused.store(false);
+    impl_->stepGatePending.store(false);
+    impl_->pauseAccumMs.store(0);
     impl_->scheme = scheme;
     impl_->currentIndex = actionIndex;
     impl_->stepMode.store(false);   // 单动作执行与单步会话互斥（UI 侧另清 m_stepActive）
-    impl_->running.store(true);
+    impl_->singleSession.store(true);
 
-    emit stateChanged(QStringLiteral("执行选中动作"));
+    SetState(WorkerState::Running);   // 原「执行选中动作」文案由 IsSingleActionSession() 还原
     SPDLOG_INFO("[SequenceWorker] RunSingleAction: [{}] {}", actionIndex,
                 scheme.actions[actionIndex].name.toStdString());
 
@@ -208,11 +231,82 @@ bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
     return true;
 }
 
+// 回安全位（2026-09-07）：先原地抬 Z（防横扫），再水平走安全位关节角。
+// 复用 RunSequence → ExecuteMove 的 hasJoints 路径——零新运动代码，
+// 白得暂停/停止/使能/回零门禁与自动运行互斥（同一 worker 的 running 门禁）。
+bool SequenceWorker::RunSafePos()
+{
+    auto& cfg = ConfigManager::instance();
+    // 未启用（默认 false）时不动——避免出厂 config（全 0）下回零后乱走
+    if (!cfg.getValue<bool>("kinematics.safePos.enabled", false)) {
+        SPDLOG_INFO("[SequenceWorker] RunSafePos skipped: not enabled");
+        return false;
+    }
+    const double sj1 = cfg.getValue<double>("kinematics.safePos.j1", 0.0);
+    const double sj2 = cfg.getValue<double>("kinematics.safePos.j2", 0.0);
+    const double sz  = cfg.getValue<double>("kinematics.safePos.z",  0.0);
+    const double sr  = cfg.getValue<double>("kinematics.safePos.r",  0.0);
+
+    // "当前位"在构造时读（主线程直通）：触发点=回零位（安全）；手动触发=操作者所见位。
+    // 构造→排队执行之间轴不会动（此刻无其它指令源），即使有 ms 级偏差，点1 也只是就近抬 Z。
+    const double cj1 = InMainThread([] { return HardwareManager::instance().GetPosition(LogicalAxis::J1); });
+    const double cj2 = InMainThread([] { return HardwareManager::instance().GetPosition(LogicalAxis::J2); });
+    const double cr  = InMainThread([] { return HardwareManager::instance().GetPosition(LogicalAxis::R);  });
+
+    // 必须用 worker 自己的 kin 求 FK 填 x/y/z/r——MoveToPoint 的 hasJoints 路径有 ±0.5
+    // 一致性校验，两者同源必过；若填 0 会静默回退 IK（可能跳到另一逆解分支）。
+    const Pose f1 = impl_->kin.Forward(Joints{ cj1, cj2, sz, cr });
+    const Pose f2 = impl_->kin.Forward(Joints{ sj1, sj2, sz, sr });
+
+    PointData lift;                                   // 点1：原地抬 Z（j1/j2/r 不变）
+    lift.name = QStringLiteral("抬Z");
+    lift.hasJoints = true;
+    lift.j1 = cj1; lift.j2 = cj2; lift.j3 = sz; lift.j4 = cr;
+    lift.x = f1.x; lift.y = f1.y; lift.z = f1.z; lift.r = f1.r;
+
+    PointData go;                                     // 点2：水平走安全位
+    go.name = QStringLiteral("安全位");
+    go.hasJoints = true;
+    go.j1 = sj1; go.j2 = sj2; go.j3 = sz; go.j4 = sr;
+    go.x = f2.x; go.y = f2.y; go.z = f2.z; go.r = f2.r;
+
+    ActionData act;
+    act.name = QStringLiteral("回安全位");
+    act.type = ActionType::Move;
+    act.speedPercent = 50;                            // 中低速走位，安全位不需要快
+    act.points = { lift, go };
+
+    SchemeData scheme;
+    scheme.schemeName = QStringLiteral("安全位");
+    scheme.actions = { act };
+
+    if (!RunSequence(scheme)) return false;
+    // RunSequence 内部会清 safeSession（当作普通方案），这里在排队生效前置位：
+    // actionStarted 由 worker 线程 Queued 发出，必晚于此赋值 → ProcessPage 守卫可靠
+    impl_->safeSession.store(true);
+    return true;
+}
+
+bool SequenceWorker::IsSafePosSession() const { return impl_->safeSession.load(); }
+
 void SequenceWorker::Stop()
 {
     if (!impl_->running.load()) return;
     impl_->cancel.store(true);
     SPDLOG_INFO("[SequenceWorker] Stop requested");
+}
+
+// 立即停止（自动运行页【停止】专用）：cancel + 全轴减速停（保持使能），废弃上下文。
+// 决策 3：与 Stop() 的语义区分——单步调试（ProcessPage）与程序退出（ShutdownWorker）
+// 仍走 Stop() 的"执行完当前动作再停"（TR-063 真机语义），只有自动页要"立即减速停"。
+// 注意：不能"断脉冲/断使能"——开环步进惯性滑行会丢步，坐标系错乱（Gemini 复核确认）。
+// 绝不发 interrupted：由执行循环检测 cancel 后单点发出（≤20ms + 一次 InMainThread）。
+void SequenceWorker::StopImmediate()
+{
+    if (impl_->state.load() == WorkerState::Idle) return;
+    impl_->cancel.store(true);
+    InMainThread([] { return HardwareManager::instance().StopAllAxes(); });
+    SPDLOG_INFO("[SequenceWorker] immediate stop requested (decel stop, keep enabled)");
 }
 
 void SequenceWorker::EmergencyStop()
@@ -237,9 +331,63 @@ bool SequenceWorker::NextStep()
     return true;
 }
 
-bool SequenceWorker::IsRunning() const   { return impl_->running.load(); }
-bool SequenceWorker::IsPaused() const    { return impl_->stepMode.load() && impl_->running.load(); }
+// ---- 状态机（S2） ----
+
+void SequenceWorker::SetState(WorkerState s, PauseReason r)
+{
+    impl_->state.store(s);
+    impl_->pauseReason.store(r);
+    // running 跟随 state：Idle 之外都算"会话持有中"，保持 IsRunning 既有语义
+    // （单步暂停时 running 为 true，MainWindow::IsExecutionActive / ProcessPage 零回归）
+    impl_->running.store(s != WorkerState::Idle);
+    emit stateChanged(s, r);
+    SPDLOG_INFO("[SequenceWorker] state -> {} reason {}",
+                static_cast<int>(s), static_cast<int>(r));
+}
+
+bool SequenceWorker::Pause()
+{
+    if (impl_->state.load() != WorkerState::Running) return false;
+    // 单步等待放行时拒绝：此时应点「继续/单步」放行，Pause 会掩盖真实意图
+    if (impl_->stepGatePending.load()) return false;
+    impl_->paused.store(true);
+    SPDLOG_INFO("[SequenceWorker] pause requested (cooperative, takes effect at next gate)");
+    return true;
+}
+
+bool SequenceWorker::Resume()
+{
+    if (impl_->state.load() != WorkerState::Paused) return false;
+    if (impl_->stepGatePending.load()) {
+        impl_->stepGo.store(true);      // 单步等待 → 等价于放行下一步
+    } else {
+        impl_->paused.store(false);     // 用户暂停 → 解除挂起（PauseGate 循环感知后重发并继续）
+    }
+    SPDLOG_INFO("[SequenceWorker] resume requested");
+    return true;
+}
+
+void SequenceWorker::ClearFault()
+{
+    if (impl_->state.load() != WorkerState::Fault) return;
+    impl_->cancel.store(false);
+    impl_->paused.store(false);
+    impl_->pauseAccumMs.store(0);
+    impl_->currentIndex = -1;
+    impl_->singleSession.store(false);
+    impl_->safeSession.store(false);
+    SetState(WorkerState::Idle);
+    SPDLOG_INFO("[SequenceWorker] fault latch cleared (hardware enable NOT touched)");
+}
+
+bool SequenceWorker::IsRunning() const   { return impl_->state.load() != WorkerState::Idle; }
+bool SequenceWorker::IsPaused() const    { return impl_->state.load() == WorkerState::Paused; }
 bool SequenceWorker::IsStepMode() const  { return impl_->stepMode.load(); }
+
+SequenceWorker::WorkerState  SequenceWorker::GetState() const        { return impl_->state.load(); }
+SequenceWorker::PauseReason  SequenceWorker::GetPauseReason() const  { return impl_->pauseReason.load(); }
+bool SequenceWorker::IsSingleActionSession() const { return impl_->singleSession.load(); }
+bool SequenceWorker::IsStepGatePending() const     { return impl_->stepGatePending.load(); }
 
 void SequenceWorker::StartExecution()
 {
@@ -247,8 +395,10 @@ void SequenceWorker::StartExecution()
         SPDLOG_INFO("[SequenceWorker] Scheme finished: {}", impl_->scheme.schemeName.toStdString());
         emit schemeFinished();
     }
-    impl_->running.store(false);
-    emit stateChanged(QStringLiteral("空闲"));
+    impl_->safeSession.store(false);
+    // 故障态保持锁存（待 ClearFault 清除），其余一律回空闲
+    if (impl_->state.load() != WorkerState::Fault)
+        SetState(WorkerState::Idle);
 }
 
 void SequenceWorker::StartSingleExecution(int index)
@@ -256,8 +406,7 @@ void SequenceWorker::StartSingleExecution(int index)
     // 防御：调用链（RunSingleAction 已校验）保证合法，此处兜底防越界 UB
     if (index < 0 || index >= static_cast<int>(impl_->scheme.actions.size())) {
         SPDLOG_WARN("[SequenceWorker] StartSingleExecution: index out of range {}", index);
-        impl_->running.store(false);
-        emit stateChanged(QStringLiteral("空闲"));
+        SetState(WorkerState::Idle);
         return;
     }
     const auto& action = impl_->scheme.actions[index];
@@ -276,8 +425,11 @@ void SequenceWorker::StartSingleExecution(int index)
         emit actionFinished(index, action.name);
     }
     emit singleActionFinished(index);
-    impl_->running.store(false);
-    emit stateChanged(QStringLiteral("空闲"));
+    impl_->singleSession.store(false);
+    impl_->safeSession.store(false);
+    // 故障态保持锁存（待 ClearFault 清除），其余一律回空闲
+    if (impl_->state.load() != WorkerState::Fault)
+        SetState(WorkerState::Idle);
 }
 
 bool SequenceWorker::ExecuteActions()
@@ -288,16 +440,25 @@ bool SequenceWorker::ExecuteActions()
             emit interrupted(QStringLiteral("用户停止"));
             return false;
         }
+        // 动作边界挂起点（无轴参与 → 只挂起）：单步/无硬件动作的暂停在此生效
+        if (!PauseGate()) {
+            emit interrupted(QStringLiteral("用户停止"));
+            return false;
+        }
         impl_->currentIndex = i;
         const auto& action = actions[i];
         emit actionStarted(i, action.name);
         SPDLOG_INFO("[SequenceWorker] Action {}: {}", i, action.name.toStdString());
 
         if (!ExecuteAction(action, i)) {
-            if (impl_->cancel.load())
+            if (impl_->cancel.load()) {
                 emit interrupted(QStringLiteral("用户停止"));
-            else
+            } else {
+                // 故障锁存：保留上下文（scheme / currentIndex），待 ClearFault 才回 Idle；
+                // 期间 RunSequence 会因 state != Idle 被拒，UI 也能据此禁用「启动」
+                SetState(WorkerState::Fault);
                 emit errorOccurred(action.name);
+            }
             return false;
         }
 
@@ -305,13 +466,16 @@ bool SequenceWorker::ExecuteActions()
 
         // 单步模式：每个动作完成后挂起，等待 NextStep()
         if (impl_->stepMode.load()) {
-            emit stateChanged(QStringLiteral("单步暂停"));
+            impl_->stepGatePending.store(true);
+            SetState(WorkerState::Paused, PauseReason::Step);
             SPDLOG_INFO("[SequenceWorker] Step mode: pausing after action {}", i);
-            if (!impl_->WaitForStep()) {
+            const bool go = impl_->WaitForStep();
+            impl_->stepGatePending.store(false);
+            if (!go) {
                 emit interrupted(QStringLiteral("用户停止"));
                 return false;
             }
-            emit stateChanged(QStringLiteral("运行中"));
+            SetState(WorkerState::Running);
         }
     }
     return true;
@@ -337,6 +501,8 @@ bool SequenceWorker::ExecuteMove(const ActionData& action)
     const double speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
     for (int p = 0; p < action.points.size(); ++p) {
         if (impl_->cancel.load()) return false;
+        // 点边界挂起点（无轴参与 → 只挂起不下发停止）：保证暂停一定生效
+        if (!PauseGate()) return false;
         emit logMessage(QStringLiteral("移动 → 点 %1 (%2)").arg(p + 1).arg(action.points[p].name));
         if (!MoveToPoint(action.points[p], speedScale))
             return false;
@@ -407,7 +573,18 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
 
     // 等待全部轴到位（IsAxisBusy 时间戳 + 轮询；超时 30s 兜底）
     QVector<LogicalAxis> axes{ LogicalAxis::J1, LogicalAxis::J2, LogicalAxis::Z, LogicalAxis::R };
-    if (!WaitForAxes(axes, 30000)) {
+    // 暂停恢复用：重发**当前点**的绝对目标。MoveAbs 是绝对坐标，
+    // 从半路续走到目标不会累积误差，也不会回退到上一个点。
+    // （在 PauseGate 内已切到主线程执行，无需再包 InMainThread）
+    auto reissue = [joints, v1, v2, vz, vr]() {
+        auto& h = HardwareManager::instance();
+        h.MoveAbs(LogicalAxis::J2, joints.j2, v2);
+        h.MoveAbs(LogicalAxis::R,  joints.r, vr);
+        h.MoveAbs(LogicalAxis::J1, joints.j1, v1);
+        h.MoveAbs(LogicalAxis::Z,  joints.z, vz);
+        return true;
+    };
+    if (!WaitForAxes(axes, 30000, reissue)) {
         if (impl_->cancel.load()) return false;
         SPDLOG_WARN("[SequenceWorker] WaitForAxes timeout at point ({:.1f}, {:.1f}, {:.1f})",
                     pt.x, pt.y, pt.z);
@@ -417,13 +594,21 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
     return true;
 }
 
-bool SequenceWorker::WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs)
+bool SequenceWorker::WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs,
+                                 std::function<bool()> reissue)
 {
     auto& hw = HardwareManager::instance();
     QElapsedTimer t;
     t.start();
     for (;;) {
+        // 顺序约束：cancel/paused 检查必须在 allDone 判定**之前**——
+        // 否则减速停清 busy 后会被误判成"已到位"，导致动作假成功
         if (impl_->cancel.load()) return false;
+        if (impl_->paused.load()) {
+            if (!PauseGate(axes, reissue)) return false;   // 暂停中被 Stop/急停 → 终止动作
+            t.restart();                                    // 暂停时长不占超时预算
+            continue;
+        }
         bool allDone = true;
         for (auto a : axes) {
             if (InMainThread([&] { return hw.IsAxisBusy(a); })) { allDone = false; break; }
@@ -432,6 +617,43 @@ bool SequenceWorker::WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs
         if (timeoutMs > 0 && t.elapsed() > timeoutMs) return false;
         QThread::msleep(20);
     }
+}
+
+bool SequenceWorker::PauseGate(const QVector<LogicalAxis>& axes,
+                               std::function<bool()> reissue)
+{
+    if (!impl_->paused.load()) return true;
+
+    SetState(WorkerState::Paused, PauseReason::User);
+
+    // 减速停当前参与轴：卡轴 MC_Stop 斜坡（BoPaiCard.cpp:327，非断脉冲 → 开环不丢步）、
+    // 舵机 Stop() 停+保持锁力（XRServo.cpp:468）。**不断使能**（区别于 EmergencyStop）。
+    // 注：StopAxes 内部 AbortHoming 仅复位"正在回零中"的轴（HardwareManager.cpp:721），
+    //     已回零的轴 homed 保持 true → 恢复后 MoveAbs 不会被回零互锁拒绝。
+    if (!axes.isEmpty())
+        InMainThread([&] { return HardwareManager::instance().StopAxes(axes); });
+
+    // 与 WaitForStep 同构的挂起门闩（QEventLoop + 20ms 轮询）
+    QEventLoop loop;
+    QTimer poll;
+    poll.setInterval(20);
+    QObject::connect(&poll, &QTimer::timeout, [&] {
+        if (impl_->cancel.load() || !impl_->paused.load())
+            loop.quit();
+    });
+    poll.start();
+    loop.exec();
+    poll.stop();
+
+    if (impl_->cancel.load()) return false;   // 暂停中被 Stop / 急停 → 终止当前动作
+
+    // Resume：重发**当前那条**绝对目标 MoveAbs，从半路续走到目标。
+    // 决策要点：不重试整个动作——挤出/回抽分段动作重试会把挤出轴反向补回满量程（多挤料），
+    // 且 Delay 会重新完整计时、Vision 会重新采图、多点点位会重发已完成点（可能跳到另一逆解分支）。
+    if (reissue) InMainThread([&] { return reissue(); });
+
+    SetState(WorkerState::Running);
+    return true;
 }
 
 bool SequenceWorker::ExecuteVision(const ActionData& action)
@@ -479,7 +701,12 @@ bool SequenceWorker::ExecuteExtrude(const ActionData& action)
         if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Extruder, action.extrudeAmount, action.extrudeSpeed); }))
             return false;
         QVector<LogicalAxis> axes{ LogicalAxis::Extruder };
-        if (!WaitForAxes(axes, 10000)) {
+        // 续走只重发"挤出段"目标（绝对量），不会重复挤出
+        auto reissue = [this, action]() {
+            return HardwareManager::instance().MoveAbs(
+                LogicalAxis::Extruder, action.extrudeAmount, action.extrudeSpeed);
+        };
+        if (!WaitForAxes(axes, 10000, reissue)) {
             if (impl_->cancel.load()) return false;
             emit errorOccurred(QStringLiteral("挤出到位超时"));
             return false;
@@ -491,7 +718,14 @@ bool SequenceWorker::ExecuteExtrude(const ActionData& action)
         if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Extruder, target, action.suckBackSpeed); }))
             return false;
         QVector<LogicalAxis> axes{ LogicalAxis::Extruder };
-        if (!WaitForAxes(axes, 10000)) {
+        // 续走只重发"回抽段"目标（绝对量 target），**绝不重发挤出段**——
+        // 否则会把挤出轴反向补回满量程再回抽，等于多挤一份料
+        const double suckTarget = target;
+        auto reissue = [this, suckTarget, action]() {
+            return HardwareManager::instance().MoveAbs(
+                LogicalAxis::Extruder, suckTarget, action.suckBackSpeed);
+        };
+        if (!WaitForAxes(axes, 10000, reissue)) {
             if (impl_->cancel.load()) return false;
             emit errorOccurred(QStringLiteral("回抽到位超时"));
             return false;
@@ -503,7 +737,22 @@ bool SequenceWorker::ExecuteExtrude(const ActionData& action)
 bool SequenceWorker::ExecuteDelay(const ActionData& action)
 {
     emit logMessage(QStringLiteral("延时 %1 ms").arg(action.delayMs));
-    return impl_->WaitForCancelOrTime(action.delayMs);
+    // 暂停感知：暂停时长不计入延时预算——按"剩余时间"续算，而不是恢复后重新完整计时
+    // （10s 延时跑到第 8s 被暂停，恢复后只应再等约 2s）
+    QElapsedTimer t;
+    t.start();
+    long long pauseAccum = 0;
+    for (;;) {
+        if (impl_->cancel.load()) return false;
+        if (impl_->paused.load()) {
+            const long long effectiveBeforePause = t.elapsed() - pauseAccum;
+            if (!PauseGate()) return false;          // 暂停中被 Stop / 急停 → 终止
+            pauseAccum = t.elapsed() - effectiveBeforePause;   // 把暂停段计入 offset
+            continue;
+        }
+        if (t.elapsed() - pauseAccum >= action.delayMs) return true;
+        QThread::msleep(20);
+    }
 }
 
 bool SequenceWorker::ExecuteGripper(const ActionData& action)
@@ -534,7 +783,11 @@ bool SequenceWorker::ExecuteGripper(const ActionData& action)
     // 低速（如 10% ≈ 0.2mm/s 走 3mm 需 15s）时固定 10s 会误判超时；下限 3000 防 est=0 无限等待
     const int estMs = InMainThread([&] { return hw.GetAxisBusyMs(LogicalAxis::Gripper); });
     QVector<LogicalAxis> axes{ LogicalAxis::Gripper };
-    if (!WaitForAxes(axes, qMax(3000, static_cast<int>(estMs * 1.2) + 3000))) {
+    // 续走只重发当前目标（绝对行程），不重复走已完成段
+    auto reissue = [this, target, speed]() {
+        return HardwareManager::instance().MoveAbs(LogicalAxis::Gripper, target, speed);
+    };
+    if (!WaitForAxes(axes, qMax(3000, static_cast<int>(estMs * 1.2) + 3000), reissue)) {
         if (impl_->cancel.load()) return false;
         emit errorOccurred(QStringLiteral("夹爪到位超时"));
         return false;

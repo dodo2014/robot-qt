@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 
 class QPushButton;
+class SequenceWorker;
 
 #include "HAL/interfaces/IMotionCard.h"
 #include "HAL/interfaces/IAxisServo.h"
@@ -18,10 +19,15 @@ class ManualControlPage : public QWidget
 public:
     explicit ManualControlPage(QWidget* parent = nullptr);
 
+    // 注入执行引擎（2026-09-07）：「回安全位」经 SequenceWorker::RunSafePos 执行
+    void SetSequenceWorker(SequenceWorker* worker) { worker_ = worker; }
+
 private slots:
     void OnGlobalEnable();
     void OnGlobalDisable();
     void OnGlobalHome();
+    void OnGoSafePos();      // 回安全位（先抬Z再水平走，走 worker 临时方案）
+    void OnTeachSafePos();   // 示教安全位：读当前四轴关节角写入 config
     void OnJogMinus(int axis);
     void OnJogPlus(int axis);
     void OnJogStop(int axis);
@@ -55,6 +61,8 @@ private:
     QVector<QPushButton*> goButtons_;
     QLabel* connStatusLabel_ = nullptr;
     QLabel* hintLabel_ = nullptr;
+
+    SequenceWorker* worker_ = nullptr;   // 执行引擎（回安全位用）
 
     QVector<bool> alarmState_;
     QVector<bool> limitState_;

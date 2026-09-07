@@ -46,6 +46,14 @@ public:
     void StopJog(LogicalAxis axis);
     bool HomeAxis(LogicalAxis axis);
     bool StopAxis(LogicalAxis axis);
+    // 减速停止（业务【停止】/【暂停】用，与 EmergencyStop 区分）：
+    // 卡轴走 MC_Stop 减速斜坡（BoPaiCard.cpp:327，非断脉冲 → 开环不丢步），舵机 Stop() 停+保持锁力；
+    // 复用 StopAxis 的清 busy + AbortHoming + axisMoveFinished。
+    // **不断使能、舵机不松力**（EmergencyStop 才断使能 + 舵机 TorqueOff 松力）。
+    // 注：AbortHoming 仅复位"正在回零中"的轴（:721），已回零的轴 homed 保持 true
+    //     → 运行中减速停不会把 IsSystemHomed() 打回 false，恢复后可继续 MoveAbs。
+    bool StopAxes(const QVector<LogicalAxis>& axes);
+    bool StopAllAxes();   // 对 AxisMap 已绑定轴逐个调 StopAxes
     bool HomeAll();
     bool EnableAll();
     bool DisableAll();
@@ -68,6 +76,12 @@ public:
     // 状态语义：程序实例内所有已绑定轴均回零成功后置 true，之后保持（断使能/急停不丢坐标）。
     bool IsAxisHomed(LogicalAxis axis) const;
     bool IsSystemHomed() const;
+
+    // ---- 急停待恢复锁存（2026-09-07 TR-075，硬件级全局状态）----
+    // 急停后置 true；置位期间 UI 互锁（自动页按钮全灭等）。不能靠 IsSystemHomed() 判定
+    // "急停恢复"：AbortHoming 只复位正在回零中的轴，已回零完成的轴 homed 保持 true（TR-062）。
+    // 清除条件唯一：急停后真正跑完一次全轴回零（MarkAxisHomed allHomed）。
+    bool IsEStopPending() const { return estopPending_; }
 
     // 轴是否"运动中/忙"（Go 发出去到估计到位之间）。UI 据此置灰 Go 按钮，
     // 防止多次点击导致重复打断与指令覆盖（曾引发舵机突然加速）。
@@ -136,6 +150,9 @@ signals:
     // 急停已触发（EmergencyStop 内部发出）：各页面据此做自身状态清理
     // （手动页清状态点数组、自动页恢复启动按钮与状态标签），急停行为单点化
     void emergencyStopTriggered();
+    // 急停待恢复锁存解除（TR-075）：急停后全轴回零完成时发出，
+    // 先于 homeStateChanged(true)；手动页据此提示"锁定已解除"
+    void estopCleared();
     // 回零互锁状态变化（全轴回零成功 → true；构造/重初始化 → false），UI 据此启用/禁用绝对运动入口
     void homeStateChanged(bool homed);
     // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
@@ -232,6 +249,10 @@ private:
     // 每个逻辑轴的回零完成状态（回零互锁第二道门禁）。
     // 无硬件绑定轴初始 true（无需回零）；HomeAxis/HomeAll 成功置 true；构造/重初始化复位。
     QVector<bool> axisHomed_;
+
+    // 急停待恢复锁存：EmergencyStop() 置 true；MarkAxisHomed 全轴完成时清 false。
+    // 唯一真相源（硬件级全局状态），UI 互锁经 IsEStopPending() 读取，禁止在页面自持副本。
+    bool estopPending_ = false;
 
     // 每个逻辑轴的"忙"截止时间戳(ms，0=空闲)。Go/点动发出时更新为 now+估计到位时间，
     // PollTick 里到达后复位并发 axisMoveFinished。用于 UI 置灰 Go 按钮防连点。

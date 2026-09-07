@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVector>
 #include <memory>
+#include <functional>
 
 #include "ProcessManager.h"
 #include "HAL/core/AxisMap.h"
@@ -32,6 +33,17 @@ class SequenceWorker : public QObject
     Q_OBJECT
 
 public:
+    // 显式状态机（替代原先 running / stepMode 等布尔量的隐式组合）
+    // Q_ENUM 必需：stateChanged 跨线程 Queued 传递需元类型注册，
+    // 否则运行时报 "Cannot queue arguments of type 'WorkerState'"。
+    enum class WorkerState { Idle, Running, Paused, Fault };
+    Q_ENUM(WorkerState)
+
+    // 挂起原因：与 WorkerState::Paused 正交，用于区分「用户暂停」与「单步等待放行」。
+    // 单步等待时 running 本就为 true（历史语义），故不设独立 StepPaused 状态。
+    enum class PauseReason { None, User, Step };
+    Q_ENUM(PauseReason)
+
     explicit SequenceWorker(QObject* parent = nullptr);
     ~SequenceWorker() override;
 
@@ -42,23 +54,55 @@ public:
     // 启动方案执行。若已在执行返回 false。线程安全（内部排队到 worker 线程执行）。
     bool RunSequence(const SchemeData& scheme);
 
+    // 回安全位（2026-09-07）：读 config 的 kinematics.safePos（关节角 j1/j2/z/r），
+    // 构造临时方案（1 个 Move 动作、2 个 hasJoints 点：点1=原地抬 Z、点2=水平走安全位）
+    // 走既有 RunSequence → ExecuteMove——复用暂停/停止/门禁，并与自动运行天然互斥。
+    // 未启用（safePos.enabled=false，默认）返回 false。
+    bool RunSafePos();
+    bool IsSafePosSession() const;   // 安全位会话进行中（UI 据此屏蔽临时方案的联动）
+
     // 单独执行方案中某一条动作（含其全部点位），与 RunSequence 共用 running 门禁互斥。
     // 未使能/越界/运行中拒绝返回 false（未使能会发 errorOccurred）。线程安全。
     bool RunSingleAction(const SchemeData& scheme, int actionIndex);
 
-    // 停止：取消当前动作并中断执行（安全停止，保持使能）。线程安全。
+    // 停止（就近）：仅置 cancel，当前动作执行完才退出。线程安全。
+    // 单步调试与程序退出（ShutdownWorker）用这条——保持历史语义（TR-063 实测）。
     void Stop();
+
+    // 立即停止（自动运行页【停止】）：cancel + 全轴减速停（MC_Stop 斜坡，保持使能），
+    // 然后废弃上下文退回就绪态。与 Stop() 的区别是**下发硬件减速停**，不等当前动作跑完。
+    // 注：绝不能"断脉冲/断使能"式急停——开环步进会因惯性滑行丢步，坐标系错乱。
+    void StopImmediate();
 
     // 急停：置 cancel + HardwareManager::EmergencyStop（断使能）。线程安全。
     void EmergencyStop();
+
+    // 暂停：Running→Paused。协作式：在最近挂起点（≤20ms）减速停当前轴后挂起，
+    // 保持上下文（scheme / currentIndex 不变），Resume() 后从半路续走当前绝对目标。
+    // 单步等待放行（stepGatePending）时返回 false——此时应点「继续/单步」而非暂停。
+    bool Pause();
+
+    // 继续：Paused→Running。单步等待放行时等价于放行下一步（转调 stepGo）。
+    bool Resume();
+
+    // 清除故障锁存：Fault→Idle。仅清引擎锁存，**不动硬件使能**——
+    // 卡轴清报警实际靠手动页「断使能 + 重新使能」，而"程序不自动使能"是既有安全原则。
+    void ClearFault();
 
     // 单步模式：每执行完一个动作后挂起，等待 NextStep() 继续。
     void SetStepMode(bool enabled);
     bool NextStep();
 
+    // IsRunning 语义保持「会话持有中」= state != Idle：单步暂停时亦为 true，
+    // 与历史行为一致（MainWindow::IsExecutionActive / ProcessPage 零回归）。
     bool IsRunning() const;
     bool IsPaused() const;
     bool IsStepMode() const;
+
+    WorkerState GetState() const;
+    PauseReason GetPauseReason() const;
+    bool IsSingleActionSession() const;   // 单动作会话（原「执行选中动作」状态）
+    bool IsStepGatePending() const;       // 单步等待放行中（UI 判定能否点「下一步」）
 
 signals:
     void actionStarted(int index, const QString& name);
@@ -68,7 +112,8 @@ signals:
     void interrupted(const QString& reason);
     void errorOccurred(const QString& message);
     void logMessage(const QString& message);
-    void stateChanged(const QString& state);
+    // 状态迁移（带挂起原因快照）。Queued 连接下带参比"查询当前值"更准，不会错位。
+    void stateChanged(SequenceWorker::WorkerState state, SequenceWorker::PauseReason reason);
 
 private slots:
     void StartExecution();          // worker 线程入口（QueuedConnection 调用）
@@ -84,9 +129,20 @@ private:
     bool ExecuteGripper(const ActionData& action);
 
     bool MoveToPoint(const PointData& pt, double speedScale);
-    bool WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs);
-    bool CancelSleep(int ms);
-    bool WaitForStepGate();
+
+    // 等待轴到位；期间若请求暂停 → PauseGate(axes, reissue)：减速停 → 挂起 →
+    // Resume 后调用 reissue 重发**当前那条**绝对目标 MoveAbs 从半路续走。
+    // reissue 为空表示不支持续走（仅挂起，如动作边界）。
+    bool WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs,
+                     std::function<bool()> reissue = nullptr);
+
+    // 挂起门闩：返回 false = 被 cancel 终止（调用方应中断动作）。
+    // axes 非空时先减速停这些轴；reissue 非空时在 Resume 后重发绝对目标。
+    bool PauseGate(const QVector<LogicalAxis>& axes = {},
+                   std::function<bool()> reissue = nullptr);
+
+    // 状态迁移唯一出口（收敛原先 3 处重复的"清 running + emit 空闲"）
+    void SetState(WorkerState s, PauseReason r = PauseReason::None);
 
     class Impl;
     std::unique_ptr<Impl> impl_;

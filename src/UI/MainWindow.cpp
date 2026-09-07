@@ -9,6 +9,7 @@
 #include "HAL/core/HardwareManager.h"
 #include "SequenceWorker.h"
 #include "ProcessManager.h"
+#include "ConfigManager.h"
 #include "spdlog/spdlog.h"
 
 #include <QApplication>
@@ -20,9 +21,17 @@
 #include <QToolTip>
 #include <QPalette>
 #include <QFont>
+#include <QMessageBox>
+#include <QSignalBlocker>
+#include <QAbstractButton>
+#include <QVector>
 
 namespace
 {
+    // 模式互锁（TR-075）：stack_ 页序常量与自动模式导航白名单
+    constexpr int kPageAutoRun = 0;   // 0 自动/1 手动/2 工艺/3 视觉检测/4 设备配置
+    const QVector<int> kAutoModeNavWhitelist = { kPageAutoRun, 3 };  // 自动运行 + 视觉检测（生产观察，只读）
+
     // =====================================================================
     // Tooltip 实例级样式过滤器（2026-09-01 定稿，决定性保险）：
     //
@@ -152,8 +161,25 @@ MainWindow::MainWindow(QWidget* parent)
     sequenceWorker_->ReloadFromConfig();
     autoRunPage_->SetSequenceWorker(sequenceWorker_);
     processPage_->SetSequenceWorker(sequenceWorker_);
+    manualPage_->SetSequenceWorker(sequenceWorker_);
     connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
         sequenceWorker_->ReloadFromConfig();
+    });
+    // 全局安全位（2026-09-07）：回零完成（**上升沿**，homeStateChanged 是电平语义——
+    // 手动页单轴重回零时其余轴 homed 保持会再次 emit true）→ 自动回安全位。
+    // 急停恢复链路：急停 → 切手动 → 使能 → 一键回零 → 此处触发 → 切自动恢复生产。
+    connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
+            this, [this](bool homed) {
+        const bool rising = homed && !lastHomed_;
+        lastHomed_ = homed;
+        if (!rising) return;
+        // safePos.enabled 默认 false（config 出厂全 0 不应乱走）；示教安全位后自动置 true
+        if (!ConfigManager::instance().getValue<bool>("kinematics.safePos.enabled", false)) return;
+        if (!sequenceWorker_ || sequenceWorker_->GetState() != SequenceWorker::WorkerState::Idle) {
+            SPDLOG_WARN("[MainWindow] auto safe-pos skipped: worker not idle");
+            return;
+        }
+        sequenceWorker_->RunSafePos();
     });
 
 
@@ -163,6 +189,11 @@ MainWindow::MainWindow(QWidget* parent)
     // 必须放在 ApplyGlobalStyle() 和 SetupUI() 之后。
     // =========================================================
     SetupToolTipStyle();
+
+    // 模式互锁（TR-075）：对齐开关初值（ToggleSwitch 默认 false=手动）。
+    // 手动模式 → 自动页五钮初始全灰、导航全开、视觉页参数可编辑；
+    // 须在 SetupUI（navGroup_/页面就绪）与 worker 注入之后调用。
+    ApplyModeState(modeToggle_->isChecked());
 
     SPDLOG_INFO("[MainWindow] SequenceWorker thread started");
 
@@ -431,22 +462,17 @@ QWidget* MainWindow::CreateTopBar()
 
     // 中间：我们自己画的滑块
     auto* toggle = new ToggleSwitch();
+    modeToggle_ = toggle;           // TR-075：提为成员，模式互锁需程序化回弹（RevertModeToggle）
 
     // 右侧：自动 标签
     auto* autoLabel = new QLabel(QStringLiteral("自动"));
     autoLabel->setStyleSheet("color: #8da3bb; font-size: 15px; font-weight: 600; background: transparent; border: none;");
+    modeManualLabel_ = manualLabel;  // TR-075：提为成员，标签高亮统一由 ApplyModeState 驱动
+    modeAutoLabel_   = autoLabel;    //（拒绝回弹时 toggled 被屏蔽，高亮若留在 lambda 会残留新模式色）
 
-    // 连接滑块的切换信号，实现文字颜色的联动变色
-    connect(toggle, &ToggleSwitch::toggled, this, [this, manualLabel, autoLabel](bool isAuto) {
-        if (isAuto) {
-            manualLabel->setStyleSheet("color: #8da3bb; font-size: 15px; font-weight: 600; background: transparent; border: none;");
-            autoLabel->setStyleSheet("color: #7ed67e; font-size: 15px; font-weight: 600; background: transparent; border: none;");
-        }
-        else {
-            manualLabel->setStyleSheet("color: #7ed67e; font-size: 15px; font-weight: 600; background: transparent; border: none;");
-            autoLabel->setStyleSheet("color: #8da3bb; font-size: 15px; font-weight: 600; background: transparent; border: none;");
-        }
-        // 调用你之前的业务逻辑函数
+    // 连接滑块的切换信号：只做业务分发；标签高亮已迁至 ApplyModeState（模式态唯一出口），
+    // 否则"拒绝→QSignalBlocker 回弹"路径下 lambda 不再执行，标签会残留被拒模式的高亮
+    connect(toggle, &ToggleSwitch::toggled, this, [this](bool isAuto) {
         OnModeToggled(isAuto);
         });
 
@@ -615,10 +641,78 @@ void MainWindow::OnNavButtonClicked(int index)
     }
 }
 
+// 模式互锁门禁（TR-075）：
+//  ① 单步会话（Q12）：切自动 → 强制 Stop+清理残留后放行；切手动 → 放行（工艺页手动模式仍可达）；
+//  ② 方案会话/安全位会话（Running/Paused，有真实运动）→ 禁止切换并弹窗 + 开关回弹（Fault 放行——
+//     无运动在执行，切手动点动/脱困是合法操作；清报警回自动页做）；
+//  ③ 其余 → ApplyModeState 应用新模式。
 void MainWindow::OnModeToggled(bool autoMode)
 {
+    using WS = SequenceWorker::WorkerState;
+    const WS st = sequenceWorker_ ? sequenceWorker_->GetState() : WS::Idle;
+
+    // ① 单步会话残留（m_stepActive；此时 worker 为 Paused(Step)，须先于 ② 判定）
+    if (processPage_ && processPage_->IsStepSessionActive()) {
+        if (autoMode) {
+            SPDLOG_WARN("[MainWindow] 切自动：强制清理单步会话残留");
+            processPage_->AbortStepSession();   // Stop()+ResetStepSession()，不留脏数据
+            ApplyModeState(true);
+        } else {
+            ApplyModeState(false);              // 切手动放行，会话保留在工艺页
+        }
+        return;
+    }
+
+    // ② 方案会话/安全位会话执行中 → 禁止（保证【停止】始终可点；避免与手动点动并存）
+    if (st == WS::Running || st == WS::Paused) {
+        const bool safePos = sequenceWorker_ && sequenceWorker_->IsSafePosSession();
+        const QString msg = safePos
+            ? QStringLiteral("正在返回安全位，请稍候，完成后即可切换模式。")
+            : QStringLiteral("当前有流程正在执行，禁止切换【手动 / 自动】模式。\n"
+                             "请先点击「停止」结束当前执行，再切换模式。");
+        SPDLOG_WARN("[MainWindow] 模式切换被拒：执行中 autoMode={} state={}",
+                    autoMode, static_cast<int>(st));
+        QMessageBox::warning(this, QStringLiteral("禁止切换模式"), msg);
+        RevertModeToggle(!autoMode);
+        return;
+    }
+
     SPDLOG_INFO("[MainWindow] 模式切换为 {}", autoMode ? "自动" : "手动");
-    qDebug() << "[全局] 模式切换为:" << (autoMode ? "自动" : "手动");
+    ApplyModeState(autoMode);
+}
+
+void MainWindow::RevertModeToggle(bool backToAuto)
+{
+    // QSignalBlocker（RAII）：回弹不 emit toggled——否则门禁条件不变会形成
+    // "拒绝→回弹→再拒绝"无限递归（每次嵌套一个模态弹窗）
+    const QSignalBlocker blocker(modeToggle_);
+    modeToggle_->setChecked(backToAuto);
+}
+
+// 模式态唯一出口：标签高亮 + 导航白名单 + 强制跳页 + 切自动清理 + 下发各页。
+// 标签高亮放在这里（而非 toggled lambda）：拒绝回弹路径不经过本函数，高亮天然保持旧模式。
+void MainWindow::ApplyModeState(bool autoMode)
+{
+    // ① 模式标签高亮（绿=激活）
+    const QString hi = "color: #7ed67e; font-size: 15px; font-weight: 600; background: transparent; border: none;";
+    const QString lo = "color: #8da3bb; font-size: 15px; font-weight: 600; background: transparent; border: none;";
+    if (modeManualLabel_) modeManualLabel_->setStyleSheet(autoMode ? lo : hi);
+    if (modeAutoLabel_)   modeAutoLabel_->setStyleSheet(autoMode ? hi : lo);
+
+    // ② 导航按白名单启停（自动模式：自动运行 + 视觉检测；手动模式：全开）
+    const QList<QAbstractButton*> navBtns = navGroup_->buttons();
+    for (QAbstractButton* b : navBtns)
+        b->setEnabled(!autoMode || kAutoModeNavWhitelist.contains(navGroup_->id(b)));
+
+    // ③ 自动模式强制跳「自动运行」页（程序化 setChecked 不发 idClicked，须显式 setCurrentIndex 兜底）
+    if (autoMode) {
+        if (auto* b0 = navGroup_->button(kPageAutoRun)) b0->setChecked(true);
+        stack_->setCurrentIndex(kPageAutoRun);
+    }
+
+    // ④ 下发各页：自动页按钮矩阵门禁 + 视觉页参数只读
+    autoRunPage_->SetAutoModeActive(autoMode);
+    visionTestPage_->SetParamsLocked(autoMode);
 }
 
 void MainWindow::UpdateClock()

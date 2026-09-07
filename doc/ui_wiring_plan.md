@@ -1,5 +1,7 @@
 # 阶段 2 轮 B — T7–T10 UI 接线执行计划
 
+> ⚠ **历史文档注记（2026-09-07）**：本文 T8 的 AutoRunPage 按钮映射（启动/复位=HomeAll/停止=Stop/初始化=Initialize/急停=EmergencyStop）**已被 5 按钮重构取代**，现行按钮组与接线见 `doc/auto_run_button_refactor.md`（▶启动/继续、⏸暂停、■停止=StopImmediate、↺清报警、⟳初始化）；`stateChanged` 已改 enum 签名。T7/T9/T10 及 D 修复清单仍有效。
+
 ## 总体架构
 
 ```

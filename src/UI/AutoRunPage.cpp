@@ -54,6 +54,16 @@ void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
     connect(m_worker, &SequenceWorker::schemeFinished, this, &AutoRunPage::OnSchemeFinished);
     connect(m_worker, &SequenceWorker::interrupted, this, &AutoRunPage::OnInterrupted);
     connect(m_worker, &SequenceWorker::errorOccurred, this, &AutoRunPage::OnError);
+    // 状态迁移 → 统一刷新按钮使能与状态标签（唯一出口，杜绝散点 setEnabled）
+    connect(m_worker, &SequenceWorker::stateChanged,
+            this, &AutoRunPage::OnWorkerStateChanged);
+}
+
+void AutoRunPage::SetAutoModeActive(bool active)
+{
+    if (m_autoModeActive == active) return;
+    m_autoModeActive = active;
+    UpdateControlsEnabled();
 }
 
 void AutoRunPage::SetupUI()
@@ -215,35 +225,49 @@ void AutoRunPage::SetupUI()
     btnLayout->setContentsMargins(0, 0, 0, 0);
     btnLayout->setSpacing(10);
 
-    struct BtnDef { QString text; QString bg; QString hover; QString extra; };
-    QVector<BtnDef> btns = {
-        { QStringLiteral("▶ 启动"),   QStringLiteral("#1f9d4a"), QStringLiteral("#28b85a"), QString() },
-        { QStringLiteral("↺ 复位"),   QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"), QStringLiteral("color: #1a1e24;") },
-        { QStringLiteral("⏹ 停止"),   QStringLiteral("#b13a3a"), QStringLiteral("#d14444"), QString() },
-        { QStringLiteral("⟳ 初始化"), QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"), QString() },
+    // 5 按钮（2026-09-07 语义重构）：启动/继续、暂停、停止、清报警、初始化。
+    // 按下标分派，不再靠 text.contains 匹配（改文案会静默错配）。
+    struct BtnDef { QString text; QString bg; QString hover; QString fg; QString tip; };
+    const QVector<BtnDef> btns = {
+        { QStringLiteral("▶ 启动/继续"), QStringLiteral("#1f9d4a"), QStringLiteral("#28b85a"),
+          QStringLiteral("white"),   QStringLiteral("启动新流程；暂停中则从暂停处继续") },
+        { QStringLiteral("⏸ 暂停"),     QStringLiteral("#c78f1a"), QStringLiteral("#e0a520"),
+          QStringLiteral("#1a1e24"), QStringLiteral("减速停止并保持上下文，点「启动/继续」恢复") },
+        { QStringLiteral("■ 停止"),     QStringLiteral("#b13a3a"), QStringLiteral("#d14444"),
+          QStringLiteral("white"),   QStringLiteral("立即减速停止，结束流程并废弃上下文") },
+        { QStringLiteral("↺ 清报警"),   QStringLiteral("#5a6675"), QStringLiteral("#6b7889"),
+          QStringLiteral("white"),   QStringLiteral("清除执行引擎故障锁存（驱动器报警请在手动页断使能后重新使能）") },
+        { QStringLiteral("⟳ 初始化"),   QStringLiteral("#2f6f9f"), QStringLiteral("#3a84b8"),
+          QStringLiteral("white"),   QStringLiteral("重新加载配置并连接硬件（不含使能/回零）") },
     };
 
-    for (const auto& b : btns)
+    for (int i = 0; i < btns.size(); ++i)
     {
+        const auto& b = btns[i];
         auto* btn = new QPushButton(b.text);
         QString style = QStringLiteral(
-            "QPushButton { background: %1; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; padding: 0 4px; min-width: 0; color: white; %2 }"
+            "QPushButton { background: %1; border: none; border-radius: 8px; font-weight: 700; font-size: 12px; padding: 0 2px; min-width: 0; color: %2; }"
             "QPushButton:hover { background: %3; }"
-        ).arg(b.bg, b.extra, b.hover);
+            "QPushButton:disabled { background: #3a424e; color: #7c8a9e; }"
+        ).arg(b.bg, b.fg, b.hover);
         btn->setStyleSheet(style);
+        btn->setToolTip(b.tip);
         btn->setCursor(Qt::PointingHandCursor);
         btn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         btn->setFixedHeight(46);
 
-        if (b.text.contains("启动")) {
-            m_btnStart = btn;
-            // 回零互锁：未回零禁止启动自动运行（开环步进断电丢坐标），回零完成后激活
-            m_btnStart->setEnabled(HardwareManager::instance().IsSystemHomed());
-            connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartClicked);
+        switch (i) {
+        case 0: m_btnStartOrResume = btn;
+                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStartOrResumeClicked); break;
+        case 1: m_btnPause = btn;
+                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnPauseClicked); break;
+        case 2: m_btnStop = btn;
+                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStopClicked); break;
+        case 3: m_btnAlarmClear = btn;
+                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnAlarmClearClicked); break;
+        default:m_btnInit = btn;
+                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked); break;
         }
-        else if (b.text.contains("复位"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnResetClicked);
-        else if (b.text.contains("停止"))   connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnStopClicked);
-        else                                connect(btn, &QPushButton::clicked, this, &AutoRunPage::OnInitClicked);
 
         btnLayout->addWidget(btn, 1);
     }
@@ -252,11 +276,11 @@ void AutoRunPage::SetupUI()
     // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号做状态恢复
     connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
             this, &AutoRunPage::OnEmergencyTriggered);
-    // 回零互锁联动：全轴回零成功后激活启动按钮（HomeAll 成功发 homeStateChanged(true)）
+    // 回零/使能变化 → 统一刷新按钮使能（不再直接 setEnabled(homed)，走唯一出口）
     connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
-            this, [this](bool homed) {
-        if (m_btnStart) m_btnStart->setEnabled(homed);
-    });
+            this, [this](bool /*homed*/) { UpdateControlsEnabled(); });
+    connect(&HardwareManager::instance(), &HardwareManager::enableStateChanged,
+            this, [this]() { UpdateControlsEnabled(); });
 
     // 底部提示
     m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));
@@ -316,83 +340,137 @@ void AutoRunPage::RefreshSchemeCombo()
     }
 }
 
-void AutoRunPage::OnStartClicked()
+void AutoRunPage::OnStartOrResumeClicked()
 {
-    if (!m_worker) {
-        m_hintLabel->setText(QStringLiteral("错误：执行引擎未初始化"));
-        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+    if (!m_worker) { SetHint(QStringLiteral("错误：执行引擎未初始化"), QStringLiteral("#ff5e6b")); return; }
+
+    using WS = SequenceWorker::WorkerState;
+    const WS st = m_worker->GetState();
+
+    // ① 暂停态 → 继续（用户暂停 → 解除挂起原地续走；单步等待 → 放行下一步）
+    if (st == WS::Paused) {
+        if (m_worker->Resume())
+            SetHint(QStringLiteral("继续运行…"), QStringLiteral("#8fd4ff"));
+        else
+            SetHint(QStringLiteral("继续失败：引擎不在暂停态"), QStringLiteral("#f7c948"));
         return;
     }
+    // ② 故障态 → 拒绝（必须先清除报警）
+    if (st == WS::Fault) {
+        SetHint(QStringLiteral("存在未清除的故障，请先点击「↺ 清报警」"), QStringLiteral("#f7c948"));
+        return;
+    }
+    if (st == WS::Running) return;   // 运行中按钮应已置灰，防御
+
+    // ③ 空闲 → 启动新流程（三层门禁不变：使能 / 方案存在 / 未运行）
     if (!HardwareManager::instance().IsGlobalEnabled()) {
-        m_hintLabel->setText(QStringLiteral("请先使能所有轴（手动页点击「全部使能」）"));
-        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+        SetHint(QStringLiteral("请先使能所有轴（手动页点击「全部使能」）"), QStringLiteral("#f7c948"));
         return;
     }
     const auto& schemes = ProcessManager::instance().schemes();
     if (schemes.isEmpty()) {
-        m_hintLabel->setText(QStringLiteral("尚无方案，请先在「工艺流程」页创建方案"));
-        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+        SetHint(QStringLiteral("尚无方案，请先在「工艺流程」页创建方案"), QStringLiteral("#f7c948"));
         return;
     }
     if (m_schemeCombo->currentIndex() < 0 || m_schemeCombo->currentText() == QStringLiteral("（无方案）")) return;
-    int idx = m_schemeCombo->currentIndex();
+    const int idx = m_schemeCombo->currentIndex();
     if (idx >= schemes.size()) return;
 
     m_worker->ReloadFromConfig();
-    bool ok = m_worker->RunSequence(schemes[idx]);
-    if (ok) {
-        m_btnStart->setEnabled(false);
-        m_statusLabel->setText(QStringLiteral("▶ 运行中"));
-        m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
-        m_hintLabel->setText(QStringLiteral("方案执行中..."));
-        m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none;");
-    } else {
-        m_hintLabel->setText(QStringLiteral("启动失败：已在运行中"));
-        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
-    }
-}
-
-void AutoRunPage::OnResetClicked()
-{
-    auto& hw = HardwareManager::instance();
-    if (!hw.IsGlobalEnabled()) {
-        m_hintLabel->setText(QStringLiteral("请先使能所有轴"));
-        m_hintLabel->setStyleSheet("color: #f7c948; font-size: 12px; background: transparent; border: none;");
+    if (!m_worker->RunSequence(schemes[idx])) {
+        SetHint(QStringLiteral("启动失败：引擎忙或门禁未通过"), QStringLiteral("#f7c948"));
         return;
     }
-    bool ok = hw.HomeAll();
-    if (ok) {
-        m_logTextEdit->append(QStringLiteral("[%1] 复位（回零）开始").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
-    } else {
-        m_hintLabel->setText(QStringLiteral("复位失败：请检查轴连接/回零配置"));
-        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+    // 不在此改按钮：等 stateChanged(Running) 到达后由 UpdateControlsEnabled 统一处理
+    SetHint(QStringLiteral("方案执行中..."), QStringLiteral("#8fd4ff"));
+}
+
+void AutoRunPage::OnPauseClicked()
+{
+    if (!m_worker) return;
+    if (m_worker->GetState() != SequenceWorker::WorkerState::Running) {
+        SetHint(QStringLiteral("仅在运行时可暂停"), QStringLiteral("#f7c948"));
+        return;
     }
+    if (m_worker->Pause())
+        SetHint(QStringLiteral("暂停请求已下发（减速停止后挂起，点「▶ 启动/继续」恢复）"),
+                QStringLiteral("#8fd4ff"));
+    else
+        SetHint(QStringLiteral("当前处于单步等待，点「▶ 启动/继续」即可放行下一步"),
+                QStringLiteral("#f7c948"));
 }
 
 void AutoRunPage::OnStopClicked()
 {
-    if (m_worker) m_worker->Stop();
-    m_btnStart->setEnabled(true);
-    m_statusLabel->setText(QStringLiteral("⏸ 已停止"));
+    if (!m_worker) return;
+    // 立即停：cancel + 全轴减速停（保持使能）。不立即恢复按钮——
+    // 等 interrupted / stateChanged(Idle) 到达后由 UpdateControlsEnabled 统一恢复；
+    // 引擎本就空闲（StopImmediate 不发信号）时就地刷新，防永久置灰。
+    m_worker->StopImmediate();
+    if (m_worker->GetState() == SequenceWorker::WorkerState::Idle)
+        UpdateControlsEnabled();
+    else
+        SetHint(QStringLiteral("正在安全停止…"), QStringLiteral("#8fd4ff"));
+    m_statusLabel->setText(QStringLiteral("⏹ 停止中…"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #f7c948; padding: 6px 0; background: transparent; border: none;");
+}
+
+void AutoRunPage::OnAlarmClearClicked()
+{
+    if (!m_worker) return;
+    using WS = SequenceWorker::WorkerState;
+    const WS st = m_worker->GetState();
+    if (st == WS::Running || st == WS::Paused) {
+        SetHint(QStringLiteral("请先「■ 停止」结束流程，再清除报警"), QStringLiteral("#f7c948"));
+        return;
+    }
+    if (st == WS::Fault) {
+        m_worker->ClearFault();   // 仅清引擎锁存，不动硬件使能（"程序不自动使能"是既有安全原则）
+        m_logTextEdit->append(QStringLiteral("[%1] 清除报警：%2")
+            .arg(QDateTime::currentDateTime().toString("HH:mm:ss"),
+                 m_lastError.isEmpty() ? QStringLiteral("故障锁存已清除") : m_lastError));
+        SetHint(QStringLiteral("故障锁存已清除。若驱动器仍报警，请到【手动控制】页断使能后重新使能，再执行一键回零"),
+                QStringLiteral("#8fd4ff"));
+    } else {
+        SetHint(QStringLiteral("当前无故障锁存"), QStringLiteral("#8fd4ff"));
+    }
+    UpdateControlsEnabled();
 }
 
 void AutoRunPage::OnInitClicked()
 {
     auto& hw = HardwareManager::instance();
-    bool ok = hw.Initialize();
-    if (ok) {
-        m_logTextEdit->append(QStringLiteral("[%1] 初始化完成").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
-    } else {
-        m_hintLabel->setText(QStringLiteral("初始化失败：请检查硬件连接与配置"));
-        m_hintLabel->setStyleSheet("color: #ff5e6b; font-size: 12px; background: transparent; border: none;");
+    if (m_worker && m_worker->GetState() != SequenceWorker::WorkerState::Idle) {
+        SetHint(QStringLiteral("流程执行中，禁止初始化（请先停止）"), QStringLiteral("#f7c948"));
+        return;
     }
+    if (!hw.Initialize()) {
+        SetHint(QStringLiteral("初始化失败：请检查硬件连接与配置"), QStringLiteral("#ff5e6b"));
+        return;
+    }
+    m_logTextEdit->append(QStringLiteral("[%1] 初始化完成").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+    // 分级引导（回零归属手动控制页；"程序不自动使能"是既有安全原则）
+    if (!hw.IsGlobalEnabled())
+        SetHint(QStringLiteral("硬件已连接。请到【手动控制】页「全部使能」→「一键回零」后方可启动"),
+                QStringLiteral("#8fd4ff"));
+    else if (!hw.IsSystemHomed())
+        SetHint(QStringLiteral("已使能但未回零。请到【手动控制】页执行「一键回零」"),
+                QStringLiteral("#8fd4ff"));
+    else
+        SetHint(QStringLiteral("初始化完成，可以启动"), QStringLiteral("#8fd4ff"));
+    UpdateControlsEnabled();
 }
 
 void AutoRunPage::OnEmergencyTriggered()
 {
-    // 仅 UI 响应：硬件断使能与 worker 中断由全局急停触发点（MainWindow）完成
-    m_btnStart->setEnabled(true);
+    // 仅 UI 响应：硬件断使能与 worker 中断由全局急停触发点（MainWindow）完成；
+    // 急停锁存在 HardwareManager（IsEStopPending），gate 已置 false → 五钮全灭，
+    // 解锁须等急停后全轴回零完成（MarkAxisHomed → estopPending_ 清除）。
+    UpdateControlsEnabled();
+    SetHint(QStringLiteral(
+        "急停已触发，系统已锁定。请切换至【手动控制】模式，依次执行【全局轴使能】→【一键回零】，"
+        "回零完成后急停锁定自动解除，方可恢复生产"),
+        QStringLiteral("#ff5e6b"));
     m_statusLabel->setText(QStringLiteral("⛔ 急停"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #ff5e6b; padding: 6px 0; background: transparent; border: none;");
     m_logTextEdit->append(QStringLiteral("[%1] 急停触发").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
@@ -443,16 +521,15 @@ void AutoRunPage::OnActionStarted(int /*index*/, const QString& name)
 
 void AutoRunPage::OnSchemeFinished()
 {
-    m_btnStart->setEnabled(true);
+    UpdateControlsEnabled();
     m_statusLabel->setText(QStringLiteral("✅ 完成"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
-    m_hintLabel->setText(QStringLiteral("方案执行完成"));
-    m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none;");
+    SetHint(QStringLiteral("方案执行完成"), QStringLiteral("#8fd4ff"));
 }
 
 void AutoRunPage::OnInterrupted(const QString& reason)
 {
-    m_btnStart->setEnabled(true);
+    UpdateControlsEnabled();
     m_statusLabel->setText(QStringLiteral("⏸ 中断"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #f7c948; padding: 6px 0; background: transparent; border: none;");
     m_logTextEdit->append(QStringLiteral("[%1] 中断: %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), reason));
@@ -460,9 +537,104 @@ void AutoRunPage::OnInterrupted(const QString& reason)
 
 void AutoRunPage::OnError(const QString& message)
 {
+    m_lastError = message;           // 供「清报警」提示（避免跨线程读 worker 内部字符串）
     m_logTextEdit->append(QStringLiteral("[%1] 错误: %2").arg(QDateTime::currentDateTime().toString("HH:mm:ss"), message));
-    // 方案失败后恢复启动按钮与状态标签（否则永久置灰）
-    if (m_btnStart) m_btnStart->setEnabled(true);
+    // 故障锁存（引擎已进 Fault）→ 统一出口恢复按钮可用性（仅清报警/初始化可点）
+    UpdateControlsEnabled();
     m_statusLabel->setText(QStringLiteral("⛔ 错误"));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #ff5e6b; padding: 6px 0; background: transparent; border: none;");
+    SetHint(QStringLiteral("执行出错：%1（清除报警后可重新启动）").arg(message), QStringLiteral("#ff5e6b"));
+}
+
+void AutoRunPage::OnWorkerStateChanged(SequenceWorker::WorkerState state,
+                                       SequenceWorker::PauseReason reason)
+{
+    UpdateStatusByState(state, reason);
+    UpdateControlsEnabled();
+}
+
+// ---- 互锁唯一出口与工具（2026-09-07 5 按钮重构） ----
+
+void AutoRunPage::UpdateControlsEnabled()
+{
+    if (!m_btnStartOrResume || !m_btnPause || !m_btnStop || !m_btnAlarmClear || !m_btnInit) return;
+
+    using WS = SequenceWorker::WorkerState;
+    const WS st = m_worker ? m_worker->GetState() : WS::Idle;
+    const bool homed = HardwareManager::instance().IsSystemHomed();
+    // 互锁门禁（TR-075）：自动模式 且 无急停待恢复锁存（全局硬件级状态，HardwareManager 自持）
+    const bool gate = m_autoModeActive && !HardwareManager::instance().IsEStopPending();
+
+    const bool busy    = (st == WS::Running || st == WS::Paused);   // 会话持有中
+    const bool faulted = (st == WS::Fault);
+
+    // 方案下拉：仅运行/暂停期禁止切换；手动模式与急停锁存期保留预选能力（下次启动才读取所选方案）
+    m_schemeCombo->setEnabled(!busy);
+
+    // 非自动模式 / 急停待恢复 → 五钮全灭（恢复通道：手动页使能/回零 + 顶栏急停永不禁用）
+    if (!gate) {
+        m_btnStartOrResume->setEnabled(false);
+        m_btnPause->setEnabled(false);
+        m_btnStop->setEnabled(false);
+        m_btnAlarmClear->setEnabled(false);
+        m_btnInit->setEnabled(false);
+        return;
+    }
+
+    // 启动/继续：空闲时受回零互锁（未回零禁启）；暂停态即可点（继续）
+    m_btnStartOrResume->setEnabled(faulted ? false : (st == WS::Idle ? homed : st == WS::Paused));
+    m_btnPause->setEnabled(st == WS::Running);           // 仅运行中可暂停（单步等待期禁用防误放行）
+    m_btnStop->setEnabled(busy);                          // 停止仅在会话持有中可用
+    m_btnAlarmClear->setEnabled(!busy);                   // Fault/Idle 可点（Idle 时提示无故障）
+    m_btnInit->setEnabled(!busy);                         // 运行/暂停期禁止重初始化
+}
+
+void AutoRunPage::SetHint(const QString& text, const QString& color)
+{
+    if (!m_hintLabel) return;
+    m_hintLabel->setText(text);
+    m_hintLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 12px; background: transparent; border: none; padding: 2px 0;")
+            .arg(color));
+}
+
+void AutoRunPage::UpdateStatusByState(SequenceWorker::WorkerState st,
+                                      SequenceWorker::PauseReason reason)
+{
+    using WS = SequenceWorker::WorkerState;
+    using PR = SequenceWorker::PauseReason;
+    const char* kStatusStyle =
+        "font-size: 28px; font-weight: 700; color: %1; padding: 6px 0; background: transparent; border: none;";
+    switch (st) {
+    case WS::Running:
+        m_statusLabel->setText(QStringLiteral("▶ 运行中"));
+        m_statusLabel->setStyleSheet(QString(kStatusStyle).arg(QStringLiteral("#7ed67e")));
+        break;
+    case WS::Paused:
+        m_statusLabel->setText(reason == PR::Step ? QStringLiteral("⏸ 单步暂停")
+                                                  : QStringLiteral("⏸ 已暂停"));
+        m_statusLabel->setStyleSheet(QString(kStatusStyle).arg(QStringLiteral("#f7c948")));
+        break;
+    case WS::Fault:
+        m_statusLabel->setText(QStringLiteral("⛔ 故障"));
+        m_statusLabel->setStyleSheet(QString(kStatusStyle).arg(QStringLiteral("#ff5e6b")));
+        break;
+    case WS::Idle:
+        // 终态（完成/停止/急停/错误）已由对应槽先行设置，这里不覆盖
+        break;
+    }
+}
+
+void AutoRunPage::RequestHomeAll()
+{
+    auto& hw = HardwareManager::instance();
+    if (!hw.IsGlobalEnabled()) {
+        SetHint(QStringLiteral("请先使能所有轴（手动页点击「全部使能」）"), QStringLiteral("#f7c948"));
+        return;
+    }
+    if (hw.HomeAll())
+        m_logTextEdit->append(QStringLiteral("[%1] 一键回零开始")
+                                  .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+    else
+        SetHint(QStringLiteral("回零失败：请检查轴连接/回零配置"), QStringLiteral("#ff5e6b"));
 }

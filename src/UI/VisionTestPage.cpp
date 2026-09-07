@@ -154,6 +154,19 @@ QVector<PuffResult> VisionTestPage::ToQVector(const std::vector<PuffResult>& v)
     return out;
 }
 
+// 模式互锁（TR-075）：自动模式下视觉页只读。锁定会改动采集/检测行为的全部参数控件
+// （4 个检测参数直写 ConfigManager，相机配置与算法选择需重开相机/影响检测）；
+// 相机开关、采集、检测、视图切换、截图等操作类控件保持可用（监视/排查仍可操作）。
+void VisionTestPage::SetParamsLocked(bool locked)
+{
+    const QList<QWidget*> params = {
+        cameraTypeCombo_, deviceIdEdit_, resolutionCombo_, fpsCombo_, algoCombo_,
+        confSpin_, zminSpin_, zmaxSpin_, exposureSpin_,
+    };
+    for (QWidget* w : params)
+        if (w) w->setEnabled(!locked);
+}
+
 void VisionTestPage::SetupUI()
 {
     setStyleSheet("background: #262c34;");

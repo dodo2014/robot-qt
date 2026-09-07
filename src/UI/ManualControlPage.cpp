@@ -3,6 +3,8 @@
 #include "HAL/core/HardwareManager.h"
 #include "HAL/core/AxisMap.h"
 #include "KinematicsHelper.h"
+#include "Logic/SequenceWorker.h"
+#include "ConfigManager.h"
 #include "spdlog/spdlog.h"
 
 #include <QHBoxLayout>
@@ -150,16 +152,43 @@ void ManualControlPage::SetupUI()
     homeAllBtn->setCursor(Qt::PointingHandCursor);
     connect(homeAllBtn, &QPushButton::clicked, this, &ManualControlPage::OnGlobalHome);
 
-    // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号清理状态数组
+    // 全局安全位（2026-09-07）：回零完成后自动走（MainWindow 上升沿触发），此处提供手动重走与示教
+    auto* safePosBtn = new QPushButton(QStringLiteral("回安全位"));
+    safePosBtn->setStyleSheet("QPushButton { background: #2f6f9f; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; font-size: 15px; color: white; } QPushButton:hover { background: #3a84b8; }");
+    safePosBtn->setCursor(Qt::PointingHandCursor);
+    safePosBtn->setToolTip(QStringLiteral("先抬 Z 再水平走到安全位（需已回零；安全位在设备配置页/示教设定）"));
+    connect(safePosBtn, &QPushButton::clicked, this, &ManualControlPage::OnGoSafePos);
+
+    auto* teachSafeBtn = new QPushButton(QStringLiteral("示教安全位"));
+    teachSafeBtn->setStyleSheet("QPushButton { background: #5a6675; border: none; border-radius: 10px; padding: 10px 18px; font-weight: 600; font-size: 15px; color: white; } QPushButton:hover { background: #6b7889; }");
+    teachSafeBtn->setCursor(Qt::PointingHandCursor);
+    teachSafeBtn->setToolTip(QStringLiteral("把当前四轴关节角记录为安全位（需已回零；记录后自动启用回零后回安全位）"));
+    connect(teachSafeBtn, &QPushButton::clicked, this, &ManualControlPage::OnTeachSafePos);
+
+    // 急停已升舱到 MainWindow 顶栏（全局唯一入口）：本页仅响应信号清理状态数组。
+    // 先 ResetAxisStates 再 SetHint——ResetAxisStates 末尾的 RefreshSoftLimitHint
+    // 会刷回默认文案，顺序反了会覆盖急停指导。恢复指导须在锁存解除前不被冲掉：
+    // OnGlobalEnable 成功分支已按 IsEStopPending() 给出阶段化提示。
     connect(&HardwareManager::instance(), &HardwareManager::emergencyStopTriggered,
             this, [this]() {
                 ResetAxisStates();
-                SetHint(QStringLiteral("已触发急停，所有轴立即停止"));
+                SetHint(QStringLiteral(
+                    "急停已触发，所有轴已断使能。请依次执行：【全局轴使能】→【一键回零】；"
+                    "回零完成后系统自动返回安全位，急停锁定解除"),
+                    QStringLiteral("#ff5e6b"));
+            });
+    // 急停锁存解除（TR-075）：急停后全轴回零完成（先于 homeStateChanged(true) 发出）
+    connect(&HardwareManager::instance(), &HardwareManager::estopCleared,
+            this, [this]() {
+                SetHint(QStringLiteral("急停锁定已解除（全轴回零完成），可切回【自动】恢复生产"),
+                        QStringLiteral("#7ed67e"));
             });
 
     btnLayout->addWidget(enableBtn);
     btnLayout->addWidget(disableBtn);
     btnLayout->addWidget(homeAllBtn);
+    btnLayout->addWidget(safePosBtn);
+    btnLayout->addWidget(teachSafeBtn);
 
     connStatusLabel_ = new QLabel();
     connStatusLabel_->setStyleSheet("color: #8da3bb; font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 0 6px;");
@@ -444,6 +473,10 @@ void ManualControlPage::OnGlobalEnable()
     SPDLOG_INFO("[ManualControl] 全局使能 result: ok={} connected={}", ok, connected);
     if (!connected) SetHint(QStringLiteral("未连接硬件，命令可能无效"), "#e0a520");
     else if (!ok)   SetHint(QStringLiteral("部分轴使能失败"));
+    // 急停锁存期（TR-075）：阶段化提示替代默认文案，防止恢复指导被冲掉
+    else if (HardwareManager::instance().IsEStopPending())
+                    SetHint(QStringLiteral("全局轴使能完成。请执行【一键回零】以解除急停锁定"),
+                            QStringLiteral("#f7c948"));
     else            SetHint(QStringLiteral("全局轴使能完成"));
     qDebug() << "全局轴使能";
 }
@@ -494,6 +527,57 @@ void ManualControlPage::OnGlobalHome()
         SetHint(QStringLiteral("回零中..."));
     }
     qDebug() << "一键回零";
+}
+
+// 回安全位（2026-09-07）：走 SequenceWorker::RunSafePos 临时方案（先抬Z再水平走）。
+// 门禁前置校验给明确提示，RunSequence 的使能/回零/running 硬门禁兜底。
+void ManualControlPage::OnGoSafePos()
+{
+    if (!worker_) { SetHint(QStringLiteral("执行引擎未初始化"), QStringLiteral("#e0a520")); return; }
+    if (worker_->GetState() != SequenceWorker::WorkerState::Idle) {
+        SetHint(QStringLiteral("有任务执行中，无法回安全位"), QStringLiteral("#e0a520"));
+        return;
+    }
+    if (!HardwareManager::instance().IsSystemHomed()) {
+        SetHint(QStringLiteral("请先一键回零，再回安全位"), QStringLiteral("#e0a520"));
+        return;
+    }
+    if (worker_->RunSafePos()) {
+        SetHint(QStringLiteral("正在回安全位（先抬 Z 再水平移动，可在自动运行页暂停/停止）"));
+    } else {
+        SetHint(QStringLiteral("回安全位未执行：未配置/未启用（设备配置页或示教安全位设定）"),
+                QStringLiteral("#e0a520"));
+    }
+}
+
+// 示教安全位：读当前四轴关节角写入 config（自动落盘），并置 enabled=true（示教过即启用）。
+// 必须已回零——否则记录的位姿无意义；四轴运动中记录的是中间位，也拒绝。
+void ManualControlPage::OnTeachSafePos()
+{
+    auto& hw = HardwareManager::instance();
+    if (!hw.IsSystemHomed()) {
+        SetHint(QStringLiteral("请先一键回零，再示教安全位"), QStringLiteral("#e0a520"));
+        return;
+    }
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
+        if (hw.IsAxisBusy(static_cast<LogicalAxis>(i))) {
+            SetHint(QStringLiteral("轴运动中，请待停止后再示教"), QStringLiteral("#e0a520"));
+            return;
+        }
+    }
+    auto& cfg = ConfigManager::instance();
+    const double j1 = hw.GetPosition(LogicalAxis::J1);
+    const double j2 = hw.GetPosition(LogicalAxis::J2);
+    const double z  = hw.GetPosition(LogicalAxis::Z);
+    const double r  = hw.GetPosition(LogicalAxis::R);
+    cfg.set("kinematics.safePos.j1", j1);
+    cfg.set("kinematics.safePos.j2", j2);
+    cfg.set("kinematics.safePos.z",  z);
+    cfg.set("kinematics.safePos.r",  r);
+    cfg.set("kinematics.safePos.enabled", true);
+    SetHint(QStringLiteral("已记录安全位：J1=%1 J2=%2 Z=%3 R=%4（已启用回零后自动回安全位）")
+                .arg(QString::number(j1, 'f', 2), QString::number(j2, 'f', 2),
+                     QString::number(z, 'f', 2), QString::number(r, 'f', 2)));
 }
 
 void ManualControlPage::OnJogMinus(int axis)

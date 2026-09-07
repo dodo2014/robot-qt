@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -359,6 +360,54 @@ QWidget* ConfigPage::CreateTab2Kinematics()
             rl->addWidget(label);
             rl->addWidget(input);
         }
+        rl->addStretch();
+        layout->addWidget(row);
+    }
+
+    // Row: 全局安全位（关节角，2026-09-07）——回零完成后自动走「先抬Z再水平」的目标姿态。
+    // safePos 每次 RunSafePos 时现读 config（无内存缓存），因此**不 emit paramsChanged**
+    //（paramsChanged 只会触发一次无谓的 Kinematics 重建）。
+    {
+        auto* row = new QWidget();
+        auto* rl = new QHBoxLayout(row);
+        rl->setContentsMargins(0, 0, 0, 0);
+        rl->setSpacing(18);
+
+        struct SafeParam { QString label; const char* path; double def; };
+        QVector<SafeParam> params = {
+            { QStringLiteral("安全位 J1 (°)"), "kinematics.safePos.j1", 0.0 },
+            { QStringLiteral("安全位 J2 (°)"), "kinematics.safePos.j2", 0.0 },
+            { QStringLiteral("安全位 Z (mm)"), "kinematics.safePos.z",  0.0 },
+            { QStringLiteral("安全位 R (°)"),  "kinematics.safePos.r",  0.0 },
+        };
+
+        for (const auto& p : params)
+        {
+            auto* label = new QLabel(p.label);
+            label->setStyleSheet("color: #b8cce3; min-width: 110px; font-size: 13px; background: transparent; border: none;");
+
+            auto* input = new QLineEdit(QString::number(dVal(p.path, p.def)));
+            input->setFixedWidth(70);
+            input->setStyleSheet("background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px;");
+            QObject::connect(input, &QLineEdit::editingFinished, [this, input, p = std::string(p.path)]() {
+                bool ok = false;
+                double v = input->text().toDouble(&ok);
+                if (ok) ConfigManager::instance().set(p, v);   // 不 emit paramsChanged（见上注释）
+            });
+
+            rl->addWidget(label);
+            rl->addWidget(input);
+        }
+
+        auto* autoChk = new QCheckBox(QStringLiteral("回零后自动回安全位"));
+        autoChk->setStyleSheet("color: #b8cce3; font-size: 13px; background: transparent; border: none;");
+        autoChk->setChecked(ConfigManager::instance().getValue<bool>("kinematics.safePos.enabled", false));
+        autoChk->setToolTip(QStringLiteral("勾选后每次一键回零完成自动走「抬Z→安全位」；也可在手动控制页「示教安全位」设定"));
+        QObject::connect(autoChk, &QCheckBox::toggled, [](bool on) {
+            ConfigManager::instance().set("kinematics.safePos.enabled", on);
+        });
+        rl->addWidget(autoChk);
+
         rl->addStretch();
         layout->addWidget(row);
     }

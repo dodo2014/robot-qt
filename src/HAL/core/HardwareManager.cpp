@@ -647,6 +647,26 @@ bool HardwareManager::StopAxis(LogicalAxis axis)
     return ok;
 }
 
+bool HardwareManager::StopAxes(const QVector<LogicalAxis>& axes)
+{
+    bool ok = true;
+    for (LogicalAxis a : axes) {
+        // 跳过未绑定硬件的轴（Type::None）：StopAxis 对 None 返回 false，会污染整体返回值
+        if (AxisMap::Get(a).type == AxisBinding::Type::None) continue;
+        ok = StopAxis(a) && ok;
+    }
+    return ok;
+}
+
+bool HardwareManager::StopAllAxes()
+{
+    QVector<LogicalAxis> axes;
+    axes.reserve(static_cast<int>(LogicalAxis::Count));
+    for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i)
+        axes.push_back(static_cast<LogicalAxis>(i));
+    return StopAxes(axes);
+}
+
 void HardwareManager::MarkAxisBusy(LogicalAxis axis, int busyMs)
 {
     int i = static_cast<int>(axis);
@@ -713,7 +733,15 @@ void HardwareManager::MarkAxisHomed(int ai)
     for (int i = 0; i < static_cast<int>(LogicalAxis::Count); ++i) {
         if (i >= axisHomed_.size() || !axisHomed_[i]) { allHomed = false; break; }
     }
-    if (allHomed) emit homeStateChanged(true);
+    if (allHomed) {
+        // 急停锁存清除（TR-075）：急停后真正跑完一次全轴回零才解锁。
+        // 先清标志再 emit，消费者在 homeStateChanged(true) 时读到的是已清除状态。
+        if (estopPending_) {
+            estopPending_ = false;
+            emit estopCleared();
+        }
+        emit homeStateChanged(true);
+    }
 }
 
 // 回零互锁：回零被打断（急停/断使能/手动停止）→ 该轴 homed 复位（部分完成不算完成，须重新回零）。
@@ -841,6 +869,10 @@ bool HardwareManager::EmergencyStop()
             emit axisMoveFinished(i);
         }
     }
+    // 急停待恢复锁存（TR-075）：必须在 emit enableStateChanged() 之前置位——
+    // AutoRunPage 的 enableStateChanged 槽会刷新按钮，晚置位会出现一帧错误解锁。
+    // 唯一清除条件 = 急停后真正跑完一次全轴回零（MarkAxisHomed allHomed）。
+    estopPending_ = true;
     emit enableStateChanged();
     emit emergencyStopTriggered();   // 通知各页面做自身状态清理（全局急停唯一触发点在此）
     return true;

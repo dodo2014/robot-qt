@@ -3,6 +3,8 @@
 > 状态：**PLAN，待手册信息确认后实施**
 > 硬件：BoPai 运动卡（网口 MultiCard）DI 输入；软件走既有 `IMotionCard::GetDI` + `HardwareManager::PollTick` 50ms 轮询架构。
 > 确认人：待定（手册端子号/极性需现场核对）
+>
+> ⚠ **注记（2026-09-07）**：屏幕自动运行页按钮组已重构为 5 钮（▶启动/继续、⏸暂停、■停止=StopImmediate、↺清报警、⟳初始化），原「复位」（实为 HomeAll 一键回零）已从自动页移除并归手动控制页——**物理"复位"→HomeAll 的映射目标不变**（`SequenceWorker::RequestHomeAll()` 已保留供转接）。实施前需按现状复核：物理"停止"是否升级 `StopImmediate()`、是否补「清报警」「暂停」的物理映射。详见 `doc/auto_run_button_refactor.md`。
 
 ## 一、总体接线方案
 

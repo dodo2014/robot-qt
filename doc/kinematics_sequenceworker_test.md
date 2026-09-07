@@ -4,6 +4,8 @@
 依据：`doc/gemini_qr.md`、`AGENTS.md` 防回归硬规约（测试台账 + 修改前验算）。
 前置：**用户确认计划后再执行本方案**。
 
+> ⚠ **历史文档注记（2026-09-07）**：S05 的 Stop 语义现为"仅置 cancel，执行完当前动作才停"（非减速停）；自动页【停止】已改走 `StopImmediate()`（减速停保持使能）。U01 的按钮组已被 5 按钮重构取代。新增用例请按 `doc/auto_run_button_refactor.md` 第七节与 `doc/global_safe_position.md` 第七节的手测清单执行（Pause/Resume/StopImmediate/ClearFault/RunSafePos/安全位走位）。
+
 ## 一、测试目标
 
 1. 验证「小脑」（Kinematics/CoordTransform/Home Offset）数学正确性与行为符合 gemini_qr.md 模型。

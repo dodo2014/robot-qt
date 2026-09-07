@@ -25,6 +25,11 @@ public:
     explicit VisionTestPage(QWidget* parent = nullptr);
     ~VisionTestPage() override;
 
+    // 模式互锁（TR-075）：自动模式下视觉页作为生产观察通道，参数/相机配置/算法
+    // 选择全部只读（防生产中改动影响采集与检测）；操作类控件（相机开关/采集/
+    // 检测/视图切换/截图）保持可用。
+    void SetParamsLocked(bool locked);
+
 private slots:
     void OnOpenCamera();
     void OnCloseCamera();

@@ -4,6 +4,8 @@
 依据：`doc/gemini_qr.md` 正逆解对话结论 + 现有源码核对。
 范围：本次仅计划落盘，**尚未开始编码**，等待用户确认后执行。
 
+> ⚠ **历史文档注记（2026-09-07）**：本文 T5 中断描述与 T8 按钮映射已随演进变化——① `Stop()` 实际**仅置 cancel**（当前动作跑完才停，TR-063 实测），"立即减速停"是 2026-09-07 新增的 `StopImmediate()`；② `stateChanged` 已改 enum 签名 `(WorkerState, PauseReason)`；③ T8 按钮组已被 5 按钮重构取代（见 `doc/auto_run_button_refactor.md`）；④ 新增 `Pause/Resume/ClearFault/RunSafePos` 与 `WorkerState` 显式状态机。T1–T4/T6/T7/T9/T10 的运动学与架构内容仍有效。
+
 ## 一、核心模型结论（gemini_qr.md 摘要，重构依据）
 
 1. **轴映射（已与 LogicalAxis 一致）**：J1 大臂旋转（伺服）｜J2 小臂旋转（舵机）｜Z 升降｜R 夹爪 Pitch 翻转（舵机）｜夹爪张合｜挤出。

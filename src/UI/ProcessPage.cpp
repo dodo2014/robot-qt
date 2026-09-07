@@ -855,28 +855,46 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
     auto setStepEnabled = [this](bool on) {
         if (m_stepBtn) m_stepBtn->setEnabled(on && HardwareManager::instance().IsSystemHomed());
     };
-    connect(m_worker, &SequenceWorker::stateChanged, this, [this, setStepEnabled](const QString& s) {
-        SPDLOG_INFO("[Process] worker state: {}", s.toStdString());
-        if (s == QStringLiteral("单步暂停")) {
-            SetStatusText(QStringLiteral("● 单步暂停"), QStringLiteral("#e0a520"));
-            setStepEnabled(true);   // 暂停期：允许释放下一步
-        }
-        else if (s == QStringLiteral("运行中")) {
-            SetStatusText(QStringLiteral("● 运行中"), QStringLiteral("#7ed67e"));
-            setStepEnabled(false);  // 动作执行中：禁用，杜绝提前放行
-        }
-        else if (s == QStringLiteral("执行选中动作")) {
-            SetStatusText(QStringLiteral("● 执行选中动作"), QStringLiteral("#4fb0d8"));
+    // 状态消费者改为 enum（原为 4 个中文字符串比较，改文案即静默错配）。
+    // 单步按钮可点的权威条件 = Paused && reason==Step：比字符串判定更强，
+    // 守住 D2 修复（"每次点击必然落在暂停期"，杜绝执行期提前放行连跑两个动作）。
+    connect(m_worker, &SequenceWorker::stateChanged, this,
+            [this, setStepEnabled](SequenceWorker::WorkerState st,
+                                   SequenceWorker::PauseReason reason) {
+        using WS = SequenceWorker::WorkerState;
+        using PR = SequenceWorker::PauseReason;
+        SPDLOG_INFO("[Process] worker state: {} reason: {}",
+                    static_cast<int>(st), static_cast<int>(reason));
+        switch (st) {
+        case WS::Running:
+            // 单动作会话沿用原「执行选中动作」文案（原字符串语义不丢）
+            if (m_worker->IsSingleActionSession())
+                SetStatusText(QStringLiteral("● 执行选中动作"), QStringLiteral("#4fb0d8"));
+            else
+                SetStatusText(QStringLiteral("● 运行中"), QStringLiteral("#7ed67e"));
+            setStepEnabled(false);      // 动作执行中：禁用，杜绝提前放行
+            break;
+        case WS::Paused:
+            if (reason == PR::Step) {
+                SetStatusText(QStringLiteral("● 单步暂停"), QStringLiteral("#e0a520"));
+                setStepEnabled(true);   // 仅"单步挂起"才允许释放下一步
+            } else {
+                // 用户从自动运行页暂停：NextStep 在此态无效，灰掉防误点
+                SetStatusText(QStringLiteral("● 已暂停（自动运行页）"), QStringLiteral("#e0a520"));
+                setStepEnabled(false);
+            }
+            break;
+        case WS::Fault:
+            SetStatusText(QStringLiteral("✖ 故障（请清除报警）"), QStringLiteral("#d14444"));
             setStepEnabled(false);
-        }
-        else if (s == QStringLiteral("空闲")) {
+            break;
+        case WS::Idle:
             // 会话结束：优先保留终态（完成/已停止/出错），否则回到空闲
             SetStatusText(m_finalStatus.isEmpty() ? QStringLiteral("● 空闲") : m_finalStatus,
                           m_finalColor.isEmpty() ? QStringLiteral("#b8cce3") : m_finalColor);
-            setStepEnabled(true);   // 会话结束，使能交回 homed 联动
+            setStepEnabled(true);       // 会话结束，使能交回 homed 联动
+            break;
         }
-        else
-            SetStatusText(QStringLiteral("● ") + s, QStringLiteral("#b8cce3"));
     });
     connect(m_worker, &SequenceWorker::schemeFinished, this, [setFinalStatus]() {
         setFinalStatus(QStringLiteral("✅ 完成"), QStringLiteral("#7ed67e"));
@@ -895,6 +913,9 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
         setFinalStatus(QStringLiteral("✖ 出错"), QStringLiteral("#d14444"));
     });
     connect(m_worker, &SequenceWorker::actionStarted, this, [this, setStepEnabled](int i, const QString& name) {
+        // 安全位临时方案（TR-074）不归属工艺流程页的方案列表：跳过选中联动，
+        // 否则回安全位会把本页动作列表误选到第 0/1 行
+        if (m_worker->IsSafePosSession()) return;
         SPDLOG_INFO("[Process] 单步 actionStarted {}/{}", i, name.toStdString());
         // 自动选中当前正在执行的动作（单步/自动/单动作共用）：setCurrentRow 经
         // currentRowChanged 同步 m_currentActionIdx 并刷新右侧详情，执行进度在动作列表可见
@@ -951,6 +972,20 @@ void ProcessPage::SetStatusText(const QString& text, const QString& color)
 bool ProcessPage::IsExecutionActive() const
 {
     return m_stepActive || (m_worker && m_worker->IsRunning());
+}
+
+// 模式切换强制清理（TR-075，Q12）：MainWindow 切【自动】时若单步会话仍有残留则调用。
+// Stop() 只置 cancel：Pausing(Step) 挂起会退出并走 interrupted 终态；Fault/Idle 态为 no-op
+//（cancel 残留由 RunSequence 启动时复位，无害）。仅确有残留时才动状态文本。
+void ProcessPage::AbortStepSession()
+{
+    const bool had = IsExecutionActive();
+    if (m_worker) m_worker->Stop();
+    ResetStepSession();
+    if (had) {
+        SetStatusText(QStringLiteral("■ 已停止（模式切换清理）"), QStringLiteral("#b8cce3"));
+        SPDLOG_WARN("[ProcessPage] 模式切换强制清理单步会话");
+    }
 }
 
 void ProcessPage::ApplySpeedPercentToCurrentAction(int v)

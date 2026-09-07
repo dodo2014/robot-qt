@@ -9,7 +9,7 @@ CreamPuffRobot/
 ├─ CMakeLists.txt          顶层：Qt6/Eigen3/OpenCV/spdlog + 5 子目录；HAL 以 WHOLEARCHIVE 整库链接（REGISTER_* 宏静态自注册生效的前提）
 ├─ build_release.bat       Release 一键构建+打包（%~dp0 可重定位）
 ├─ config/
-│  ├─ config.json          运行时配置：通信/仿真类型/运动学/视觉/TCP/axes 六轴（换算、限位、回零参数）
+│  ├─ config.json          运行时配置：通信/仿真类型/运动学(含 safePos 全局安全位)/视觉/TCP/axes 六轴（换算、限位、回零参数）
 │  └─ process.json         工艺方案：方案→动作(Move/Vision/Extrude/Delay/Gripper)→点位(coord 嵌套)
 ├─ doc/                    设计文档、测试计划（real_machine_plan_phase2 等）、worklog/（每日日志）
 ├─ 3rdparty/bopai/         博派 SDK（include/lib/bin；POST_BUILD 自动复制 DLL 到输出目录）
@@ -39,7 +39,11 @@ CreamPuffRobot/
    │  └─ Trajectory        轨迹（预留）
    ├─ Logic/               流程编排
    │  ├─ SequenceWorker    方案执行引擎（moveToThread 独立线程；HardwareManager 调用经 BlockingQueuedConnection
-   │  │                    回主线程；Move=InverseSmart→逐轴 MoveAbs→WaitForAxes；单步/停止/急停/使能门禁）
+   │  │                    回主线程；Move=示教 joints 优先/InverseSmart→逐轴 MoveAbs→WaitForAxes；
+   │  │                    2026-09-07 重构：显式状态机 WorkerState{Idle,Running,Paused,Fault}+
+   │  │                    PauseReason{None,User,Step}；点级暂停 PauseGate（减速停→挂起→原地续走）；
+   │  │                    StopImmediate(减速停保持使能)/Fault 锁存+ClearFault/RunSafePos(全局安全位 2 点临时方案)；
+   │  │                    单步/停止/急停/使能/回零门禁）
    │  └─ PickCycleController  视觉抓取单周期模板（状态机；供 Vision 动作委托复用）
    └─ UI/                  MainWindow + 5 页面（AutoRun/ManualControl/Process/VisionTest/Config）+ ToggleSwitch
                            + KinematicsHelper（UI 层统一 FromConfig/ReadConfigParams，Core 不依赖 Config）
@@ -72,7 +76,21 @@ ManualControlPage（点动/Go/回零/使能按钮）
 AutoRunPage.RunSequence → SequenceWorker(worker 线程排队) → StartExecution(worker 线程)
   → 每个动作经 InMainThread(QMetaObject::invokeMethod BlockingQueuedConnection) 回主线程
     调 HardwareManager（与 PollTick 串行，避免数据竞争）→ 同 3.1 链路
-  → 信号上行：actionStarted/Finished/schemeFinished/interrupted → UI 日志/按钮状态
+  → 信号上行：actionStarted/Finished/schemeFinished/interrupted/
+    stateChanged(WorkerState{Idle,Running,Paused,Fault}, PauseReason{None,User,Step}) → UI 日志/按钮状态
+  → 暂停：Pause() 置标志 → 挂起点(PauseGate/WaitForAxes ≤20ms) StopAxes 减速停 → 挂起
+    → Resume() 重发当前绝对目标 MoveAbs 原地续走（Delay 按剩余时间续算）
+  → 停止：StopImmediate() = cancel + StopAllAxes(减速停保持使能)；急停 = EmergencyStop(断使能)
+```
+
+### 3.2.1 全局安全位（2026-09-07 新增）
+```
+homeStateChanged(true)（全轴回零完成，PollTick 主线程）
+  → MainWindow 上升沿判定(lastHomed_) + safePos.enabled 检查 + worker Idle 守卫
+  → SequenceWorker::RunSafePos()：读 config kinematics.safePos(关节角) → 构造 2 点临时方案
+    （点1=原地抬Z、点2=水平走安全位）→ RunSequence → 同 3.2 链路（先抬Z再水平，防横扫）
+  → 手动入口：ManualControlPage「回安全位」按钮；「示教安全位」读当前关节角写 config 并置 enabled
+  → 急停恢复链路：急停→切手动→使能→一键回零→(此处自动回安全位)→切自动启动方案
 ```
 
 ### 3.3 状态上行（轮询广播）

@@ -24,6 +24,14 @@ public:
 
     void SetSequenceWorker(SequenceWorker* worker);
 
+    // 单步会话是否活跃（m_stepActive）。MainWindow 模式互锁用：
+    // 切自动时若有残留会话则调 AbortStepSession() 强制清理（Q12）
+    bool IsStepSessionActive() const { return m_stepActive; }
+    // 模式切换强制清理：停 worker + 清单步会话。仅确有残留时才有副作用
+    void AbortStepSession();
+    // 单步/自动执行进行中：此时禁止切换/删除方案（worker 跑的是启动时值拷贝的 scheme）
+    bool IsExecutionActive() const;
+
 private slots:
     void OnNewScheme();
     void OnDeleteScheme();
@@ -50,8 +58,6 @@ private:
     void RefreshGripperLimitRange();
     // 执行状态标签统一入口：text 已含状态符号，color 为前景色
     void SetStatusText(const QString& text, const QString& color);
-    // 单步/自动执行进行中：此时禁止切换/删除方案（worker 跑的是启动时值拷贝的 scheme）
-    bool IsExecutionActive() const;
     void RefreshActionList();
     void RefreshActionDetail(int idx);
     void RefreshSchemeCombo();
