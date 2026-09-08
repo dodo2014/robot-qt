@@ -20,6 +20,39 @@
 
 - 配置写入：`ConfigManager::set()` 自动 300ms 落盘（`ConfigManager.cpp:118-136`）；ConfigPage links 编辑模式可照抄（`ConfigPage.cpp:322-364`：QLineEdit + `dVal(path)` + editingFinished）。
 - `homeStateChanged(bool)` **全工程唯一 emit**：`HardwareManager.cpp:736`（全绑定轴 homed 时），PollTick 主线程内。**电平语义**：手动页单轴重回零（其余轴 homed 保持）会再次 emit true → 自动触发必须做**上升沿**判定。
+
+#### 上升沿判定：为什么不能直接用 `homed==true`（2026-09-08 补注）
+
+**电平 vs 上升沿**（数字电路 / PLC 术语）：
+
+- **电平（level）**＝信号"当前是什么状态"。`homeStateChanged(bool homed)` 传的就是**状态值**——"系统现在是否已回零"。
+- **上升沿（rising edge）**＝状态**从 false 跳变到 true 的那一瞬间**，相当于 PLC 的 `|P|` 指令。
+
+关键区别：该信号是"**每满足一次条件就广播一次**"，而**不是**"状态发生变化才广播"。`MarkAxisHomed` 的 emit 条件是"所有轴 homed"，所以只要全轴成立就会 emit，与上一次是否成立无关：
+
+```
+t0 上电                  homed=false   lastHomed_=false
+t1 首次全轴回零完成       emit true  → rising=true  → 回安全位 ✓     lastHomed_←true
+t2 操作员单轴重回零 J1   emit true  → rising=false → 不动作 ✓      （其余轴 homed 保持，全轴仍成立）
+t3 重初始化 / 复位坐标    emit false →                              lastHomed_←false
+t4 再次一键回零           emit true  → rising=true  → 回安全位 ✓
+```
+
+**若写成"收到 true 就回安全位"**：t2 场景下操作员只想回零 J1，机器人却会突然走一段安全位走位——危险且违反直觉。
+
+**判定代码**（`MainWindow.cpp:173-175`）：
+
+```cpp
+const bool rising = homed && !lastHomed_;   // 本次 true 且上次 false = 上升沿
+lastHomed_ = homed;                          // 无论是否 rising 都更新，为下次判定留基准
+if (!rising) return;                         // 电平重复（单轴重回零）不触发
+```
+
+`lastHomed_` 为 MainWindow 成员（`MainWindow.h:54`，注释已注明"电平语义，单轴重回零会重复 emit true"）。
+
+**同源陷阱（见下条 :24 与 TR-062）**：`IsSystemHomed()` 同样不可用于判定"急停是否已恢复"——`AbortHoming` 只复位"正在回零中"的轴，已回零完成的轴 homed 保持 true，急停后 `IsSystemHomed()` 很可能仍为 true。故急停恢复改用独立的 `estopPending_` 锁存（TR-075 已落地 HardwareManager），清除条件写死为"急停后真正跑完一次全轴回零"——这也是"不能用电平、要用事件"的同一类问题。
+
+> **一句话**：这个信号告诉你"**现在是什么状态**"，不告诉你"**刚刚发生了什么事件**"——要用事件就必须自己造上升沿。
 - `MoveAbs` 参数即逻辑关节角（`HardwareManager.cpp:379-457`）；`MoveToPoint` hasJoints 路径（`SequenceWorker.cpp:460-481`）有 **FK 一致性校验 ±0.5**（校验 pt.x/y/z/r 与 FK(joints)）→ 构造点必须用 `impl_->kin.Forward(joints)` 填 x/y/z/r，否则静默回退 IK。
 - 急停不复位已完成轴的 homed（`EmergencyStop:843-867` 仅 AbortHoming"回零中"轴）→ 急停后**仅重新使能不触发** homeStateChanged，必须一键回零 → 与恢复链路一致，且正确（急停后舵机 TorqueOff 可能垂落，旧坐标不可信）。
 - **隐患 1**：`RunSequence`（`:168-175`）**不清 `stepMode`**——单步会话残留 stepMode=true 时，安全位会话 1 个动作跑完会挂起在 `Paused(Step)` 等NextStep → **卡死**。`RunSingleAction:216` 有清，RunSequence 须补。
