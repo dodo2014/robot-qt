@@ -171,9 +171,10 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme)
     impl_->paused.store(false);
     impl_->stepGatePending.store(false);
     impl_->pauseAccumMs.store(0);
-    // 隐患 1 修复（2026-09-07）：RunSequence 原先不清 stepMode——单步会话残留 stepMode=true 时，
-    // 新会话 1 个动作跑完会挂起在 Paused(Step) 等 NextStep → 卡死（RunSingleAction:216 本就有清）。
-    impl_->stepMode.store(false);
+    // stepMode **不在此清**：单步由 ProcessPage 先 SetStepMode(true) 再 RunSequence，
+    // 此处清除会把刚设的单步标志抹掉 → 动作间不再挂起，方案一次跑完（2026-09-08 真机 8.13 实测）。
+    // 清除点统一在会话结束时（StartExecution / RunSingleAction），既保证单步生效，
+    // 又避免"单步残留 stepMode=true 使后续会话挂起 Paused(Step) 卡死"（TR-074 隐患 1 的原意）。
     impl_->safeSession.store(false);
     impl_->scheme = scheme;
     impl_->currentIndex = -1;
@@ -284,6 +285,9 @@ bool SequenceWorker::RunSafePos()
     // RunSequence 内部会清 safeSession（当作普通方案），这里在排队生效前置位：
     // actionStarted 由 worker 线程 Queued 发出，必晚于此赋值 → ProcessPage 守卫可靠
     impl_->safeSession.store(true);
+    // 双保险：安全位会话绝不使用单步——若此前有单步残留（异常路径），这里强制清掉，
+    // 否则 1 个动作跑完会挂起在 Paused(Step) 等 NextStep → 卡死（TR-074 隐患 1）
+    impl_->stepMode.store(false);
     return true;
 }
 
@@ -396,6 +400,9 @@ void SequenceWorker::StartExecution()
         emit schemeFinished();
     }
     impl_->safeSession.store(false);
+    // 会话结束即清 stepMode：单步标志只在本次会话内有效，防止残留影响后续会话
+    // （隐患 1 的清除点：原放在 RunSequence 开头会抹掉单步自身标志，见 :174 注释）
+    impl_->stepMode.store(false);
     // 故障态保持锁存（待 ClearFault 清除），其余一律回空闲
     if (impl_->state.load() != WorkerState::Fault)
         SetState(WorkerState::Idle);

@@ -1,15 +1,16 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-09-07T12:37:10+0800
+最后更新时间：2026-09-08T17:10:21+0800
 
 # 项目概述
 
 - CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式）。2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 自动工艺流程执行引擎 SequenceWorker（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
 - L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
 - 2026-08-28 完成系统目录结构与架构全面梳理，产出 doc/architecture.md（目录职责/分层依赖/三条数据流/门面设计原则/拆分路线/关键不变量）。HardwareManager 已部分拆分（CameraManager、AxisConfigService），对外 API 不变。
-- 当前基线 = b9c7ed3（config: add Axis_Z home params），2026-08-26 晚因多模型协作污染 hard reset；被丢弃的 4 项修复已于 2026-08-28 重做并真机复测通过。
-- 后续：阶段 6-7（UI 联测/异常回归/编译发布）+ 三页互斥补齐；奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
+- 2026-09-07 三项重大落地（同一天，单次提交 2be4083）：**TR-073 自动运行页 5 按钮 + SequenceWorker 显式状态机**、**TR-074 全局安全位**、**TR-075 UI 权限与全局互锁**（详见各自专节）。均通过 Debug+Release 双编译 + Sim 冒烟，GUI 交互与真机走位待 2026-09-08 起统一真机验证。
+- 当前基线 = 50d37cc（docs: TR-073/074/075 真机用例文档 + 概念补注）；功能提交 2be4083，其后 13762e3（worklog 补记）。
+- 后续：真机执行 doc/test/real_machine_plan_phase3.md（阶段 8/9/10，共 54 条）；奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
 - 物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。
 
 # Git 操作规约与用户工作习惯
@@ -17,6 +18,54 @@
 - 禁止自动执行 git commit/push，仅当用户明确说「提交/commit」时才执行。
 - 用户典型收口指令模式：「真机验证通过，更新文档，最后执行提交」「这次不需要执行构建，只更新文档+ commit」。执行前注意用户是否明确排除构建。
 - 用户对不满意的实现会手动回滚后要求重做（2026-09-04 曾回滚一次早期修复尝试「这个问题不处理」，随后又提出重新分析修复）；中途指令可能推翻此前指令，以最新为准。
+- **先计划后执行（2026-09-07 强化）**：用户多次打断"直接开干"并明确「我说的是制定计划」——收到架构指令类需求时须先出计划供用户与 Gemini 审核，批准后才实施。计划文件落 C:\Users\11318\.codebuddy\plans\。
+- 提交前必须核查工作区：2026-09-08 提交时发现 `config/config.json`（多余空白行）与 `config/process.json`（speedPercent 统一 50 + 新增 x=600 不可达点，疑为真机测试准备）两处非本轮改动，经询问后用户选择"只提交文档"，config 改动保留工作区。发现意外改动先查来源再问，不擅自暂存或丢弃。
+
+# 自动运行页 5 按钮与底层状态机重构（TR-073，2026-09-07 已落地）
+
+- 来源：用户与 Gemini 的深度业务架构讨论（工业标准语义纠正）+【架构指令 1/2】。核心纠偏：
+  - **【停止】≠【复位】**：停止 = 废弃当前流程上下文、回就绪态，再启动从第一步重跑；**"从中断处继续"是【暂停/继续】**，不是停止+复位；【复位】= 清除报警（Clear Alarms），绝不含让机器动起来的逻辑。
+  - **开环步进禁止瞬间断脉冲**：惯性导致丢步、坐标系永久错乱（伺服有编码器闭环才能"立即停"）。所有停止必须走 **MC_Stop 减速斜坡**（BoPaiCard.cpp:327），视觉上快停但微观是降速斜坡；若减速距离不可接受，调 `MC_SetStopDec`，不改停止方式。
+  - **初始化两层**：软件层 = `HardwareManager::Initialize()`（连卡/相机/查状态）；物理层 = 回零 + 到安全位。同事经验的"原点/初始位/安全位"三者中，**全局安全位必须单独配置**（急停后机械臂在低位，直接启动方案会横扫桌面设备）。
+- **5 按钮**（下标分派，不再靠 text.contains 匹配）：`▶ 启动/继续`、`⏸ 暂停`（Pause，减速停+保持上下文，Resume 原地续走——重发当前绝对目标 MoveAbs，不重跑整个动作）、`■ 停止`（**StopImmediate** = cancel + StopAllAxes 减速停，保持使能）、`↺ 清报警`（ClearFault，仅清引擎锁存，不自动使能）、`⟳ 初始化`（仅 Initialize + 分级引导，不含使能/回零）。原「复位」实为 HomeAll，已归手动控制页。
+- **状态机**：`enum class WorkerState { Idle, Running, Paused, Fault }` + `PauseReason { None, User, Step }`（Q_ENUM，跨线程 Queued 必需）；`stateChanged` 改 enum 签名（原 QString 中文字符串已废）；`IsRunning() = state != Idle`（单步暂停亦 true，语义零回归）。点级暂停 + 原地续走（PauseGate）；Fault 锁存由 ClearFault 清除；`Stop()` 保持"仅置 cancel 就近"语义供单步/退出用。
+- **顺序决策（Gemini 定）**：必须先做按钮语义重构（1/2），再做权限互锁（2/2）——互锁是"建在状态机上的外墙"，先建墙会全部推倒重来。
+
+# 全局安全位（TR-074，2026-09-07 已落地）
+
+- 配置 `kinematics.safePos.{j1,j2,z,r,enabled}`：**关节角形态**（与示教 joints 同坐标系，MoveAbs 直发，无 IK 双解歧义；z 为电机坐标，回零后 0 最高、向下为负，与坐标面板 TCP Z 差 165）；`enabled` 默认 **false**（出厂全 0 不应乱走），示教后自动置 true。
+- 触发：回零完成 `homeStateChanged(true)` **上升沿**自动触发（MainWindow `lastHomed_` 判定）+ 手动控制页「回安全位」按钮。执行复用 SequenceWorker `RunSafePos()`：构造 2 点临时方案（点1 = 当前 J1/J2/R + 安全位 Z 只抬 Z；点2 = 安全位），speedPercent=50，零新增运动代码、白得暂停/停止/门禁/互斥。
+- UI：手动页「回安全位」「示教安全位」两按钮（worker 已注入）；设备配置页 4 输入框 + 「回零后自动回安全位」复选框（safePos 现读 config，**不 emit paramsChanged**，避免无谓 Kinematics 重建）。
+- 守卫：ProcessPage `actionStarted` 加 `IsSafePosSession()`，防临时方案把动作列表误选到第 0/1 行。
+- 急停恢复链路闭环：急停 → 切手动 → 使能 → 一键回零 → 自动回安全位 → 切自动 → 启动。急停后**仅重新使能不会触发**（已回零轴 homed 保持 true）→ 必须一键回零，这正是期望（舵机可能垂落，旧坐标不可信）。
+
+# UI 权限与全局互锁（TR-075，2026-09-07 已落地）
+
+- 原需求（2026-09-07 提出）已实现完毕，用户 5 点 Code Review 修正全部采纳：
+  1. 启用矩阵基于 `WorkerState`（`AutoRunPage::UpdateControlsEnabled()` 为按钮启用唯一出口）。
+  2. **急停锁存 `estopPending_` 放 HardwareManager**（硬件级全局状态），**禁止页面自持副本**；手动页 m_hintLabel 显示分步恢复指导。置位在 `emit enableStateChanged()` **之前**（否则自动页按钮有一帧错误解锁）；清除唯一条件 = 急停后全轴回零（MarkAxisHomed allHomed），先清后发专用信号 `estopCleared()`。
+  3. 自动模式导航白名单 = **{自动运行, 视觉检测}**（放行视觉页供操作员监视）+ `VisionTestPage::SetParamsLocked` 锁 9 个参数控件（相机型号/序列号/分辨率/帧率/算法型号/置信度阈值/深度 Z min/max/曝光），操作类（开关相机/采集/检测/视图/截图）保持可用。
+  4. 运行/暂停禁止切模式 + 弹窗 + **QSignalBlocker 回弹**（防"拒绝→回弹→再拒绝"递归）；**Fault 态放行**（无运动在执行，切手动脱困合法）。
+  5. 切回自动时若单步会话残留 → 强制 `ProcessPage::AbortStepSession()`（Stop + ResetStepSession）清理（Q12 原意：切手动则放行）。
+- 两个关键修正（Plan agent 校验发现）：① **标签高亮从 toggled lambda 迁入 `ApplyModeState`**（回弹路径被 QSignalBlocker 屏蔽，高亮留 lambda 会残留被拒模式色——原 ui_interlock_plan 5.5"无需补偿"结论有误）；② 强制跳页**双写** `setChecked + setCurrentIndex`（程序化置位不发 idClicked）。
+- 方案下拉 `m_schemeCombo->setEnabled(!busy)`（手动/急停期保留预选，符合"先选好方案再切自动"的操作习惯）。
+- 已知边界：急停前已 Fault → 回零后 RunSequence 被 Fault 门禁拒、安全位跳过（需先清报警）；自动模式视觉页"关闭相机"仍可点（范围外）。
+- 实现过程：发现**并行会话同时实施互锁**（已在 HardwareManager.h 写入 IsEStopPending/estopPending_ 声明），用户裁决「由本会话实施」，续用其声明完成；本会话计划模式下曾误实施并已全部精确撤销后重做。
+
+# 真机用例文档 phase3（阶段 8/9/10，2026-09-08 新建）
+
+- `doc/test/real_machine_plan_phase3.md`（沿用 real_machine_plan_phase2.md 模板：编号用例表 + 前置段 + 判定标准 + 实测回填 + TR 交叉引用；编号延续 phase2 的 0-7 零撞号）：阶段 8 = TR-073（19 条）、阶段 9 = TR-074（15 条）、阶段 10 = TR-075（20 条），共 54 条。
+- 执行硬依赖：8 → 9 → 10；**9.4 示教必须早于 10.16**（急停恢复要看到"回零后自动走安全位"）；**10.13→10.17 急停链路一条链不可断开**。
+- 文档含「术语与状态速查」节（WorkerState 四态对照、Idle 不等于什么、如何确认 Idle、上升沿语义），供真机执行时不翻代码。
+- 回填约定：编号后标 🟢、每组 blockquote 实测记录（须带具体读数/文案/日志串）、按"最大号+1"追加 TR-076 起（当前最大 TR-075），发现缺陷各开独立 TR。
+- 走查发现三处待确认事实（未改代码）：A 自动页提示「全部使能」与手动页按钮「全局轴使能」不一致；B 安全位提示"可在自动运行页暂停/停止"实际不可达（危险时只能按顶栏急停）；C 回零自动回安全位时手动页无任何文字提示（UX 缺口）。
+
+# 关键术语：上升沿/电平语义 与 WorkerState 四态
+
+- **电平 vs 上升沿**：电平 = "当前是什么状态"；上升沿 = "从 false 跳到 true 的那一瞬间"（类比 PLC 的 `|P|`）。`homeStateChanged(bool homed)` 是**电平语义**——只要"全轴 homed"成立就 emit true，**单轴重回零（其余轴 homed 保持）会重复 emit true**。故 MainWindow 用 `lastHomed_` 造上升沿（`rising = homed && !lastHomed_`，且无论是否 rising 都要更新 lastHomed_ 为下次留基准）；否则操作员单独回零 J1 时会误触发安全位走位（危险）。
+- **同源陷阱**：`IsSystemHomed()` 不可用于判定"急停是否恢复"——`AbortHoming` 只复位"正在回零中"的轴，已回零完成的轴 homed 保持 true（TR-062）→ 急停后 IsSystemHomed() 很可能仍 true。故急停用独立 `estopPending_` 锁存。一句话：该信号告诉你"现在是什么状态"，不告诉你"刚刚发生了什么事件"。
+- **WorkerState 四态**：Idle = 没有会话在执行（引擎空闲，注意 ≠ 已使能/≠ 已回零/≠ 无故障/≠ 轴静止）；Running = 正在执行动作；Paused = 挂起保留上下文；Fault = 上次失败且未清除（软件锁存）。离开 Idle 只有三条路：RunSequence / RunSingleAction / **RunSafePos**（安全位期间亦非 Idle）。
+- **确认处于 Idle 的判据**：① 日志最近一条 `state -> 0 reason 0`；② 自动页五钮矩阵；③ ⚠ **不可用状态标签判断**——`UpdateStatusByState` 的 Idle 分支故意不覆盖标签（AutoRunPage.cpp:622-624）以保留「✅ 完成」「⏸ 中断」终态。
 
 # 阶段 4 重做修复与真机复测结果
 
@@ -39,17 +88,9 @@
 - TR-068：actionStarted → setCurrentRow(i)（列表行与 scheme.actions 严格 1:1），执行时动作列表自动高亮当前动作。
 - 用户疑问已答复：同步禁用不破坏异步执行逻辑——仅 UI 输入门控，与 worker 状态机正交，握手自洽。
 
-# 三页操作互斥（TR-066，未实现待补）
+# 三页操作互斥（TR-066）
 
-- 手动控制/工艺流程/自动运行三页运动操作互斥（同一时刻只允许一个运动源），2026-09-03 用户确认暂未实现，后续补充；AutoRunPage 启动/ProcessPage 单步按钮当前仅被 homed 状态联动，无跨页 worker 占用互斥。关联 D1 缺陷已随 D2 顺带解决。
-
-# UI 权限与状态机互锁需求（Interlock，2026-09-07 提出，待实现）
-
-- 基于【手动/自动】切换开关 + 急停状态实现互锁，用户要求先确认需求合理性再实现。与 TR-066 三页操作互斥互补。
-- 手动模式：导航栏全激活；AutoRunPage 4 操作按钮（启动/复位/停止/初始化）全部置灰。
-- 自动模式：强制跳转 AutoRunPage；除自动运行外导航按钮全部置灰；恢复 4 按钮但【启动】仍受回零门禁拦截。
-- 自动运行中（SequenceWorker Running）AutoRunPage 方案下拉 m_schemeCombo 置灰，流程结束恢复。
-- 急停恢复链路：急停后自动运行页全部控制按钮失效，UI 必须提示「急停已触发，请切换至【手动】模式，重新执行使能与一键回零后方可恢复生产」。
+- 手动控制/工艺流程/自动运行三页运动操作互斥（同一时刻只允许一个运动源）。TR-075 落地后**主风险已由模式互锁覆盖**（切自动后手动页被白名单挡住，物理隔离），但手动页点动与 worker 并存场景仍未收口（Gemini Q13 批准本次不做）。
 
 # TR-070 舵机未上电误报已连接（2026-09-04，真机通过，提交 16a6cc3）
 
@@ -92,19 +133,21 @@
 - 2026-08-31：FK 三组摆位（误差 ≤0.004mm）、J4 使能不再翻转、速度滑条随动、动作点间停顿修复。
 - J2 回零精度 -27.4/-27.2/-27.3（死区~1.5°+金属套松动），紧固后复测、暂不软件补偿；R 回零稳定 0.2° 系统性偏差暂不处理。
 - 阶段 2 遗留：J2 点动顿挫（暂不处理，排查从 kServoJogSendThreshold 与 FSUS_PARAM_ACCEL_SWITCH 入手）；J2 位置显示小误差（可接受）。Z 轴动作待硬件调试完成后测试。
+- 2026-09-08 起：执行 phase3 阶段 8/9/10（TR-073/074/075 的 GUI 交互与真机走位），此前三项均只有编译与 Sim 冒烟背书。
 
 # 基线复位事件与多模型协作风险
 
 - 用户发现可疑修改出现在切换模型之后，git reset --hard 到 b9c7ed3 丢弃全部未提交修改。
 - TortoiseGit 中 SHA-1 全 0、message "Working tree changes" 是未提交工作区占位显示，非真实提交。
 - 教训：多模型协作下 config.json 与代码有被覆盖/回滚风险；修改 config 前核对已标定参数完整性（曾发生 Axis_Z home 参数丢失），变更后真机复测。
+- 2026-09-07 新增形态：**并行会话同时实施同一功能**（互锁），两会话会写同一批文件。发现后立刻停止、报告用户裁决归属，不要抢改。已在互锁实施中发生一次。
 
 # 迭代进度与工作计划跟踪
 
 - 阶段划分与任务状态以 doc/开发工作计划.xlsx 为准；惯例：计划与影响分析、测试方案先落盘 doc 目录，用户确认后再执行；每日工作日志 doc/worklog/YYYY-MM-DD.md。
 - 计划文档约束：硬件手册信息要带用户确认；计划必须覆盖全部硬件（博派卡 + J2/R 两舵机）。
-- TEST_RECORD.md 台账编号化（2026-09-04 用户要求）：首列唯一编号 TR-###，按追加顺序递增，禁止重排/复用；台账内部与跨文件（AGENTS.md/doc/代码注释）引用一律用 TR-### 不得用行号（行号随增删漂移）。
-- 阶段 1-3 完成（小脑核心库/SequenceWorker 引擎/UI 接线 T7-T10 + 评审修复 D1-D17）；阶段 5 真机全部通过（2026-09-04）。
+- TEST_RECORD.md 台账编号化（2026-09-04 用户要求）：首列唯一编号 TR-###，按追加顺序递增（当前 TR-001~TR-075），禁止重排/复用；台账内部与跨文件（AGENTS.md/doc/代码注释）引用一律用 TR-### 不得用行号（行号随增删漂移）。**追加前重读文件取最大号+1**（并行会话撞号风险）。
+- 阶段 1-3 完成（小脑核心库/SequenceWorker 引擎/UI 接线 T7-T10 + 评审修复 D1-D17）；阶段 5 真机全部通过（2026-09-04）；2026-09-07 三项（TR-073/074/075）编码完成待真机验证。
 - 评审遗留低优先级改进：RefreshCoordPanel 每 50ms 重复构造临时 Kinematics；日志框无行数上限（已设 1000）；ConfigPage Tab5 限位修改未触发 ReloadFromConfig。
 
 # 物理蘑菇按钮接线需求
@@ -135,9 +178,9 @@
 
 # 全局急停升舱与业务停止（UI 重构决策）
 
-- 急停全局唯一入口（MainWindow 顶栏 46px 大红圆钮 = HardwareManager::EmergencyStop + worker::EmergencyStop），业务停止就近（ProcessPage 停止按钮 = SequenceWorker::Stop）。AutoRunPage/ManualControlPage 删除各自急停。
-- HardwareManager emergencyStopTriggered 信号驱动各页状态复位。
-- 注意：ProcessPage「停止」实测是执行完当前动作才停（TR-063），非就近刹车。
+- 急停全局唯一入口（MainWindow 顶栏大红钮 = HardwareManager::EmergencyStop + worker::EmergencyStop），业务停止就近（ProcessPage 停止按钮 = SequenceWorker::Stop）。AutoRunPage/ManualControlPage 删除各自急停。
+- HardwareManager emergencyStopTriggered 信号驱动各页状态复位；estopCleared 信号驱动"锁定已解除"提示。
+- 注意：ProcessPage「停止」实测是执行完当前动作才停（TR-063），非就近刹车；自动页「■ 停止」是 StopImmediate（cancel + StopAllAxes 减速停，保持使能）。
 
 # 180° 角度表示三坑与执行链路修复（2026-08-31，真机验证通过）
 
@@ -149,7 +192,7 @@
 
 - 三组真机摆位 FK 比对全通过（误差 ≤0.004mm）；tests/test_kinematics_check.cpp 固化验证程序（无参回归/fk/ik 模式，参数自动读 config），23/23 ALL PASS。
 - IK 甜甜圈边界容差 0.001→0.1mm（示教点显示舍入误拒）。
-- 待改进：示教 posture（elbow）按 J2 符号记录 + 执行按姿态确定性 Inverse。
+- 待改进：示教 posture（elbow）按 J2 符号记录 + 执行按姿态确定性 Inverse（已由 TR-071 关节角方案收口）。
 
 # Tooltip / 弹窗样式（2026-09-01~03，含废弃裁定）
 
@@ -174,6 +217,7 @@
 
 - automation project-history-compress（每天 08:30）压缩到 .history/history.txt，与 OpenCode 插件同文件同格式互通；NDJSON 最新在前，压缩后顶部插 marker。
 - 双内容源：pending.ndjson + .workbuddy/memory 与 doc/worklog 日志；采集约定：有长期价值的用户提问须当场 prepend 到 pending.ndjson，寒暄/纯命令不记。
+- 注意：marker 行存在两种格式（`"marker":"compacted"` 无空格 与 `"marker": "compacted"` 带空格），定位首个边界须兼容两种写法，否则会误把已归档内容当新批次。
 
 # 持续测试机制与工作规约
 
@@ -188,13 +232,15 @@
 
 # 待确认问题
 
-- 三页操作互斥逻辑补齐（TR-066，用户确认后续做）。
+- **真机验证 phase3 阶段 8/9/10（TR-073/074/075）自 2026-09-08 起执行**；结果回填用例文档并追加 TR-076 起。
+- 工作区未提交改动待用户处置：`config/config.json` 多余空白行（建议 git checkout 还原）、`config/process.json`（speedPercent 统一 50 + 新增 x=600 不可达点，疑为按用例 8.7 做的测试准备）。
+- 三页操作互斥逻辑补齐（TR-066，主风险已被模式互锁覆盖，手动点动并存场景仍开口）。
 - 真实相机（Orbbec）SDK 接入 ICamera 后，5.9 Vision 用例复测。
 - Z 轴动作待硬件调试完成后测试；J2 点动顿挫专项排查暂缓；J2 回零精度紧固后复测。
-- 物理蘑菇按钮接线方案待设计确认。
+- 物理蘑菇按钮接线方案待设计确认（5 按钮重构后屏幕"复位"已删，物理映射需按新语义复核）。
 - 计划文档中涉及硬件手册的具体信息需带用户确认。
 - 多模型协作下 config.json 等关键文件被覆盖风险长期存在，变更后须真机复测。
 - 用户明确搁置项（勿主动重提）：自动运行页窗口缩小时 R 角换行的样式问题、工艺流程页动作列表 6 按钮 tip 显示问题、TR-038 舵机重连抖动专项验证（观察中）。
 - TR-070 已知开口：skip-reconnect 恢复路径不重写 addr=44 accel 参数，点动顿挫回归再补写。
-- UI 权限与状态机互锁（Interlock）实现（2026-09-07 需求已提出，见专节）。
-- Axis_R 限位域与角度表示一致性问题（TR-059 已修归一化，域调整待定）；示教 posture/elbow 改进已由 TR-071 实现收口（2026-09-04）。
+- 用例走查三处待确认（§0-A/B/C）：提示文案「全部使能」与按钮名「全局轴使能」不一致；安全位提示"可在自动运行页暂停/停止"实际不可达；回零自动回安全位时手动页无提示。
+- Axis_R 限位域与角度表示一致性问题（TR-059 已修归一化，域调整待定）。

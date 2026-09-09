@@ -865,6 +865,10 @@ void ProcessPage::SetSequenceWorker(SequenceWorker* worker)
         using PR = SequenceWorker::PauseReason;
         SPDLOG_INFO("[Process] worker state: {} reason: {}",
                     static_cast<int>(st), static_cast<int>(reason));
+        // 会话期间禁用「执行选中动作」（UI 防呆）：单动作与任何执行中会话互斥，
+        // 与其点了才被拒，不如直接灰掉（与单步按钮同源联动）
+        if (m_runSelectedBtn)
+            m_runSelectedBtn->setEnabled(st == WS::Idle || st == WS::Fault);
         switch (st) {
         case WS::Running:
             // 单动作会话沿用原「执行选中动作」文案（原字符串语义不丢）
@@ -1054,6 +1058,17 @@ void ProcessPage::OnStepExecute()
     if (m_currentSchemeIdx >= schemes.size()) return;
     const auto& scheme = schemes[m_currentSchemeIdx];
 
+    // 防御（异常路径兜底）：若 m_stepActive 与引擎态不同步（如历史 bug 中会话标志被误清），
+    // 而引擎确实处于"单步挂起"，则按"释放下一步"处理——否则会误走新会话启动分支被 running
+    // 门禁拒绝，单步会话永久卡死（2026-09-09 真机实测）。
+    if (!m_stepActive
+        && m_worker->GetState() == SequenceWorker::WorkerState::Paused
+        && m_worker->GetPauseReason() == SequenceWorker::PauseReason::Step
+        && m_worker->IsStepMode()) {
+        SPDLOG_WARN("[Process] 单步执行：会话标志与引擎态不同步，按释放下一步处理");
+        m_stepActive = true;
+    }
+
     if (!m_stepActive) {
         // 新会话开始：清空上一次的终态，避免「✅ 完成」残留到本次运行
         m_finalStatus.clear();
@@ -1111,8 +1126,17 @@ void ProcessPage::OnRunSelectedAction()
     }
     if (row >= scheme.actions.size()) return;
 
-    // 若正处于单步会话，先清单步状态，避免与单动作执行混用（RunSingleAction 内部另清 stepMode）
-    if (m_stepActive) ResetStepSession();
+    // 执行期门禁：单动作与单步/自动会话互斥。
+    // ⚠ 原实现在此处 `if (m_stepActive) ResetStepSession();` —— 在 RunSingleAction 之前就清了
+    // m_stepActive，而 RunSingleAction 随后被引擎拒绝（already running）→ 标志已丢、worker 仍在
+    // 单步会话 → 之后点「单步执行」走启动分支被拒，单步会话永久卡死（2026-09-09 真机实测）。
+    // 正确做法：**先判门禁、拒绝时不动任何状态**（被拒后单步可继续）。
+    if (IsExecutionActive()) {
+        SPDLOG_WARN("[Process] 执行选中动作被拒：已有会话在执行（单步调试或自动运行）");
+        QMessageBox::warning(this, QStringLiteral("提示"),
+            QStringLiteral("已有流程在执行（单步调试或自动运行）。\n请先「停止」结束当前会话，再执行选中动作。"));
+        return;
+    }
     // 每次执行前刷新运动学/手眼（与 OnStepExecute 一致，保证与 ConfigPage 编辑同步）
     m_worker->ReloadFromConfig();
     m_finalStatus.clear();
