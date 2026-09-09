@@ -1246,8 +1246,11 @@ void HardwareManager::PollServoTelemetry()
             // 避免"回零中途急停/停止"被误判为已回零 → 系统未回零却放行绝对定位。
             auto checkServoHomeDone = [this](LogicalAxis axis, const ServoTelemetry& rawMech) {
                 int idx = static_cast<int>(axis);
+                // TR-080：去掉 !axisHomed_[idx] 条件（原为防重复 emit，但卡轴路径 :1144 本无此条件，
+                // 导致舵机重复回零 homingActive_ 只能等 5s 超时清除、期间 MoveAbs 全拒 → 自动回安全位
+                // 失败置 Fault）。MarkAxisHomed 幂等；homeStateChanged 为电平语义，消费者已消解
+                // （MainWindow lastHomed_ 上升沿 / AutoRunPage / ProcessPage 均幂等）。
                 if (idx >= 0 && idx < homingActive_.size() && homingActive_[idx]
-                    && idx < axisHomed_.size() && !axisHomed_[idx]
                     && std::fabs(rawMech.angleDeg) <= 1.0) {
                     homingActive_[idx] = false;
                     MarkAxisHomed(idx);

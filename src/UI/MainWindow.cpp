@@ -179,6 +179,7 @@ MainWindow::MainWindow(QWidget* parent)
             SPDLOG_WARN("[MainWindow] auto safe-pos skipped: worker not idle");
             return;
         }
+        SPDLOG_INFO("[MainWindow] auto safe-pos triggered (homed rising edge)");
         sequenceWorker_->RunSafePos();
     });
 

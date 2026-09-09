@@ -534,9 +534,20 @@ void ManualControlPage::OnGlobalHome()
 // 门禁前置校验给明确提示，RunSequence 的使能/回零/running 硬门禁兜底。
 void ManualControlPage::OnGoSafePos()
 {
+    SPDLOG_INFO("[ManualControl] 回安全位 clicked");
     if (!worker_) { SetHint(QStringLiteral("执行引擎未初始化"), QStringLiteral("#e0a520")); return; }
-    if (worker_->GetState() != SequenceWorker::WorkerState::Idle) {
-        SetHint(QStringLiteral("有任务执行中，无法回安全位"), QStringLiteral("#e0a520"));
+    const auto st = worker_->GetState();
+    if (st != SequenceWorker::WorkerState::Idle) {
+        if (st == SequenceWorker::WorkerState::Fault) {
+            // TR-080：Fault 锁存 ≠ 任务执行中，误报会误导排查方向；指引去自动页清报警
+            SPDLOG_WARN("[ManualControl] 回安全位 rejected: worker Fault latch");
+            SetHint(QStringLiteral("执行引擎处于故障锁存（上次执行失败），"
+                                   "请到【自动运行】页点「↺ 清报警」后再回安全位"),
+                    QStringLiteral("#ff5e6b"));
+        } else {
+            SPDLOG_WARN("[ManualControl] 回安全位 rejected: worker busy state={}", static_cast<int>(st));
+            SetHint(QStringLiteral("有任务执行中，无法回安全位"), QStringLiteral("#e0a520"));
+        }
         return;
     }
     if (!HardwareManager::instance().IsSystemHomed()) {
