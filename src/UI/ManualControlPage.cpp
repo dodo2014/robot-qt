@@ -174,8 +174,9 @@ void ManualControlPage::SetupUI()
             this, [this]() {
                 ResetAxisStates();
                 SetHint(QStringLiteral(
-                    "急停已触发，所有轴已断使能。请依次执行：【全局轴使能】→【一键回零】；"
-                    "回零完成后系统自动返回安全位，急停锁定解除"),
+                    "急停已触发，所有轴已断使能。请依次执行：【全局轴使能】→【一键回零】→【回安全位】；"
+                    "回零完成即解除急停锁定（TR-081：已回零轴 homed 保持，回零完成无上升沿，"
+                    "不会自动回安全位，须手动点【回安全位】）"),
                     QStringLiteral("#ff5e6b"));
             });
     // 急停锁存解除（TR-075）：急停后全轴回零完成（先于 homeStateChanged(true) 发出）

@@ -90,7 +90,7 @@ homeStateChanged(true)（全轴回零完成，PollTick 主线程）
   → SequenceWorker::RunSafePos()：读 config kinematics.safePos(关节角) → 构造 2 点临时方案
     （点1=原地抬Z、点2=水平走安全位）→ RunSequence → 同 3.2 链路（先抬Z再水平，防横扫）
   → 手动入口：ManualControlPage「回安全位」按钮；「示教安全位」读当前关节角写 config 并置 enabled
-  → 急停恢复链路：急停→切手动→使能→一键回零→(此处自动回安全位)→切自动启动方案
+  → 急停恢复链路：急停→切手动→使能→一键回零→（急停锁解除，不自动回安全位）→手动回安全位→切自动启动方案（TR-081 修正：急停不清已回零轴 homed，回零完成无上升沿）
 ```
 
 ### 3.3 状态上行（轮询广播）
