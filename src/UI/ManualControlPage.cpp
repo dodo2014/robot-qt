@@ -5,6 +5,7 @@
 #include "KinematicsHelper.h"
 #include "Logic/SequenceWorker.h"
 #include "ConfigManager.h"
+#include <cmath>
 #include "spdlog/spdlog.h"
 
 #include <QHBoxLayout>
@@ -566,10 +567,17 @@ void ManualControlPage::OnTeachSafePos()
         }
     }
     auto& cfg = ConfigManager::instance();
-    const double j1 = hw.GetPosition(LogicalAxis::J1);
-    const double j2 = hw.GetPosition(LogicalAxis::J2);
-    const double z  = hw.GetPosition(LogicalAxis::Z);
-    const double r  = hw.GetPosition(LogicalAxis::R);
+    // 量化到两位小数（与提示文案口径一致）：GetPosition 是全精度 double，直接落盘会产生
+    // 科学计数法（如 j1=-4.6875000009549694e-05），存档不美观且与提示的 -0.00 对不上。
+    // 0.01° 量化远小于舵机死区（≈1.5°）与回零容差（±1°），对运动无实质影响。
+    auto quant = [](double v) {
+        v = std::round(v * 100.0) / 100.0;
+        return (std::fabs(v) < 0.005) ? 0.0 : v;   // 消除 -0.00
+    };
+    const double j1 = quant(hw.GetPosition(LogicalAxis::J1));
+    const double j2 = quant(hw.GetPosition(LogicalAxis::J2));
+    const double z  = quant(hw.GetPosition(LogicalAxis::Z));
+    const double r  = quant(hw.GetPosition(LogicalAxis::R));
     cfg.set("kinematics.safePos.j1", j1);
     cfg.set("kinematics.safePos.j2", j2);
     cfg.set("kinematics.safePos.z",  z);

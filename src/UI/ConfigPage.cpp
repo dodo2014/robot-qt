@@ -10,6 +10,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QSpinBox>
+#include <QSignalBlocker>
+#include <QShowEvent>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QFormLayout>
@@ -59,6 +61,30 @@ ConfigPage::ConfigPage(QWidget* parent)
     : QWidget(parent)
 {
     SetupUI();
+}
+
+// 安全位字段回填（TR-079）：手动控制页「示教安全位」直接写 config（不 emit paramsChanged），
+// 而本页初值只在构造时读一次 → 每次切到本页重新读 config 回填，避免"示教后看到的还是 0"。
+// 只刷 safePos 区：其它参数区（links / TCP 等）维持既有编辑语义，不受影响。
+void ConfigPage::RefreshSafePosFields()
+{
+    for (const auto& item : safePosInputs_) {
+        if (!item.first) continue;
+        // setText 不触发 editingFinished（只触发 textChanged），不会反向写入 config
+        item.first->setText(QString::number(dVal(item.second.constData(), 0.0), 'f', 2));
+    }
+    if (safePosEnabledChk_) {
+        // 阻断 toggled：刷新不应反向写回 config（值本就来自 config）
+        const QSignalBlocker blocker(safePosEnabledChk_);
+        safePosEnabledChk_->setChecked(
+            ConfigManager::instance().getValue<bool>("kinematics.safePos.enabled", false));
+    }
+}
+
+void ConfigPage::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    RefreshSafePosFields();
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +423,7 @@ QWidget* ConfigPage::CreateTab2Kinematics()
 
             rl->addWidget(label);
             rl->addWidget(input);
+            safePosInputs_.append(qMakePair(input, QByteArray(p.path)));
         }
 
         auto* autoChk = new QCheckBox(QStringLiteral("回零后自动回安全位"));
@@ -407,6 +434,7 @@ QWidget* ConfigPage::CreateTab2Kinematics()
             ConfigManager::instance().set("kinematics.safePos.enabled", on);
         });
         rl->addWidget(autoChk);
+        safePosEnabledChk_ = autoChk;
 
         rl->addStretch();
         layout->addWidget(row);
