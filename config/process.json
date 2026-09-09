@@ -44,7 +44,7 @@
                             "posture": "elbow_up"
                         }
                     ],
-                    "speedPercent": 58,
+                    "speedPercent": 50,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
@@ -139,7 +139,7 @@
                             "posture": "elbow_up"
                         }
                     ],
-                    "speedPercent": 48,
+                    "speedPercent": 50,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
@@ -222,7 +222,7 @@
                             "posture": "elbow_up"
                         }
                     ],
-                    "speedPercent": 100,
+                    "speedPercent": 50,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
