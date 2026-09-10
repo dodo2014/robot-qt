@@ -4,10 +4,13 @@
 #include <QVector>
 #include <QLabel>
 #include <QDoubleSpinBox>
+#include <QPointer>
 
 class QPushButton;
 class SequenceWorker;
 
+// TR-084：worker_ 为 QPointer，内联 setter 的赋值需完整类型（QPointer::operator=(T*)）
+#include "Logic/SequenceWorker.h"
 #include "HAL/interfaces/IMotionCard.h"
 #include "HAL/interfaces/IAxisServo.h"
 #include "Core/Kinematics.h"
@@ -65,7 +68,7 @@ private:
     QLabel* connStatusLabel_ = nullptr;
     QLabel* hintLabel_ = nullptr;
 
-    SequenceWorker* worker_ = nullptr;   // 执行引擎（回安全位用）
+    QPointer<SequenceWorker> worker_;   // TR-084：执行引擎（回安全位用），弱引用防悬垂
 
     QVector<bool> alarmState_;
     QVector<bool> limitState_;

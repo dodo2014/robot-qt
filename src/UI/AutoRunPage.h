@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QTextEdit>
 #include <QVector>
+#include <QPointer>
 #include "HAL/interfaces/ICamera.h"
 #include "HAL/interfaces/IMotionCard.h"
 #include "HAL/interfaces/IAxisServo.h"
@@ -68,7 +69,7 @@ private:
     QLabel*     m_cameraOverlayLabel = nullptr;
     QLabel*     m_hintLabel        = nullptr;
 
-    SequenceWorker* m_worker       = nullptr;
+    QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
 
     // 5 按钮（下标分派，不再靠 text.contains 匹配——改文案会静默错配）
     QPushButton*    m_btnStartOrResume = nullptr;

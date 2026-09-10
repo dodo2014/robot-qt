@@ -7,6 +7,7 @@
 #include <QButtonGroup>
 #include <QPushButton>
 #include <QThread>
+#include <QPointer>
 
 class AutoRunPage;
 class ManualControlPage;
@@ -57,7 +58,7 @@ private:
     VisionTestPage*      visionTestPage_ = nullptr;
     ConfigPage*          configPage_     = nullptr;
 
-    SequenceWorker*      sequenceWorker_ = nullptr;
+    QPointer<SequenceWorker> sequenceWorker_;   // TR-084：QPointer——worker 由 deleteLater 销毁时自动置空，防退出悬垂
     QThread*             workerThread_   = nullptr;
     bool                 workerShutdown_ = false;
     bool                 lastHomed_      = false;   // homeStateChanged 上升沿判定（电平语义，单轴重回零会重复 emit true）

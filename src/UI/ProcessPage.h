@@ -11,6 +11,7 @@
 #include <QDoubleSpinBox>
 #include <QSlider>
 #include <QLabel>
+#include <QPointer>
 
 class SequenceWorker;
 class QPushButton;
@@ -100,7 +101,7 @@ private:
     double m_lastOpenTarget = -3.0;
     double m_lastCloseTarget = 0.0;
 
-    SequenceWorker* m_worker = nullptr;
+    QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
     QPushButton* m_runSelectedBtn = nullptr;
     QPushButton* m_stepBtn = nullptr;
     bool m_stepActive = false;

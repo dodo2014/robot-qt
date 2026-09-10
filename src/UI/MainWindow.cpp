@@ -163,6 +163,8 @@ MainWindow::MainWindow(QWidget* parent)
     processPage_->SetSequenceWorker(sequenceWorker_);
     manualPage_->SetSequenceWorker(sequenceWorker_);
     connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
+        // TR-084：worker 由 deleteLater 销毁后 QPointer 自动置空，须先判空（原裸指针此处会悬垂）
+        if (!sequenceWorker_) return;
         sequenceWorker_->ReloadFromConfig();
     });
     // 全局安全位（2026-09-07）：回零完成（**上升沿**，homeStateChanged 是电平语义——
