@@ -52,6 +52,9 @@ private:
     void SetHint(const QString& text, const QString& color = QString());
     void RefreshSoftLimitHint();
     void RefreshCoordPanel();
+    // 一键回零前的残留会话处置（TR-083）：Paused 强制终止后放行回零；Fault 不动锁存仅预告；
+    // Running 拒绝回零。返回 false = 已给提示并拒绝回零；hintPrefix/hintColor 供回零提示拼接。
+    bool PrepareHomingSession(QString& hintPrefix, QString& hintColor);
     void ResetAxisStates();   // 急停后清除残留状态数组（曾导致轴1/3 误显示"限位"而非"未使能"）
 
     QVector<QLabel*> posLabels_;

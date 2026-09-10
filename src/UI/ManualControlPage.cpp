@@ -497,6 +497,46 @@ void ManualControlPage::OnGlobalDisable()
     qDebug() << "全局断使能";
 }
 
+// 一键回零前的残留会话处置（TR-083）：
+//  · Paused(Step/User)：无轴在动，但 worker 阻塞在 WaitForStep（SequenceWorker.cpp:85-99），
+//    只有 stepGo/cancel 能唤醒，一键回零（只走 HardwareManager::HomeAxis）不置这两者 → 回零后
+//    worker 仍 Paused，既挡住「回安全位」，又留下"从机械原点续跑旧方案下一绝对目标"的隐患
+//    （四轴独立 MoveAbs 无"先抬 Z"前提；且回零期间放行会被 MoveAbs 回零门禁拒 → Fault 锁存）。
+//    故强制 Stop()：仅置 cancel（SequenceWorker.cpp:296-301），Paused 退出路径不产生硬件命令，
+//    与随后下发的 HomeAxis 无竞争；interrupted 经 ProcessPage.cpp:934 自动复位工艺页单步 UI。
+//  · Fault：不动锁存（ClearFault 唯一入口在自动页，保留故障上下文），仅预告回安全位仍会被拦。
+//  · Running：拒绝。Stop() 不下发硬件停止（WaitForAxes 见 cancel 直接 return false），轴仍在跑；
+//    回零仅靠 IsAxisBusy 时间估算软门禁（HardwareManager.cpp:587/:670-702）不可靠 → 与 MainWindow
+//    模式互锁同语义，直接拒绝。
+bool ManualControlPage::PrepareHomingSession(QString& hintPrefix, QString& hintColor)
+{
+    using WS = SequenceWorker::WorkerState;
+    using PR = SequenceWorker::PauseReason;
+    if (!worker_) return true;                       // 未注入引擎（理论不可达）→ 不干预
+    const WS st = worker_->GetState();
+    if (st == WS::Paused) {
+        const bool step = (worker_->GetPauseReason() == PR::Step);
+        worker_->Stop();
+        hintPrefix = step ? QStringLiteral("已终止未完成的单步会话；")
+                          : QStringLiteral("已终止暂停中的会话；");
+        hintColor  = QStringLiteral("#e0a520");
+        SPDLOG_WARN("[ManualControl] 一键回零：终止残留会话 state=Paused reason={}",
+                    static_cast<int>(worker_->GetPauseReason()));
+    } else if (st == WS::Fault) {
+        hintPrefix = QStringLiteral("存在故障锁存（回零后请到自动运行页「↺ 清报警」）；");
+        hintColor  = QStringLiteral("#e0a520");
+    } else if (st == WS::Running) {
+        // 手动模式下自动页五钮全灭，唯一可点的业务停止入口在工艺流程页
+        SetHint(worker_->IsSafePosSession()
+                    ? QStringLiteral("正在返回安全位，请稍候完成后再回零")
+                    : QStringLiteral("有任务正在执行，请先到【工艺流程】页点「停止」结束，再一键回零"),
+                QStringLiteral("#e0a520"));
+        SPDLOG_WARN("[ManualControl] 一键回零 rejected: worker Running");
+        return false;
+    }
+    return true;
+}
+
 void ManualControlPage::OnGlobalHome()
 {
     SPDLOG_INFO("[ManualControl] 一键回零 clicked");
@@ -509,6 +549,11 @@ void ManualControlPage::OnGlobalHome()
         return;
     }
     if (!connected) { SPDLOG_WARN("[ManualControl] 一键回零 rejected: 未连接硬件"); SetHint(QStringLiteral("未连接硬件，无法回零")); return; }
+    // 残留会话处置（必须在 HomeAxis 之前）：Stop() 异步生效（worker 20ms 轮询感知 cancel），
+    // 但回零耗时数秒 → 回零完成时 worker 必已 Idle，homeStateChanged 上升沿触发的自动回安全位
+    // 不会被 running 门禁静默拒（9.6 回归点）。此处不等待 Stop 完成：无硬件命令竞争，等待只堵 UI。
+    QString hintPrefix, hintColor;
+    if (!PrepareHomingSession(hintPrefix, hintColor)) return;
     // 逐轴发起回零（HomeAll 的使能门禁已在上文校验），仅对真正启动回零的轴标记 homingAxes_；
     // 被拒轴（报警/忙/卡端 reject）逐轴列出，便于区分"回零中"与"未启动"
     bool anyStarted = false;
@@ -521,14 +566,17 @@ void ManualControlPage::OnGlobalHome()
             notStarted << QStringLiteral("轴%1").arg(i + 1);
         }
     }
+    QString tail;
     if (!anyStarted) {
-        SetHint(QStringLiteral("回零被拒（请先使能或检查轴状态）"), QStringLiteral("#e0a520"));
+        tail = QStringLiteral("回零被拒（请先使能或检查轴状态）");
+        if (hintColor.isEmpty()) hintColor = QStringLiteral("#e0a520");
     } else if (!notStarted.isEmpty()) {
-        SetHint(QStringLiteral("回零中...（%1 未启动）").arg(notStarted.join(QStringLiteral("、"))),
-                QStringLiteral("#e0a520"));
+        tail = QStringLiteral("回零中...（%1 未启动）").arg(notStarted.join(QStringLiteral("、")));
+        if (hintColor.isEmpty()) hintColor = QStringLiteral("#e0a520");
     } else {
-        SetHint(QStringLiteral("回零中..."));
+        tail = QStringLiteral("回零中...");
     }
+    SetHint(hintPrefix.isEmpty() ? tail : hintPrefix + tail, hintColor);
     qDebug() << "一键回零";
 }
 
@@ -546,9 +594,23 @@ void ManualControlPage::OnGoSafePos()
             SetHint(QStringLiteral("执行引擎处于故障锁存（上次执行失败），"
                                    "请到【自动运行】页点「↺ 清报警」后再回安全位"),
                     QStringLiteral("#ff5e6b"));
+        } else if (st == SequenceWorker::WorkerState::Running) {
+            SPDLOG_WARN("[ManualControl] 回安全位 rejected: worker Running");
+            SetHint(worker_->IsSafePosSession()
+                        ? QStringLiteral("正在返回安全位，请稍候")
+                        : QStringLiteral("有任务正在执行，请先到【工艺流程】页点「停止」结束，再回安全位"),
+                    QStringLiteral("#e0a520"));
         } else {
-            SPDLOG_WARN("[ManualControl] 回安全位 rejected: worker busy state={}", static_cast<int>(st));
-            SetHint(QStringLiteral("有任务执行中，无法回安全位"), QStringLiteral("#e0a520"));
+            // Paused：四轴无运动（Step 在动作边界挂起，User 已在 PauseGate 减速停），
+            // 按挂起原因给可操作指引，不再笼统报「有任务执行中」（TR-080 同族误报，TR-083）
+            const bool step = (worker_->GetPauseReason() == SequenceWorker::PauseReason::Step);
+            SPDLOG_WARN("[ManualControl] 回安全位 rejected: worker Paused reason={}",
+                        static_cast<int>(worker_->GetPauseReason()));
+            SetHint(step
+                ? QStringLiteral("有未完成的单步会话（单步暂停中，无轴在动）："
+                                 "请到【工艺流程】页点「停止」结束，或点本页【一键回零】终止后重试")
+                : QStringLiteral("有会话被暂停：请到【自动运行】页点「▶ 继续」跑完或「■ 停止」结束，再回安全位"),
+                    QStringLiteral("#e0a520"));
         }
         return;
     }

@@ -56,6 +56,7 @@ if (!rising) return;                         // 电平重复（单轴重回零�
 - `MoveAbs` 参数即逻辑关节角（`HardwareManager.cpp:379-457`）；`MoveToPoint` hasJoints 路径（`SequenceWorker.cpp:460-481`）有 **FK 一致性校验 ±0.5**（校验 pt.x/y/z/r 与 FK(joints)）→ 构造点必须用 `impl_->kin.Forward(joints)` 填 x/y/z/r，否则静默回退 IK。
 - 急停不复位已完成轴的 homed（`EmergencyStop:843-867` 仅 AbortHoming"回零中"轴）→ 急停后**仅重新使能不触发** homeStateChanged，必须一键回零 → 与恢复链路一致，且正确（急停后舵机 TorqueOff 可能垂落，旧坐标不可信）。
 - **隐患 1**：`RunSequence`（`:168-175`）**不清 `stepMode`**——单步会话残留 stepMode=true 时，安全位会话 1 个动作跑完会挂起在 `Paused(Step)` 等NextStep → **卡死**。`RunSingleAction:216` 有清，RunSequence 须补。
+  - **第二次显形（TR-083，2026-09-09 真机）**：单步会话停在 `Paused(Step)` 时点**一键回零**——`OnGlobalHome` 只走 `HardwareManager::HomeAxis`，不置 `stepGo`/`cancel` → `WaitForStep`（`SequenceWorker.cpp:85-99`）永不唤醒，回零后 worker 仍 Paused → 「回安全位」被 `st != Idle` 拦并误报「有任务执行中」。**已在手动页一键回零入口兜底**：`PrepareHomingSession()`（`ManualControlPage.cpp`）在 HomeAxis **之前**对 Paused 调 `Stop()` 终止（无硬件命令竞争；`interrupted` 经 `ProcessPage.cpp:934` 自动复位工艺页 UI），Running 则拒绝回零，Fault 不动锁存仅预告。
 - **隐患 2**：ProcessPage `actionStarted`（`:915-922`）会按 index 选中自己列表的行 → 临时方案的动作 0/1 会误选中。需 `IsSafePosSession()` 屏蔽（复用 singleSession 模式）。
 - `ManualControlPage` 无 worker 注入；顶栏三按钮为局部变量（`:133-169`），新按钮插在 `homeAllBtn`（`:162`）之后。
 - `paramsChanged` 唯一消费者是 `ReloadFromConfig`（`MainWindow.cpp:155-157`）→ safePos 每次 `RunSafePos()` 现读 config，**不需要也不应 emit paramsChanged**。
