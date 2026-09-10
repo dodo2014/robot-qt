@@ -175,8 +175,9 @@ void ManualControlPage::SetupUI()
                 ResetAxisStates();
                 SetHint(QStringLiteral(
                     "急停已触发，所有轴已断使能。请依次执行：【全局轴使能】→【一键回零】→【回安全位】；"
-                    "回零完成即解除急停锁定（TR-081：已回零轴 homed 保持，回零完成无上升沿，"
-                    "不会自动回安全位，须手动点【回安全位】）"),
+                    //"回零完成即解除急停锁定（TR-081：已回零轴 homed 保持，回零完成无上升沿，"
+                    //"不会自动回安全位，须手动点【回安全位】）"
+                ),
                     QStringLiteral("#ff5e6b"));
             });
     // 急停锁存解除（TR-075）：急停后全轴回零完成（先于 homeStateChanged(true) 发出）
@@ -558,7 +559,7 @@ void ManualControlPage::OnGoSafePos()
     if (worker_->RunSafePos()) {
         SetHint(QStringLiteral("正在回安全位（先抬 Z 再水平移动，可在自动运行页暂停/停止）"));
     } else {
-        SetHint(QStringLiteral("回安全位未执行：未配置/未启用（设备配置页或示教安全位设定）"),
+        SetHint(QStringLiteral("回安全位未执行：安全位未启用（设备配置页勾选「启用安全位」，或手动页「示教安全位」）"),
                 QStringLiteral("#e0a520"));
     }
 }
@@ -595,7 +596,7 @@ void ManualControlPage::OnTeachSafePos()
     cfg.set("kinematics.safePos.z",  z);
     cfg.set("kinematics.safePos.r",  r);
     cfg.set("kinematics.safePos.enabled", true);
-    SetHint(QStringLiteral("已记录安全位：J1=%1 J2=%2 Z=%3 R=%4（已启用回零后自动回安全位）")
+    SetHint(QStringLiteral("已记录安全位：J1=%1 J2=%2 Z=%3 R=%4（已启用安全位）")
                 .arg(QString::number(j1, 'f', 2), QString::number(j2, 'f', 2),
                      QString::number(z, 'f', 2), QString::number(r, 'f', 2)));
 }

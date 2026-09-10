@@ -426,10 +426,15 @@ QWidget* ConfigPage::CreateTab2Kinematics()
             safePosInputs_.append(qMakePair(input, QByteArray(p.path)));
         }
 
-        auto* autoChk = new QCheckBox(QStringLiteral("回零后自动回安全位"));
+        // TR-082：enabled 是安全位**总开关**（同时管自动触发与手动按钮），名称须体现，
+        // 原名「回零后自动回安全位」会让人以为手动按钮不受其控制。
+        auto* autoChk = new QCheckBox(QStringLiteral("启用安全位"));
         autoChk->setStyleSheet("color: #b8cce3; font-size: 13px; background: transparent; border: none;");
         autoChk->setChecked(ConfigManager::instance().getValue<bool>("kinematics.safePos.enabled", false));
-        autoChk->setToolTip(QStringLiteral("勾选后每次一键回零完成自动走「抬Z→安全位」；也可在手动控制页「示教安全位」设定"));
+        autoChk->setToolTip(QStringLiteral(
+            "安全位总开关：同时控制①一键回零完成后自动走「抬Z→安全位」"
+            "②手动控制页「回安全位」按钮；关闭时两者均不可用。"
+            "安全位在手动控制页「示教安全位」设定（示教后自动置启用）"));
         QObject::connect(autoChk, &QCheckBox::toggled, [](bool on) {
             ConfigManager::instance().set("kinematics.safePos.enabled", on);
         });

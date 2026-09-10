@@ -137,7 +137,7 @@ connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
 
 ### 步骤 4 `ConfigPage` + `ProcessPage` 守卫
 
-- `CreateTab2Kinematics()`（`ConfigPage.cpp:322-364`）links Row 后照抄一组：4 个 QLineEdit（`kinematics.safePos.j1/j2/z/r`，默认 0，标签"安全位 J1(°)/J2(°)/Z(mm)/R(°)"）+ **1 个 QCheckBox「回零后自动回安全位」绑 `kinematics.safePos.enabled`**（显式开关，避免"填了值却没生效"的困惑；示教按钮也会置 true）。
+- `CreateTab2Kinematics()`（`ConfigPage.cpp:322-364`）links Row 后照抄一组：4 个 QLineEdit（`kinematics.safePos.j1/j2/z/r`，默认 0，标签"安全位 J1(°)/J2(°)/Z(mm)/R(°)"）+ **1 个 QCheckBox「启用安全位」**（TR-082 改名，原名「回零后自动回安全位」——该开关为**总开关**，手动按钮同受其控）绑 `kinematics.safePos.enabled`**（显式开关，避免"填了值却没生效"的困惑；示教按钮也会置 true）。
 - **不 emit paramsChanged**（safePos 现读 config，无内存缓存）。
 - `ProcessPage.cpp:915` 附近 actionStarted lambda **首行**加 `if (m_worker->IsSafePosSession()) return;`（**隐患 2 修复**：防临时方案误选列表行/误禁单步按钮）。
 
@@ -166,4 +166,4 @@ connect(&HardwareManager::instance(), &HardwareManager::homeStateChanged,
 
 - Debug+Release 双编译 + Sim 冒烟（`Initialize complete`）。
 - Sim 需先确认回零能完成（SimCard/SimServo HomeAxis 路径）→ 使能→回零→观察安全位 2 点移动（Sim 的 MarkAxisBusy ≥1s 提供观察窗口）。
-- 手测：① 未配置（enabled=false）时回零无动作；② 示教安全位→回零→自动走「抬Z→安全位」；③ 手动「回安全位」按钮；④ 单步会话中途停止→立即回零→安全位会话正常完成（**stepMode 残留回归**）；⑤ ProcessPage 停留时触发回零，列表选中行不变；⑥ 单轴重回零不触发；⑦ 急停→使能→回零→自动回安全位全链路；⑧ enabled 取消勾选后回零无动作。
+- 手测：① 未启用（enabled=false）时回零无动作**且手动「回安全位」被拒**（TR-082：总开关管两个入口）；② 示教安全位→回零→自动走「抬Z→安全位」；③ 手动「回安全位」按钮；④ 单步会话中途停止→立即回零→安全位会话正常完成（**stepMode 残留回归**）；⑤ ProcessPage 停留时触发回零，列表选中行不变；⑥ 单轴重回零不触发；⑦ 急停→使能→回零→自动回安全位全链路；⑧ enabled 取消勾选后回零无动作。
