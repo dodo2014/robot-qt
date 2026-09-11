@@ -125,3 +125,4 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
 - StopJog 门禁：仅 `jogInProgress_ && jogAxis_==axis` 放行（回零中松点动键不得打断回零）
 - 舵机重连：两实例共享句柄必须一起断开；重连后使能复位（门禁要求人工重新使能）
 - **观察者指针（TR-084）**：跨线程 / 长生命周期 QObject（如 `SequenceWorker`）的持有方一律用 `QPointer`，**禁用裸指针长期持有**——所有权方（`deleteLater` / 父对象）负责销毁，观察者只持弱引用。原因：观察者无法感知对象失效，一旦"对象先于观察者析构"即悬垂访问（实例：退出时 `ShutdownWorker` 的 `processEvents` 派发已排队信号，命中已被 `deleteLater` 的 worker → `0xc0000005`）。当前 4 处：`MainWindow::sequenceWorker_`、`AutoRunPage::m_worker`、`ManualControlPage::worker_`、`ProcessPage::m_worker`。
+- **停止曲线（TR-085）**：全工程所有业务停止——自动 ⏸ 暂停 / ■ 停止 / 点动松键 / 点动停止按钮——卡轴共用 `MC_Stop(mask,0)` 平滑减速档（`BoPaiCard::StopAxis:334` 与 `StopJog:462` 同指令同实参）、舵机共用 CMD24 停止+锁力——**禁止断脉冲**（开环丢步红线，仅 EmergencyStop 允许断使能）。滑行距离 = 停止瞬间速度 × 卡端默认停止减速（`MC_SetStopDec` 未接线，`MultiCardCPP.h:716`）；点动"快停"诉求走**降点动速度**（`jogSpeed` UI 可调）而非改停止曲线；若调 `MC_SetStopDec` 须防与自动流程并发改档（排跨页互斥之后）。
