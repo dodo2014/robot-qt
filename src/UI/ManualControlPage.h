@@ -79,6 +79,7 @@ private:
     QVector<bool> homeDoneState_;
     QVector<bool> homingAxes_;   // 每轴回零进行中标记：OnHomeAxis/OnGlobalHome 置位，OnAxisMoveFinished(超时/到位) 或 OnStopAxis 清除
     bool servoAllOnlinePrev_ = true;   // 上次遥测时两舵机是否全部在线（检测离线/重连边沿，驱动提示）
+    bool estopClearPending_ = false;   // TR-088：estopCleared 已发但"回零完成"提示未消费——期间的回零全完成应显示绿字③而非"回零完成"
 
     QVector<QLabel*> coordLabels_;   // 末端坐标面板 X/Y/Z/R（FK 实时刷新，曾为静态假数据）
     // 坐标面板 FK：关节位缓存 + 运动学参数变化检测缓存（对齐 AutoRunPage 模式，

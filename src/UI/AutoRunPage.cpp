@@ -515,6 +515,9 @@ void AutoRunPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servos)
 
 void AutoRunPage::OnActionStarted(int /*index*/, const QString& name)
 {
+    // TR-088：记录是否安全位临时会话——此刻 safeSession 仍在、可靠；完成槽（OnSchemeFinished）
+    // 被跨线程排队时 safeSession 可能已被 StartExecution 清零，不能届时直接查
+    m_safePosSessionActive = m_worker && m_worker->IsSafePosSession();
     m_statusLabel->setText(QStringLiteral("▶ %1").arg(name));
     m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
 }
@@ -522,9 +525,17 @@ void AutoRunPage::OnActionStarted(int /*index*/, const QString& name)
 void AutoRunPage::OnSchemeFinished()
 {
     UpdateControlsEnabled();
-    m_statusLabel->setText(QStringLiteral("✅ 完成"));
-    m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
-    SetHint(QStringLiteral("方案执行完成"), QStringLiteral("#8fd4ff"));
+    if (m_safePosSessionActive) {
+        // TR-088：安全位是临时方案（不在方案列表），显示"方案执行完成"会误导操作员
+        m_statusLabel->setText(QStringLiteral("✅ 已回安全位"));
+        m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+        SetHint(QStringLiteral("已返回安全位，可启动方案"), QStringLiteral("#8fd4ff"));
+    } else {
+        m_statusLabel->setText(QStringLiteral("✅ 完成"));
+        m_statusLabel->setStyleSheet("font-size: 28px; font-weight: 700; color: #7ed67e; padding: 6px 0; background: transparent; border: none;");
+        SetHint(QStringLiteral("方案执行完成"), QStringLiteral("#8fd4ff"));
+    }
+    m_safePosSessionActive = false;
 }
 
 void AutoRunPage::OnInterrupted(const QString& reason)

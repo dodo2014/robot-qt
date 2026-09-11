@@ -70,6 +70,7 @@ private:
     QLabel*     m_hintLabel        = nullptr;
 
     QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
+    bool m_safePosSessionActive = false;   // TR-088：actionStarted 时记录的安全位临时会话标志（完成槽不能直查 safeSession——已被清）
 
     // 5 按钮（下标分派，不再靠 text.contains 匹配——改文案会静默错配）
     QPushButton*    m_btnStartOrResume = nullptr;

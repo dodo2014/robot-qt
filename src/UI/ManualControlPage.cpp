@@ -183,6 +183,8 @@ void ManualControlPage::SetupUI()
     // 急停锁存解除（TR-075）：急停后全轴回零完成（先于 homeStateChanged(true) 发出）
     connect(&HardwareManager::instance(), &HardwareManager::estopCleared,
             this, [this]() {
+                // TR-088：置锁存——随后同拍的 axisMoveFinished「回零完成」不得覆盖本提示
+                estopClearPending_ = true;
                 SetHint(QStringLiteral("急停锁定已解除（全轴回零完成），可切回【自动】恢复生产"),
                         QStringLiteral("#7ed67e"));
             });
@@ -552,6 +554,8 @@ void ManualControlPage::OnGlobalHome()
     // 残留会话处置（必须在 HomeAxis 之前）：Stop() 异步生效（worker 20ms 轮询感知 cancel），
     // 但回零耗时数秒 → 回零完成时 worker 必已 Idle，homeStateChanged 上升沿触发的自动回安全位
     // 不会被 running 门禁静默拒（9.6 回归点）。此处不等待 Stop 完成：无硬件命令竞争，等待只堵 UI。
+    // TR-088：新回零轮次开始，清上一轮可能滞留的绿字③锁存（防 axisMoveFinished 去重未消费而跨轮误显）。
+    estopClearPending_ = false;
     QString hintPrefix, hintColor;
     if (!PrepareHomingSession(hintPrefix, hintColor)) return;
     // 逐轴发起回零（HomeAll 的使能门禁已在上文校验），仅对真正启动回零的轴标记 homingAxes_；
@@ -792,7 +796,17 @@ void ManualControlPage::OnAxisMoveFinished(int axis)
         for (int i = 0; i < homingAxes_.size(); ++i) {
             if (homingAxes_[i]) { anyRemaining = true; break; }
         }
-        SetHint(anyRemaining ? QStringLiteral("回零中...") : QStringLiteral("回零完成"));
+        if (anyRemaining) {
+            SetHint(QStringLiteral("回零中..."));
+        } else if (estopClearPending_) {
+            // TR-088：急停恢复的回零完成——estopCleared 先于本信号同拍 emit，
+            // 裸"回零完成"会覆盖绿字③恢复指引，故此处保持绿字③
+            estopClearPending_ = false;
+            SetHint(QStringLiteral("急停锁定已解除（全轴回零完成），可切回【自动】恢复生产"),
+                    QStringLiteral("#7ed67e"));
+        } else {
+            SetHint(QStringLiteral("回零完成"));
+        }
     }
 }
 
