@@ -60,7 +60,7 @@
             "homeOffset": 102.0,
             "homeRapidVel": 41.3,
             "homeSns": 0,
-            "jogSpeed": 30.0,
+            "jogSpeed": 20.0,
             "limitMax": 8.0,
             "limitMin": -102.0,
             "maxAccel": 50.0,
@@ -199,7 +199,7 @@
             "z0": 470.0
         },
         "safePos": {
-            "enabled": false,
+            "enabled": true,
             "j1": 0.0,
             "j2": 0.3,
             "r": 179.5,
