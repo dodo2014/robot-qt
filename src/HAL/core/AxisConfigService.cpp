@@ -56,6 +56,16 @@ double AxisConfigService::GetMaxAccel(LogicalAxis axis) const
     return ConfigManager::instance().getValue<double>(path + ".maxAccel", 500.0);
 }
 
+double AxisConfigService::GetStopDecSmooth(LogicalAxis axis) const
+{
+    // TR-090：实时读 config（axes.<key>.stopDecSmooth），0=不下发（保持卡默认 smooth=0.5）
+    int i = static_cast<int>(axis);
+    if (i < 0 || i >= static_cast<int>(LogicalAxis::Count)) return 0.0;
+    std::string path = AxisCfgPath(axis);
+    if (path.empty()) return 0.0;
+    return ConfigManager::instance().getValue<double>(path + ".stopDecSmooth", 0.0);
+}
+
 bool AxisConfigService::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)
 {
     int i = static_cast<int>(axis);

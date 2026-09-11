@@ -482,6 +482,25 @@ bool BoPaiCard::SetAccel(int axisId, double accel, double decel)
     return false;
 }
 
+bool BoPaiCard::SetStopDec(int axisId, double decSmooth)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* cfg = Cfg(axisId);
+    if (!cfg) return false;
+    // 去重：值未变不下发（MoveAbs/MoveJog 每次运动前都会调，避免重复占用总线）
+    if (cfg->stopDecSmoothApplied == decSmooth) return true;
+    if (!impl_->useHardware) { cfg->stopDecSmoothApplied = decSmooth; return true; }
+    // 手册 V2.9（GA_SetStopDec 同义）：decSmoothStop 取值 0.1~2（默认 0.5）——停止减速度系数，
+    // 非脉冲单位，直接透传不做 AccelToPulse 换算；decAbrupt 档（急停）读卡端现值保留，不暴露
+    double s = 0.0, a = 0.0;
+    impl_->card.MC_GetStopDec(static_cast<short>(axisId + 1), &s, &a);
+    int ret = impl_->card.MC_SetStopDec(static_cast<short>(axisId + 1), decSmooth, a);
+    SPDLOG_INFO("[BoPaiCard] SetStopDec axis={} smooth={} (cardSmoothPrev={} cardAbrupt={}) ret={}",
+                axisId + 1, decSmooth, s, a, ret);
+    if (ret == 0) cfg->stopDecSmoothApplied = decSmooth;
+    return ret == 0;
+}
+
 bool BoPaiCard::SetAxisConfig(int axisId, const AxisConfig& cfg)
 {
     configs_[axisId] = cfg;

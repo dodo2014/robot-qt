@@ -952,6 +952,14 @@ QWidget* ConfigPage::CreateElecMapTab()
     g2g->addRow(makeLabel(QStringLiteral("最大速度 (Max Speed)")),   makeUnitCell(maxSpeedSpin, maxSpeedUnit));
     g2g->addRow(makeLabel(QStringLiteral("最大加速度 (Max Accel)")), makeUnitCell(maxAccelSpin, maxAccelUnit));
     g2g->addRow(makeLabel(QStringLiteral("点动速度 (Jog Speed)")),   makeUnitCell(jogSpeedSpin, jogSpeedUnit));
+    // TR-090：MC_Stop 平滑档停止减速度系数（无量纲，不随轴类型换单位）
+    auto* stopDecSpin = makeDoubleSpin(0.0, 2.0);
+    stopDecSpin->setSingleStep(0.1);
+    auto* stopDecUnit = makeUnitLabel();
+    stopDecUnit->setText(QStringLiteral("\u00D7"));   // 无量纲系数（倍），不随轴类型换单位
+    stopDecUnit->setToolTip(QStringLiteral("0=使用卡默认(0.5)；0.1~2=停止减速度系数，越大停距越短。"
+                                           "减速过陡开环步进可能丢步，请从 1.0 起真机标定"));
+    g2g->addRow(makeLabel(QStringLiteral("停止减速度 (Stop Dec)")), makeUnitCell(stopDecSpin, stopDecUnit));
     g2g->addRow(makeLabel(QStringLiteral("软限位 Min (Limit Min)")), makeUnitCell(limitMinSpin, limitMinUnit));
     g2g->addRow(makeLabel(QStringLiteral("软限位 Max (Limit Max)")), makeUnitCell(limitMaxSpin, limitMaxUnit));
     g2g->addRow(makeLabel(QStringLiteral("原点偏移 (Home Pos)")),    makeUnitCell(homeSpin, homeUnit));
@@ -1002,7 +1010,7 @@ QWidget* ConfigPage::CreateElecMapTab()
     g3l->addWidget(transStack_);
 
     // ── Function to load axis data by key ───────────────────
-    auto loadAxis = [this, hwTypeCombo, portSpin, dirCombo, maxSpeedSpin, maxAccelSpin,
+    auto loadAxis = [this, hwTypeCombo, portSpin, dirCombo, maxSpeedSpin, maxAccelSpin, stopDecSpin,
                      jogSpeedSpin, limitMinSpin, limitMaxSpin, homeSpin, axisTypeCombo,
                      maxSpeedUnit, maxAccelUnit, jogSpeedUnit, limitMinUnit, limitMaxUnit, homeUnit,
                      encoderEdit, microStepEdit, gearEdit, leadEdit, minPulseEdit, maxPulseEdit,
@@ -1039,6 +1047,10 @@ QWidget* ConfigPage::CreateElecMapTab()
             maxAccelSpin->blockSignals(true);
             maxAccelSpin->setValue(cfg.getValue<double>(p + ".maxAccel", 500.0));
             maxAccelSpin->blockSignals(false);
+
+            stopDecSpin->blockSignals(true);
+            stopDecSpin->setValue(cfg.getValue<double>(p + ".stopDecSmooth", 0.0));
+            stopDecSpin->blockSignals(false);
 
             jogSpeedSpin->blockSignals(true);
             jogSpeedSpin->setValue(cfg.getValue<double>(p + ".jogSpeed", 100.0));
@@ -1166,6 +1178,12 @@ QWidget* ConfigPage::CreateElecMapTab()
 
     connect(maxAccelSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
         auto p = pathFor("maxAccel");
+        if (!p.empty()) ConfigManager::instance().set(p, v);
+    });
+
+    // TR-090：MC_Stop 平滑档停止减速度系数（0=卡默认；0.1~2 越大停距越短）
+    connect(stopDecSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, pathFor](double v) {
+        auto p = pathFor("stopDecSmooth");
         if (!p.empty()) ConfigManager::instance().set(p, v);
     });
 

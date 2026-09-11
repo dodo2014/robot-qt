@@ -304,6 +304,8 @@ void HardwareManager::LoadAxisConfigsFromConfig()
         ac.maxAccel     = cfg.getValue<double>(base + "maxAccel", 500.0);
         // 智能 maxDecel：JSON 里配了 "maxDecel" 就用，没配则默认等于 Accel
         ac.maxDecel     = cfg.getValue<double>(base + "maxDecel", ac.maxAccel);
+        // TR-090：MC_Stop 平滑档停止减速度系数（手册 0.1~2，默认 0.5）。0=不下发（保持卡默认）
+        ac.stopDecSmooth = cfg.getValue<double>(base + "stopDecSmooth", 0.0);
         ac.jogSpeed     = cfg.getValue<double>(base + "jogSpeed", ac.maxSpeed);
         ac.homePos      = cfg.getValue<double>(base + "homeOffset", 0.0);
         ac.limitMin     = cfg.getValue<double>(base + "limitMin", -180.0);
@@ -430,6 +432,9 @@ bool HardwareManager::MoveAbs(LogicalAxis axis, double mmOrDeg, double speed)
             : -1.0;
         // 加速度实时读 config（与「电控与映射」编辑一致），运动前刷新卡内快照
         motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
+        // TR-090：停止减速度系数实时读 config（>0 才下发，BoPaiCard 内部按值去重）
+        if (GetStopDecSmooth(axis) > 0.0)
+            motionCard_->SetStopDec(binding.index, GetStopDecSmooth(axis));
         bool ok = motionCard_->MoveAbs(binding.index, pulse, speedPulse);
         if (ok) {
             jogInProgress_ = false;   // Go 接管：终止任何残留点动状态
@@ -504,6 +509,9 @@ bool HardwareManager::MoveJog(LogicalAxis axis, double mmOrDegPerSec, int direct
         double pulseSpeed = AxisConverter::Instance().SpeedToPulse(static_cast<int>(axis), mmOrDegPerSec);
         // 加速度实时读 config（与「电控与映射」编辑一致），运动前刷新卡内快照
         motionCard_->SetAccel(binding.index, GetMaxAccel(axis));
+        // TR-090：停止减速度系数实时读 config（>0 才下发，BoPaiCard 内部按值去重）
+        if (GetStopDecSmooth(axis) > 0.0)
+            motionCard_->SetStopDec(binding.index, GetStopDecSmooth(axis));
         bool ok = motionCard_->MoveJog(binding.index, pulseSpeed, -1.0, effDir);
         if (ok) {
             jogAxis_ = axis;
@@ -932,6 +940,11 @@ double HardwareManager::GetMaxSpeed(LogicalAxis axis) const
 double HardwareManager::GetMaxAccel(LogicalAxis axis) const
 {
     return axisCfgSvc_ ? axisCfgSvc_->GetMaxAccel(axis) : 500.0;
+}
+
+double HardwareManager::GetStopDecSmooth(LogicalAxis axis) const
+{
+    return axisCfgSvc_ ? axisCfgSvc_->GetStopDecSmooth(axis) : 0.0;
 }
 
 bool HardwareManager::SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec)

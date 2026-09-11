@@ -42,6 +42,7 @@ public:
 
     bool SetSpeed(int axisId, double speed) override;
     bool SetAccel(int axisId, double accel, double decel = -1.0) override;
+    bool SetStopDec(int axisId, double decSmooth) override;
     bool SetAxisConfig(int axisId, const AxisConfig& cfg) override;
 
     double GetPosition(int axisId) override;

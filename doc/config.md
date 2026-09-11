@@ -150,6 +150,7 @@ tcpCalibration
 | `direction` | int | 0=正向 Normal, 1=反向 Inverted |
 | `maxSpeed` | double | 最大速度，单位按轴类型：旋转轴 `°/s`、直线轴 `mm/s`（卡轴经 `AccelToPulse`/`SpeedToPulse` 换算下发） |
 | `maxAccel` | double | 最大加速度，单位按轴类型：旋转轴 `°/s²`、直线轴 `mm/s²`。**卡端 `TTrapPrm.acc` 为 Pulse/ms²**，BoPaiCard 内部经 `AccelToPulse = maxAccel×PulsePerUnit/1e6` 换算 |
+| `stopDecSmooth` | double | **MC_Stop 平滑档停止减速度系数**（TR-090，手册 V2.9 取值 `0.1~2`、卡默认 `0.5`；无量纲，不做脉冲换算）。作用于所有 `MC_Stop` 触发的停止：自动 ⏸ 暂停 / ■ 停止 / 点动松键 / 回零清理——**越大停距越短**。`0`（默认）=不下发、保持卡默认；`>0` 时 BoPaiCard 在 `MoveAbs/MoveJog` 前按值去重下发。**减速过陡开环步进可能丢步，从 1.0 起真机标定**；急停突停档（decAbruptStop）不暴露，读卡端现值保留。舵机轴无此概念（CMD24 立即停） |
 | `jogSpeed` | double | 点动 (JOG) 速度，单位按轴类型：旋转轴 `°/s`、直线轴 `mm/s` |
 | `calibrationPending` | bool | 换算参数待真机标定（仅部分卡轴） |
 | `limitMin` | double | 软限位最小值。**已强制执行**：`MoveAbs/Go` 目标越界拒绝下发；点动到达边界自动停止；点动启动方向已在边界则拒绝。由 `HardwareManager` 实时读取本配置（`GetLimitMin`/`IsWithinSoftLimits`），在「电控与映射」中修改立即生效。**拦截按运动方向区分**：仅停止"仍朝越界方向运动"的轴（惯性冲过边界后反向离开/Go 回界内均放行，见 `AGENTS.md`「拦截必须区分运动方向」） |

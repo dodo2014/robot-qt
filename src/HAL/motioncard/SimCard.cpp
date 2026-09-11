@@ -246,6 +246,13 @@ bool SimCard::SetAccel(int axisId, double accel, double decel)
     return true;
 }
 
+bool SimCard::SetStopDec(int axisId, double decSmooth)
+{
+    // TR-090：Sim 无滑行模型（StopAxis 直接置 velocity=0），no-op 接口占位
+    (void)axisId; (void)decSmooth;
+    return true;
+}
+
 double SimCard::GetPosition(int axisId)
 {
     std::lock_guard<std::mutex> lock(mutex_);

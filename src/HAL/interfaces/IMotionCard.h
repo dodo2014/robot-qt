@@ -54,6 +54,12 @@ struct AxisConfig
     double  homeLocatVel  = 1.0;   // 回零定位段速度 (Pulse/ms，SDK 单位)，碰信号后精定位
     long    homeBackDis   = 0;     // 回零反向退出距离 (Pulse)：碰信号后的精确定位回退量，0=不退出
     long    homeMaxDis    = 0;     // 回零最大搜索距离 (Pulse)：0=不限制；设非零值确保卡实际搜索（部分卡 0 = 不搜）
+
+    // 停止减速度系数（TR-090，手册 V2.9 §GA_SetStopDec）：作用于 MC_Stop 触发的所有停止
+    // （暂停/停止/点动松键/回零清理）。0=不下发（保持卡默认 smooth=0.5）；0.1~2 合法，越大停距越短。
+    // 减速过陡开环步进可能丢步——从 1.0 起真机标定。
+    double  stopDecSmooth = 0.0;
+    double  stopDecSmoothApplied = -1.0;   // 已下发值（BoPaiCard 去重用），-1=未下发。非 config 字段
 };
 
 class IMotionCard
@@ -88,6 +94,9 @@ public:
 
     virtual bool SetSpeed(int axisId, double speed) = 0;
     virtual bool SetAccel(int axisId, double accel, double decel = -1.0) = 0;
+    // TR-090：设置 MC_Stop 平滑档停止减速度系数（手册 0.1~2，默认 0.5；突停档读卡端现值保留）。
+    // 实现内部按 axisId 去重（值未变不下发）。仅影响 MC_Stop 触发的停止，不影响 Trap/Jog 减速。
+    virtual bool SetStopDec(int axisId, double decSmooth) = 0;
     virtual bool SetAxisConfig(int axisId, const AxisConfig& cfg) = 0;
 
     virtual double GetPosition(int axisId) = 0;

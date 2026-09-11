@@ -17,6 +17,7 @@ public:
     double GetJogSpeed(LogicalAxis axis) const;
     double GetMaxSpeed(LogicalAxis axis) const;
     double GetMaxAccel(LogicalAxis axis) const;
+    double GetStopDecSmooth(LogicalAxis axis) const;   // TR-090：0=不下发（保持卡默认）
     bool   SetJogSpeed(LogicalAxis axis, double mmOrDegPerSec);
 
     // 轴显示单位（rotation→"°"，linear→"mm"，舵机→"°"）
