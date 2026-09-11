@@ -865,13 +865,17 @@ void ManualControlPage::OnServoStateUpdated(const QVector<ServoTelemetry>& servo
     // （点动/Go 走 SET_ANGLE 与扭矩无关，但门禁要求人工确认，防止机械突然得电）
     bool allOnline = true;
     for (const auto& s : servos) if (!s.online) allOnline = false;
+    // TR-087：急停锁存期间抑制重连/通信异常提示——避免覆盖急停恢复指导（红字，
+    // 含「使能→回零→回安全位」完整步骤）；急停文案已含"所有轴已断使能"语义。
+    const bool estopPending = HardwareManager::instance().IsEStopPending();
     if (!servoAllOnlinePrev_ && allOnline) {
         bool anyServoDisabled = !HardwareManager::instance().IsAxisEnabled(LogicalAxis::J2)
                              || !HardwareManager::instance().IsAxisEnabled(LogicalAxis::R);
-        if (anyServoDisabled)
+        if (anyServoDisabled && !estopPending)
             SetHint(QStringLiteral("舵机已重连（扭矩已释放），请重新执行全局轴使能"), "#e0a520");
     } else if (servoAllOnlinePrev_ && !allOnline) {
-        SetHint(QStringLiteral("舵机通信异常，自动重连中..."), "#e0a520");
+        if (!estopPending)
+            SetHint(QStringLiteral("舵机通信异常，自动重连中..."), "#e0a520");
     }
     servoAllOnlinePrev_ = allOnline;
     // 使能灯以 HardwareManager::IsAxisEnabled 为准（见 OnEnableStateChanged）
