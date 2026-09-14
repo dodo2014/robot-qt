@@ -1,5 +1,8 @@
 #include <QApplication>
 #include <QDir>
+#include <QDate>
+#include <QFile>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStyleFactory>
 
@@ -141,6 +144,38 @@ private:
     size_t rootLen_ = 0;
 };
 
+// 日志保留策略（D16，2026-09-14 定稿：保留 7 天）。
+// 为何要自己清：日志已按日期分文件（daily_file_sink 的 %Y-%m-%d 命名），但 sink 的
+// max_files 实测未生效——现存 35 个日期文件（最早 2026-07-27）。故显式清理。
+// 安全边界（窄到只可能命中本程序自己的日志）：
+//   · 只在程序选定的 log 目录内；
+//   · 只匹配 ^creampuff_YYYY-MM-DD\.log$（creampuff.log / crash.txt / 其它文件一律不碰）；
+//   · 只删**日期早于 cutoff（今天 - keepDays）**的；日期非法或 ≥ cutoff 一律保留；
+//   · 删除数量写日志，便于事后核对。
+static void PurgeOldLogs(const QString& logDir, int keepDays)
+{
+    QDir dir(logDir);
+    if (!dir.exists()) return;
+
+    const QDate today = QDate::currentDate();
+    const QDate cutoff = today.addDays(-keepDays);
+    static const QRegularExpression re(QStringLiteral("^creampuff_(\\d{4})-(\\d{2})-(\\d{2})\\.log$"));
+
+    const auto entries = dir.entryList({ QStringLiteral("creampuff_*.log") }, QDir::Files);
+    int removed = 0;
+    for (const auto& name : entries) {
+        const auto m = re.match(name);
+        if (!m.hasMatch()) continue;
+        const QDate d(m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt());
+        if (!d.isValid() || d >= cutoff) continue;
+        if (QFile::remove(dir.filePath(name))) ++removed;
+    }
+    if (removed > 0) {
+        SPDLOG_INFO("[Main] Log retention: removed {} file(s) older than {} days (cutoff {})",
+                    removed, keepDays, cutoff.toString(QStringLiteral("yyyy-MM-dd")).toStdString());
+    }
+}
+
 int main(int argc, char* argv[])
 {
     SetUnhandledExceptionFilter(CrashHandler);
@@ -198,6 +233,9 @@ int main(int argc, char* argv[])
     {
         // 日志目录不可用时禁用文件日志，避免启动崩溃
     }
+
+    // 日志保留 7 天（D16）：启动时清理过期日期文件（不删当天/7 天内的）
+    PurgeOldLogs(logDir, 7);
 
     MainWindow mainWindow;
     mainWindow.show();

@@ -30,5 +30,10 @@ vcpkg/
 # WorkBuddy private memory (agent workspace notes, not project source)
 .workbuddy/
 
+# WorkBuddy project-level config: local overrides + per-session commit token
+.workbuddy-ai/settings.local.json
+.workbuddy-ai/.git-commit-authorized
+.workbuddy-ai/memory/
+
 # Config override
 config/config.local.json

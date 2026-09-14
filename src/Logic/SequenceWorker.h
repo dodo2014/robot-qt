@@ -47,12 +47,27 @@ public:
     explicit SequenceWorker(QObject* parent = nullptr);
     ~SequenceWorker() override;
 
+    // 循环生产配置（值语义，2026-09-14 新增）。
+    // 主线程组装 → 随 RunSequence 进 worker 线程；worker 线程只读副本，
+    // 绝不跨线程读 ConfigManager（json 读写非线程安全）。
+    // 默认 Single/1 = 与历史行为逐字节一致（既有调用点零改动）。
+    struct LoopConfig
+    {
+        enum class Mode { Single, Count, Infinite };
+        Mode mode            = Mode::Single;   // 单轮 / 指定 N 次 / 无限循环
+        int  count           = 1;              // 仅 Mode::Count 生效，>= 1
+        bool returnToSafePos = true;           // 进入下一轮前先回安全位（防跨轮横扫）
+        int  retryCount      = 0;              // 0 = 不重试（默认/今天行为）；N = 动作级重试 N 次
+        int  retryDelayMs    = 500;            // 重试前等待（等物料稳定）
+    };
+
     // 从 config 加载运动学/TCP/手眼参数到内部 Kinematics/CoordTransform。
     // 应在 RunSequence 之前调用（每次运行前刷新，保证与 ConfigPage 编辑一致）。
     void ReloadFromConfig();
 
     // 启动方案执行。若已在执行返回 false。线程安全（内部排队到 worker 线程执行）。
-    bool RunSequence(const SchemeData& scheme);
+    // loop 为默认值时等价于历史单轮语义（AutoRunPage/ProcessPage/RunSafePos 零改动）。
+    bool RunSequence(const SchemeData& scheme, const LoopConfig& loop = LoopConfig{});
 
     // 回安全位（2026-09-07）：读 config 的 kinematics.safePos（关节角 j1/j2/z/r），
     // 构造临时方案（1 个 Move 动作、2 个 hasJoints 点：点1=原地抬 Z、点2=水平走安全位）
@@ -109,6 +124,9 @@ signals:
     void actionFinished(int index, const QString& name);
     void singleActionFinished(int index);
     void schemeFinished();
+    // 循环进度：每轮开始时发一次。index 从 1 开始；total < 0 表示无限循环。
+    // schemeFinished 仍只在「全部循环完成」时发一次（见方案 §八）。
+    void cycleChanged(int index, int total);
     void interrupted(const QString& reason);
     void errorOccurred(const QString& message);
     void logMessage(const QString& message);
@@ -120,13 +138,31 @@ private slots:
     void StartSingleExecution(int index);   // 单动作执行入口（RunSingleAction 排队调用）
 
 private:
-    bool ExecuteActions();          // 逐动作执行主循环
+    bool ExecuteActions();          // 【循环外壳】按 LoopConfig 重复 ExecuteOnce
+    bool ExecuteOnce();             // 单轮：逐动作执行（原 ExecuteActions 主体，原样搬迁）
     bool ExecuteAction(const ActionData& action, int index);
+    // 动作级重试包装（内部转调 ExecuteAction）。retryCount=0 时**直通**，零额外行为。
+    // 本函数**不 emit errorOccurred**——失败原因留在 Impl::lastError，由会话级单点发出（D17 方案 A）。
+    bool ExecuteActionWithRetry(const ActionData& action, int index);
     bool ExecuteMove(const ActionData& action);
     bool ExecuteVision(const ActionData& action);
     bool ExecuteExtrude(const ActionData& action);
     bool ExecuteDelay(const ActionData& action);
     bool ExecuteGripper(const ActionData& action);
+
+    // 重试等待：与 ExecuteDelay 同构（for(;;) + PauseGate），暂停/停止/急停均生效，
+    // 暂停时长不计入间隔预算。**不可用 Impl::WaitForCancelOrTime**（只处理 cancel，不处理 paused）。
+    bool WaitRetryDelay(int ms);
+
+    // 构造「回安全位」动作：点1 = 原地抬 Z（J1/J2/R 保持当前值），点2 = 水平走安全位。
+    // j1/j2/z/r = **安全位**关节角（由调用方给定：RunSafePos 传 config 现值，
+    // 循环间隔传启动快照）——worker 线程绝不读 config。当前位在调用时实时读（主线程直通）。
+    // 返回 false = 安全位未就绪（未启用/未捕获）→ 调用方判为故障，不静默跳过。
+    bool BuildSafePosActionFrom(ActionData& act, double j1, double j2, double z, double r);
+
+    // 循环间隔内联回安全位：三不——不置 safeSession、不发 actionStarted/actionFinished、
+    // 不重入门禁（复用 ExecuteMove → 白得 cancel 检查 / PauseGate / reissue 续走 / 逐点日志）。
+    bool ReturnToSafePosInline();
 
     bool MoveToPoint(const PointData& pt, double speedScale);
 

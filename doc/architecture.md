@@ -78,6 +78,10 @@ AutoRunPage.RunSequence → SequenceWorker(worker 线程排队) → StartExecuti
     调 HardwareManager（与 PollTick 串行，避免数据竞争）→ 同 3.1 链路
   → 信号上行：actionStarted/Finished/schemeFinished/interrupted/
     stateChanged(WorkerState{Idle,Running,Paused,Fault}, PauseReason{None,User,Step}) → UI 日志/按钮状态
+  → 循环生产（TR-091，2026-09-14）：RunSequence(scheme, LoopConfig) → 会话内循环外壳
+    ExecuteActions（按 LoopConfig 重复 ExecuteOnce；每轮 emit cycleChanged(i,total)）
+    → 循环间隔 ReturnToSafePosInline()（内联回安全位，与手动 RunSafePos 共用 BuildSafePosActionFrom）
+    → schemeFinished 仍只在**全部循环完成**时发一次（否则机器还在动、UI 已显示「✅ 完成」）
   → 暂停：Pause() 置标志 → 挂起点(PauseGate/WaitForAxes ≤20ms) StopAxes 减速停 → 挂起
     → Resume() 重发当前绝对目标 MoveAbs 原地续走（Delay 按剩余时间续算）
   → 停止：StopImmediate() = cancel + StopAllAxes(减速停保持使能)；急停 = EmergencyStop(断使能)
@@ -126,3 +130,6 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
 - 舵机重连：两实例共享句柄必须一起断开；重连后使能复位（门禁要求人工重新使能）
 - **观察者指针（TR-084）**：跨线程 / 长生命周期 QObject（如 `SequenceWorker`）的持有方一律用 `QPointer`，**禁用裸指针长期持有**——所有权方（`deleteLater` / 父对象）负责销毁，观察者只持弱引用。原因：观察者无法感知对象失效，一旦"对象先于观察者析构"即悬垂访问（实例：退出时 `ShutdownWorker` 的 `processEvents` 派发已排队信号，命中已被 `deleteLater` 的 worker → `0xc0000005`）。当前 4 处：`MainWindow::sequenceWorker_`、`AutoRunPage::m_worker`、`ManualControlPage::worker_`、`ProcessPage::m_worker`。
 - **停止曲线（TR-085/TR-090）**：全工程所有业务停止——自动 ⏸ 暂停 / ■ 停止 / 点动松键 / 点动停止按钮——卡轴共用 `MC_Stop(mask,0)` 平滑减速档（`BoPaiCard::StopAxis:334` 与 `StopJog:462` 同指令同实参）、舵机共用 CMD24 停止+锁力——**禁止断脉冲**（开环丢步红线，仅 EmergencyStop 允许断使能）。滑行距离 = 停止瞬间速度 × 卡端停止减速。**TR-090 已接线 `MC_SetStopDec`**：config 每轴 `stopDecSmooth`（无量纲系数，手册 0.1~2、卡默认 0.5；0=不下发），`MoveAbs/MoveJog` 前实时读 config 经 `BoPaiCard::SetStopDec` 去重下发（decAbrupt 档读卡端现值保留不暴露）；**标定从 1.0 起逐步调大，过陡开环丢步**。点动"快停"诉求走**降点动速度**；不再有"运行时改档并发"问题（系数是持久设置非运行时切换）。
+- **`errorOccurred` 单点化（TR-091 / D17 方案 A）**：`SequenceWorker::ExecuteAction` 及其子树（`ExecuteMove/Vision/Extrude/Delay/Gripper`、`MoveToPoint`）**一律不 emit `errorOccurred`**，失败原因写入 `Impl::lastError`；emit 只允许出现在**会话级出口 2 处**——`ExecuteOnce` 失败分支与 `StartSingleExecution` 兜底（均 `lastError.isEmpty() ? action.name : lastError`）。原因：动作级重试（`production.loop.retryCount > 0`）期间若子树照旧 emit，UI 会在重试还没开始就跳「⛔ 错误」；顺带修掉"具体失败原因被 `action.name` 覆盖"的既有瑕疵。**新增动作类型时勿在子函数里 emit**。
+- **循环生产的会话边界（TR-091）**：循环外壳在**会话内**（`ExecuteActions` 是壳、`ExecuteOnce` 是原单轮主体），不是 `StartExecution` 外层或 `RunSequence` 层——这样 cancel / PauseGate / Fault / `schemeFinished` 全部复用既有单点。两条硬性约定：① `schemeFinished` **只在全部循环完成时发一次**（每轮发 `cycleChanged`），否则机器还在动、UI 已显示「✅ 完成」，操作员会据此伸手取料；② worker 线程**绝不读 ConfigManager**（json 读写非线程安全），`LoopConfig` 与安全位数值（`safeJ1/J2/Z/R`）都在主线程组装/快照后随 `RunSequence` 进 worker。循环间隔回安全位用**内联** `ReturnToSafePosInline()`（三不：不置 `safeSession`、不发 `actionStarted/actionFinished`、不重入门禁），与手动 `RunSafePos` 共用 `BuildSafePosActionFrom` 构造与执行链。
+- **「严格先抬 Z 到位再做水平移动」（TR-091 / D19）**：回安全位与循环间隔共用同一条链——`ExecuteMove` 逐点串行、`MoveToPoint` 在 `WaitForAxes` 阻塞到全部参与轴到位才返回；点1 = `{J1/J2/R 保持当前值, Z=safeZ}`、点2 = 安全位，故水平位移只可能发生在 Z=safeZ 高度。**加固 = `DispatchPointMove()` 对「目标与读回当前值之差 ≤ 0.01」的轴跳过下发**（点1 实际只剩 Z 轴 → "抬 Z 阶段零水平运动"由代码保证，不再依赖"舵机读回值 = 指令值"的假设）；跳过前仍过 `IsWithinSoftLimits`，**不旁路软限位硬拦截**。注意 `IsAxisBusy` 判的是 `MarkAxisBusy` 写的**预计运动时长 + 200ms**，不是位置反馈（开环无编码器）——严格表述是「Z 预计到位 + 200ms 余量后才下发水平移动」。

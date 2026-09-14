@@ -13,6 +13,8 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QComboBox>
+#include <QSpinBox>
+#include <QCheckBox>
 #include <QTextEdit>
 #include <QSizePolicy>
 #include <QScrollBar>
@@ -20,12 +22,15 @@
 #include <QImage>
 #include <QDateTime>
 #include <QShowEvent>
+#include <QMessageBox>
+#include <QSignalBlocker>
 #include "spdlog/spdlog.h"
 
 AutoRunPage::AutoRunPage(QWidget* parent)
     : QWidget(parent)
 {
     SetupUI();
+    LoadLoopConfigFromConfig();   // TR-091：循环控件按上次选择初始化（在 SetupUI 之后，控件已建）
 
     // HardwareManager 信号在构造函数即连接：连接状态/遥测/帧不依赖 m_worker。
     // 关键：connectionChanged 只在 Initialize 完成与运行中状态边沿时发一次，
@@ -54,6 +59,8 @@ void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
     connect(m_worker, &SequenceWorker::schemeFinished, this, &AutoRunPage::OnSchemeFinished);
     connect(m_worker, &SequenceWorker::interrupted, this, &AutoRunPage::OnInterrupted);
     connect(m_worker, &SequenceWorker::errorOccurred, this, &AutoRunPage::OnError);
+    // 循环进度（TR-091）：每轮开始一次；schemeFinished 仍只在全部循环完成时发一次
+    connect(m_worker, &SequenceWorker::cycleChanged, this, &AutoRunPage::OnCycleChanged);
     // 状态迁移 → 统一刷新按钮使能与状态标签（唯一出口，杜绝散点 setEnabled）
     connect(m_worker, &SequenceWorker::stateChanged,
             this, &AutoRunPage::OnWorkerStateChanged);
@@ -218,6 +225,73 @@ void AutoRunPage::SetupUI()
     schemeLayout->addWidget(m_schemeCombo, 1);
     rightLayout->addWidget(schemeRow);
 
+    // 循环生产行（TR-091）：模式 / 次数 / 回安全位 / 进度，**同一行**排布（布局待真机效果后定）。
+    // 硬约束 = 10 寸触控屏 + 窗口缩到最小尺寸（1200×700）时不得折行/裁切/重叠；
+    // 故控件均给固定宽高（高 32 ≥ 手指命中下限），余量交给 stretch + 右对齐进度标签吸收。
+    auto* loopRow = new QWidget();
+    loopRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* loopLayout = new QHBoxLayout(loopRow);
+    loopLayout->setContentsMargins(0, 0, 0, 0);
+    loopLayout->setSpacing(8);
+
+    auto* loopLabel = new QLabel(QStringLiteral("循环:"));
+    loopLabel->setStyleSheet("color: #b8cce3; font-size: 14px; font-weight: 600; background: transparent; border: none;");
+
+    // 模式下拉：index 与 LoopConfig::Mode 一一对应（0 单轮 / 1 指定次数 / 2 无限循环）
+    m_loopModeCombo = new QComboBox();
+    m_loopModeCombo->addItems({ QStringLiteral("单轮"),
+                                QStringLiteral("指定次数"),
+                                QStringLiteral("无限循环") });
+    m_loopModeCombo->setStyleSheet(R"(
+        QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 24px 4px 8px; border-radius: 6px; font-size: 13px; min-height: 22px; }
+        QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 18px; border: none; }
+        QComboBox::down-arrow { width: 0; height: 0; border-top: 5px solid #8da3bb; border-left: 4px solid transparent; border-right: 4px solid transparent; margin-right: 3px; }
+        QComboBox QAbstractItemView { background: #1a2129; color: #dbe6f0; border: none; outline: 1px solid #3f4e5e; selection-background-color: #2f6f9f; }
+        QComboBox:disabled { color: #7c8a9e; border-color: #333c47; }
+    )");
+    m_loopModeCombo->setFixedSize(100, 32);
+    m_loopModeCombo->setToolTip(QStringLiteral("单轮 = 与历史行为一致；指定次数 = 跑 N 轮后自动结束；无限循环需二次确认"));
+
+    // 次数框：仅「指定次数」可用（见 UpdateControlsEnabled 唯一出口）
+    m_loopCountSpin = new QSpinBox();
+    m_loopCountSpin->setRange(1, 9999);
+    m_loopCountSpin->setValue(10);
+    m_loopCountSpin->setAlignment(Qt::AlignCenter);
+    m_loopCountSpin->setStyleSheet(R"(
+        QSpinBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; font-size: 13px; padding: 2px 4px; }
+        QSpinBox:disabled { color: #7c8a9e; border-color: #333c47; }
+        QSpinBox::up-button, QSpinBox::down-button { width: 16px; background: #1a2129; border: none; }
+    )");
+    m_loopCountSpin->setFixedSize(78, 32);
+    m_loopCountSpin->setToolTip(QStringLiteral("循环轮数（1 ~ 9999）"));
+
+    // 「回安全位」= 进入下一轮前先回安全位（第 1 轮之前不回、最后一轮之后不回）。
+    // 术语按 TR-082/D15：此处只决定循环间隔是否回；总开关是设备配置页的「启用安全位」。
+    m_loopSafePosCheck = new QCheckBox(QStringLiteral("回安全位"));
+    m_loopSafePosCheck->setChecked(true);
+    m_loopSafePosCheck->setStyleSheet(R"(
+        QCheckBox { color: #b8cce3; font-size: 13px; background: transparent; spacing: 6px; }
+        QCheckBox:disabled { color: #7c8a9e; }
+        QCheckBox::indicator { width: 18px; height: 18px; border: 1px solid #3f4e5e; border-radius: 4px; background: #111a22; }
+        QCheckBox::indicator:checked { background: #2f6f9f; border-color: #2f7fb5; }
+    )");
+    m_loopSafePosCheck->setFixedHeight(32);
+    m_loopSafePosCheck->setCursor(Qt::PointingHandCursor);
+    m_loopSafePosCheck->setToolTip(QStringLiteral("每轮结束后先回安全位再进入下一轮，避免跨轮大位移横扫工作区（需先在设备配置页启用安全位）"));
+
+    // 进度标签：常显（替代已裁决不做的常驻提示条——单槽提示必被其它 SetHint 覆盖）
+    m_cycleLabel = new QLabel(QStringLiteral("单轮"));
+    m_cycleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_cycleLabel->setStyleSheet("color: #7ed6ff; font-size: 13px; font-weight: 600; font-family: 'Consolas', monospace; background: transparent; border: none;");
+
+    loopLayout->addWidget(loopLabel);
+    loopLayout->addWidget(m_loopModeCombo);
+    loopLayout->addWidget(m_loopCountSpin);
+    loopLayout->addWidget(m_loopSafePosCheck);
+    loopLayout->addStretch(1);
+    loopLayout->addWidget(m_cycleLabel);
+    rightLayout->addWidget(loopRow);
+
     // 按钮行
     auto* btnRow = new QWidget();
     btnRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -286,6 +360,14 @@ void AutoRunPage::SetupUI()
     m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));
     m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none; padding: 2px 0;");
     rightLayout->addWidget(m_hintLabel);
+
+    // 循环控件变更 → 写回 config（300ms 防抖）+ 刷新使能（唯一出口 UpdateControlsEnabled）
+    connect(m_loopModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { PersistLoopConfig(); });
+    connect(m_loopCountSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int) { PersistLoopConfig(); });
+    connect(m_loopSafePosCheck, &QCheckBox::toggled,
+            this, [this](bool) { PersistLoopConfig(); });
 
     // 组装主布局
     mainLayout->addWidget(leftSide, 6);
@@ -376,13 +458,44 @@ void AutoRunPage::OnStartOrResumeClicked()
     const int idx = m_schemeCombo->currentIndex();
     if (idx >= schemes.size()) return;
 
+    // ③-1 循环前置门禁（TR-091）：勾了「回安全位」且确实是循环（非单轮）时，安全位总开关
+    //      必须已启用——否则第 1 轮结束无安全位可回，下一轮起点的跨轮大位移会横扫工作区。
+    //      单轮不触发（不发生循环间隔回安全位）→ 8.18 零回归不受影响。
+    const SequenceWorker::LoopConfig loop = BuildLoopConfig();
+    using LM = SequenceWorker::LoopConfig::Mode;
+    if (loop.returnToSafePos && loop.mode != LM::Single
+        && !ConfigManager::instance().getValue<bool>("kinematics.safePos.enabled", false)) {
+        SetHint(QStringLiteral("循环运行需先示教安全位（手动控制页「示教安全位」），或取消勾选「回安全位」"),
+                QStringLiteral("#f7c948"));
+        return;
+    }
+    // ③-2 无限循环二次确认（三挡中无人值守风险最高的一挡）
+    if (loop.mode == LM::Infinite) {
+        const auto ans = QMessageBox::warning(this, QStringLiteral("确认无限循环"),
+            QStringLiteral("将无限循环执行「%1」，不会自动停止。\n\n"
+                           "启动前请确认：\n"
+                           "· 急停按钮在手边可及\n"
+                           "· 工作区内无人员肢体\n"
+                           "· 软限位与安全位已核对\n\n"
+                           "确认开始无限循环？").arg(schemes[idx].schemeName),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (ans != QMessageBox::Yes) {
+            SetHint(QStringLiteral("已取消无限循环启动"), QStringLiteral("#8fd4ff"));
+            return;
+        }
+    }
+
+    ResetCycleLabel();
     m_worker->ReloadFromConfig();
-    if (!m_worker->RunSequence(schemes[idx])) {
+    if (!m_worker->RunSequence(schemes[idx], loop)) {
         SetHint(QStringLiteral("启动失败：引擎忙或门禁未通过"), QStringLiteral("#f7c948"));
         return;
     }
     // 不在此改按钮：等 stateChanged(Running) 到达后由 UpdateControlsEnabled 统一处理
-    SetHint(QStringLiteral("方案执行中..."), QStringLiteral("#8fd4ff"));
+    SetHint(loop.mode == LM::Single
+                ? QStringLiteral("方案执行中...")
+                : QStringLiteral("循环执行中...（停止请点「■ 停止」）"),
+            QStringLiteral("#8fd4ff"));
 }
 
 void AutoRunPage::OnPauseClicked()
@@ -557,6 +670,76 @@ void AutoRunPage::OnError(const QString& message)
     SetHint(QStringLiteral("执行出错：%1（清除报警后可重新启动）").arg(message), QStringLiteral("#ff5e6b"));
 }
 
+// 循环进度（TR-091）：每轮开始时由引擎发一次；index 从 1 起，total < 0 = 无限循环。
+// 终态不清空（便于取证），下次启动前由 ResetCycleLabel() 复位。
+void AutoRunPage::OnCycleChanged(int index, int total)
+{
+    if (!m_cycleLabel) return;
+    m_cycleLabel->setText(total > 0
+                              ? QStringLiteral("循环 %1/%2").arg(index).arg(total)
+                              : QStringLiteral("循环 %1/∞").arg(index));
+}
+
+// ---- 循环生产控件（TR-091）：读 config / 写 config / 组装 LoopConfig ----
+
+void AutoRunPage::LoadLoopConfigFromConfig()
+{
+    if (!m_loopModeCombo || !m_loopCountSpin || !m_loopSafePosCheck) return;
+    auto& cfg = ConfigManager::instance();
+    const int  mode  = qBound(0, cfg.getValue<int>("production.loop.mode", 0), 2);
+    const int  count = qBound(1, cfg.getValue<int>("production.loop.count", 10), 9999);
+    const bool safe  = cfg.getValue<bool>("production.loop.returnToSafePos", true);
+
+    // 屏蔽信号：初始化赋值不得回写 config——旧 config 首次启动不该平白多出 production 节点
+    {
+        const QSignalBlocker b1(m_loopModeCombo);
+        const QSignalBlocker b2(m_loopCountSpin);
+        const QSignalBlocker b3(m_loopSafePosCheck);
+        m_loopModeCombo->setCurrentIndex(mode);
+        m_loopCountSpin->setValue(count);
+        m_loopSafePosCheck->setChecked(safe);
+    }
+    ResetCycleLabel();
+    UpdateControlsEnabled();
+}
+
+void AutoRunPage::PersistLoopConfig()
+{
+    auto& cfg = ConfigManager::instance();
+    cfg.set("production.loop.mode", m_loopModeCombo->currentIndex());
+    cfg.set("production.loop.count", m_loopCountSpin->value());
+    cfg.set("production.loop.returnToSafePos", m_loopSafePosCheck->isChecked());
+    // 刻意不 emit paramsChanged：其唯一消费者是 ReloadFromConfig（重建 Kinematics），
+    // 而循环参数与运动学无关，emit 只会造成无谓重建。
+    UpdateControlsEnabled();
+}
+
+SequenceWorker::LoopConfig AutoRunPage::BuildLoopConfig() const
+{
+    using LM = SequenceWorker::LoopConfig::Mode;
+    SequenceWorker::LoopConfig loop;
+    loop.mode            = static_cast<LM>(qBound(0, m_loopModeCombo->currentIndex(), 2));
+    loop.count           = m_loopCountSpin->value();
+    loop.returnToSafePos = m_loopSafePosCheck->isChecked();
+    // 重试口子本次不进 UI（仅 config 手改，见方案 §七 / D4）
+    auto& cfg = ConfigManager::instance();
+    loop.retryCount   = qMax(0, cfg.getValue<int>("production.loop.retryCount", 0));
+    loop.retryDelayMs = qMax(0, cfg.getValue<int>("production.loop.retryDelayMs", 500));
+    return loop;
+}
+
+void AutoRunPage::ResetCycleLabel()
+{
+    using LM = SequenceWorker::LoopConfig::Mode;
+    const int idx = m_loopModeCombo->currentIndex();
+    if (idx == static_cast<int>(LM::Count))
+        m_cycleLabel->setText(QStringLiteral("循环 0/%1").arg(m_loopCountSpin->value()));
+    else if (idx == static_cast<int>(LM::Infinite))
+        m_cycleLabel->setText(QStringLiteral("循环 0/∞"));
+    else
+        m_cycleLabel->setText(QStringLiteral("单轮"));
+}
+
 void AutoRunPage::OnWorkerStateChanged(SequenceWorker::WorkerState state,
                                        SequenceWorker::PauseReason reason)
 {
@@ -579,8 +762,16 @@ void AutoRunPage::UpdateControlsEnabled()
     const bool busy    = (st == WS::Running || st == WS::Paused);   // 会话持有中
     const bool faulted = (st == WS::Fault);
 
-    // 方案下拉：仅运行/暂停期禁止切换；手动模式与急停锁存期保留预选能力（下次启动才读取所选方案）
+    // 方案下拉 / 循环控件：仅运行/暂停期禁止切换；手动模式与急停锁存期保留预选能力（下次启动才读取所选方案）
     m_schemeCombo->setEnabled(!busy);
+    if (m_loopModeCombo && m_loopCountSpin && m_loopSafePosCheck) {
+        using LM = SequenceWorker::LoopConfig::Mode;
+        m_loopModeCombo->setEnabled(!busy);
+        m_loopSafePosCheck->setEnabled(!busy);
+        // 次数框只在「指定次数」下可用（且运行/暂停期一律置灰）
+        m_loopCountSpin->setEnabled(!busy &&
+            m_loopModeCombo->currentIndex() == static_cast<int>(LM::Count));
+    }
 
     // 非自动模式 / 急停待恢复 → 五钮全灭（恢复通道：手动页使能/回零 + 顶栏急停永不禁用）
     if (!gate) {

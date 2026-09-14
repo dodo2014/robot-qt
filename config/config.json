@@ -208,6 +208,13 @@
             "z": -10.0
         }
     },
+    "production": {
+        "loop": {
+            "count": 9999,
+            "mode": 1,
+            "returnToSafePos": true
+        }
+    },
     "simulation": {
         "algorithmType": "SimAlgo",
         "cameraType": "SimCamera",

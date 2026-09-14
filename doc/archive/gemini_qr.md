@@ -1,3 +1,10 @@
+> **归档档案（2026-09-14 移入 `doc/archive/`）**——本文是运动学建模早期的**多轮 AI 对话原始档案**（含提问原文、推导过程、Python 验算脚本、图片引用），共 2800+ 行。
+> **不要把它当权威源**：其中 L1 实测值 174.35mm 已被后续重测推翻（**现行值 138.83mm**，见 `config/config.json` 的 `kinematics.l1`）。
+> **结论已沉淀处**：`AGENTS.md`（Architecture 节）、`doc/architecture.md`、`doc/kinematics_sequenceworker_plan.md` §一，以及源码注释 `src/Core/Kinematics.h` / `src/Core/CoordTransform.h`。
+> **保留理由**：追溯「为什么这么建模」的推导依据（L1 为何取水平投影、TCP 为何内化为等效小臂、h1 为何是独立参数）。查现行事实请走上列权威源。
+
+---
+
 user . 10:32
 
 L1的参数，只用两个电机中心连线的水平投影，是不是就可以不关心大臂的形态？实测水平投影的距离是174.35mm

@@ -1,15 +1,15 @@
 # 「小脑」运动学与 TCP 核心库重构 + 「大脑」工艺流程执行引擎 — 执行计划
 
-状态：已确认（2026-08-19，与 gemini_qr.md 结论对齐）。
-依据：`doc/gemini_qr.md` 正逆解对话结论 + 现有源码核对。
+状态：已确认（2026-08-19，与 doc/archive/gemini_qr.md 结论对齐）。
+依据：`doc/archive/gemini_qr.md` 正逆解对话结论 + 现有源码核对。
 范围：本次仅计划落盘，**尚未开始编码**，等待用户确认后执行。
 
-> ⚠ **历史文档注记（2026-09-07）**：本文 T5 中断描述与 T8 按钮映射已随演进变化——① `Stop()` 实际**仅置 cancel**（当前动作跑完才停，TR-063 实测），"立即减速停"是 2026-09-07 新增的 `StopImmediate()`；② `stateChanged` 已改 enum 签名 `(WorkerState, PauseReason)`；③ T8 按钮组已被 5 按钮重构取代（见 `doc/auto_run_button_refactor.md`）；④ 新增 `Pause/Resume/ClearFault/RunSafePos` 与 `WorkerState` 显式状态机。T1–T4/T6/T7/T9/T10 的运动学与架构内容仍有效。
+> ⚠ **历史文档注记（2026-09-07，2026-09-14 补）**：本文 T5 中断描述与 T8 按钮映射已随演进变化——① `Stop()` 实际**仅置 cancel**（当前动作跑完才停，TR-063 实测），"立即减速停"是 2026-09-07 新增的 `StopImmediate()`；② `stateChanged` 已改 enum 签名 `(WorkerState, PauseReason)`；③ T8 按钮组已被 5 按钮重构取代（见 `doc/auto_run_button_refactor.md`）；④ 新增 `Pause/Resume/ClearFault/RunSafePos` 与 `WorkerState` 显式状态机；⑤ **§一 第 2 条与 §二 引用的 L1 = 174.35mm 已作废**，2026-08 重测后现行值为 **138.83mm**（`config/config.json` 的 `kinematics.l1`），L2 仍为 166.86mm。T1–T4/T6/T7/T9/T10 的运动学与架构内容仍有效。
 
-## 一、核心模型结论（gemini_qr.md 摘要，重构依据）
+## 一、核心模型结论（doc/archive/gemini_qr.md 摘要，重构依据）
 
 1. **轴映射（已与 LogicalAxis 一致）**：J1 大臂旋转（伺服）｜J2 小臂旋转（舵机）｜Z 升降｜R 夹爪 Pitch 翻转（舵机）｜夹爪张合｜挤出。
-2. **物理模型降维**：L1 用**水平投影 174.35mm**；大臂倾斜只体现为 Z 偏移；R(Pitch) 是垂直面翻转，不参与平面正逆解。
+2. **物理模型降维**：L1 用**水平投影**（本文成稿时为 174.35mm，**现行值 138.83mm**，见上注记 ⑤）；大臂倾斜只体现为 Z 偏移；R(Pitch) 是垂直面翻转，不参与平面正逆解。
 3. **降维决策**：抓取姿态恒垂直朝下、灌装位置固定可示教 → **正逆解退化为 2D 平面三角 + 独立 Z**，无需 Eigen 3D 齐次矩阵；R 直接透传目标角。
 4. **Home Offset（机械零点↔逻辑零点）**：`逻辑角度 = 机械角度 - homeOffset`（J1=102°、J2=28°，config 已就绪）。**本次落地**。所有界面只显示逻辑角度与世界坐标。
 5. **TCP 与 IK 严格分离**：外层 `ApplyTCPOffset`（抓取朝下时纯平移减法，dx=53/dy=0/dz=-130）→ 内层纯逆解。
@@ -127,6 +127,6 @@
 
 ## 七、参考
 
-- `doc/gemini_qr.md`：正逆解/TCP/坐标系/Home Offset 对话结论（权威依据）。
+- `doc/archive/gemini_qr.md`：正逆解/TCP/坐标系/Home Offset 对话**推导档案**（已归档；现行事实以 `AGENTS.md` 与源码为准）。
 - `doc/kinematics_sequenceworker_test.md`：测试方案（影响回归 + 新功能验证）。
 - `doc/开发文档.md`：页面功能需求（手动/自动互锁、示教、单步执行）。

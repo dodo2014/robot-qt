@@ -60,6 +60,53 @@ Get-Process -Name CreamPuffRobot -ErrorAction SilentlyContinue | Stop-Process -F
 ```
 然后重跑 3.1。（build_release.bat 内置自动检测+taskkill+重编，沙箱内手工来一次即可。）
 
+### 3.3 WorkBuddy 沙箱内编译（2026-09-14 实测可用路径）
+
+WorkBuddy 会话里的 PowerShell 工具**跑不了 native exe 的管道/重定向**，两种典型报错：
+
+- `& "x.bat" 2>&1 | Select-Object` → `无法在管道中间运行文档: ...`（`CantActivateDocumentInPipeline`）
+- `& "ninja.exe" ... *> log` → 不报错但**输出全丢、`$LASTEXITCODE` 为空**，日志文件 0 字节
+
+`out\smoke\build_debug.bat` / 根 `build_release.bat` 在沙箱内会**静默无输出直接退出**（vcvars64 的
+`reg.exe` 依赖被拦，见第 2 节），**不要靠它们判断编译结果**。`Start-Process`（拉 GUI/分离进程）同样被拦。
+
+**可用路径：改用 Bash 工具跑 Git Bash**（不受上述限制），env 用 `;` 分隔的 Windows 路径：
+
+```bash
+cd /d/workspace/projects/CreamPuffRobot
+export MSYS2_ARG_CONV_EXCL="*"
+export INCLUDE="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include;D:/Windows Kits/10/Include/10.0.26100.0/ucrt;D:/Windows Kits/10/Include/10.0.26100.0/shared;D:/Windows Kits/10/Include/10.0.26100.0/um"
+export LIB="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/lib/x64;D:/Windows Kits/10/Lib/10.0.26100.0/ucrt/x64;D:/Windows Kits/10/Lib/10.0.26100.0/um/x64"
+export PATH="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64;D:/Windows Kits/10/Bin/10.0.26100.0/x64;D:/Qt/Tools/Ninja;D:/Qt/Tools/CMake_64/bin;D:/Qt/6.11.1/msvc2022_64/bin;$PATH"
+"/d/Qt/Tools/Ninja/ninja.exe" -C "D:/workspace/projects/CreamPuffRobot/out/build/x64-Debug" CreamPuffRobot 2>&1 | tail -50
+```
+
+- 成功标志 `[N/N] Linking CXX executable CreamPuffRobot.exe`（Debug 约 1m20s / Release 约 1m15s，全量 46 个 TU）。
+- 只看关键行：管道接 `grep -aEi "error|warning C[0-9]|FAILED|Linking CXX exe"`（`-a` 必需，否则 grep 见到
+  windeployqt 的 GBK 字节会判定为二进制而停止输出）。
+- **LNK1168**：沙箱内 `taskkill //IM` 会被 MSYS2 吃掉参数（报 `无效参数/选项 - '//IM'`），
+  用 PowerShell `Get-Process -Name CreamPuffRobot -EA SilentlyContinue | Stop-Process -Force`（纯 cmdlet 管道可用）。
+
+### 3.4 Sim 冒烟在沙箱内的替代跑法（2026-09-14 实测）
+
+`out\smoke\sim_smoke.ps1` 用 `Start-Process` 起 GUI 进程 → **沙箱内被拦**，脚本会静默走完 `finally`
+恢复 config、**不留任何日志**（容易被误读成"冒烟通过"）。判定真伪看两点：`log/` 当日文件是否新增
+`Initialize complete`，以及脚本输出里的 `SMOKE_ALIVE=true`。沙箱内改用 Bash 等价流程（效果一致）：
+
+```bash
+cd /d/workspace/projects/CreamPuffRobot
+cp config/config.json config/config.json.sim_bak
+trap 'cp config/config.json.sim_bak config/config.json && rm -f config/config.json.sim_bak' EXIT
+sed -i 's/"motionCardType": "Bopai"/"motionCardType": "SimCard"/; s/"servoType": "XRServo"/"servoType": "SimServo"/' config/config.json
+./out/build/x64-Debug/CreamPuffRobot.exe > /dev/null 2>&1 &
+APP_PID=$!; sleep 18
+grep -c 'Initialize complete' "log/creampuff_$(date +%Y-%m-%d).log"
+kill -9 $APP_PID
+```
+
+**注意**：这一跑会让程序执行启动期逻辑——含 **S8 日志清理（删 7 天前 `log/creampuff_*.log`）**，
+即冒烟会真实删除过期日志文件，属预期行为。
+
 ## 4. Sim 冒烟验证（编译后必跑）
 
 标准脚本 `out\smoke\sim_smoke.ps1` 默认跑 **Debug** exe。冒烟 Release 时临时改 exe 路径

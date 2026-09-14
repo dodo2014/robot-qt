@@ -4,6 +4,8 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QComboBox>
+#include <QSpinBox>
+#include <QCheckBox>
 #include <QTextEdit>
 #include <QVector>
 #include <QPointer>
@@ -48,12 +50,20 @@ private slots:
     void OnSchemeFinished();
     void OnInterrupted(const QString& reason);
     void OnError(const QString& message);
+    // 循环进度（TR-091）：每轮开始发一次；index 从 1 起，total < 0 = 无限循环
+    void OnCycleChanged(int index, int total);
 
 private:
     void SetupUI();
     void RefreshCoordPanel();
     void RefreshSchemeCombo();
     void showEvent(QShowEvent* event) override;
+
+    // 循环生产控件（TR-091）：读 config 初始化 / 写回 config / 组装 LoopConfig
+    void LoadLoopConfigFromConfig();
+    void PersistLoopConfig();
+    SequenceWorker::LoopConfig BuildLoopConfig() const;
+    void ResetCycleLabel();   // 启动前复位进度文案（单轮 / 循环 0/N / 循环 0/∞）
 
     // 按钮启用的唯一出口（杜绝多处 setEnabled 互相覆盖绕过互锁）
     void UpdateControlsEnabled();
@@ -68,6 +78,12 @@ private:
     QLabel*     m_cameraRgbLabel   = nullptr;
     QLabel*     m_cameraOverlayLabel = nullptr;
     QLabel*     m_hintLabel        = nullptr;
+
+    // 循环生产控件（TR-091，一行排布；布局待真机效果后定）
+    QComboBox*  m_loopModeCombo    = nullptr;   // 单轮 / 指定次数 / 无限循环
+    QSpinBox*   m_loopCountSpin    = nullptr;   // 1..9999，仅「指定次数」可用
+    QCheckBox*  m_loopSafePosCheck = nullptr;   // 「回安全位」（循环间隔）
+    QLabel*     m_cycleLabel       = nullptr;   // 进度：单轮 / 循环 3/10 / 循环 3/∞
 
     QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
     bool m_safePosSessionActive = false;   // TR-088：actionStarted 时记录的安全位临时会话标志（完成槽不能直查 safeSession——已被清）

@@ -1,0 +1,84 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git commit --amend:*)",
+      "Bash(git rebase:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Read(./config/config.local.json)",
+      "Read(./.git/objects/**)",
+      "Read(./.workbuddy/**)"
+    ],
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git check-ignore:*)",
+      "Read(./doc/**)",
+      "Read(./log/**)",
+      "Read(./tests/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CODEBUDDY_PROJECT_DIR/.workbuddy-ai/hooks/guard-git.sh\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CODEBUDDY_PROJECT_DIR/.workbuddy-ai/hooks/guard-dangerous-bash.sh\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CODEBUDDY_PROJECT_DIR/.workbuddy-ai/hooks/prepare-build.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CODEBUDDY_PROJECT_DIR/.workbuddy-ai/hooks/check-script-encoding.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CODEBUDDY_PROJECT_DIR/.workbuddy-ai/hooks/session-brief.sh\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
