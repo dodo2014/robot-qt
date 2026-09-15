@@ -16,6 +16,7 @@ class VisionTestPage;
 class ConfigPage;
 class SequenceWorker;
 class ToggleSwitch;
+class HintBanner;   // 顶栏全局消息横幅（定义在 MainWindow.cpp）
 
 class MainWindow : public QMainWindow
 {
@@ -29,6 +30,8 @@ private slots:
     void OnNavButtonClicked(int index);
     void OnModeToggled(bool autoMode);
     void UpdateClock();
+    // 全局消息横幅更新（2026-09-15）：接收自动运行页 requestGlobalHint
+    void UpdateGlobalHint(const QString& text, const QString& color);
 
 private:
     void SetupUI();
@@ -44,6 +47,9 @@ private:
     QLabel*              clockLabel_     = nullptr;
     QLabel*              modeLabelLeft_  = nullptr;
     QLabel*              modeLabelRight_ = nullptr;
+    // 顶栏全局消息横幅（2026-09-15）：CreateTopBar 早于子页面创建（SetupUI），
+    // 故必须提为成员，否则 SetupUI 无法把子页面信号接到它
+    HintBanner*          globalHint_     = nullptr;
     // 顶栏【手动/自动】模式开关与两侧标签（TR-075 提升为成员：互锁需程序化回弹与高亮）
     QLabel*              modeManualLabel_ = nullptr;
     QLabel*              modeAutoLabel_   = nullptr;

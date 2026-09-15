@@ -30,6 +30,12 @@ public:
     // 模式互锁入口（下一步 TR-073 接入；本次恒 true，行为不变）
     void SetAutoModeActive(bool active);
 
+signals:
+    // 全局消息横幅（2026-09-15）：本页不再自持底部提示控件（10 寸触控屏竖向空间紧张），
+    // SetHint 统一转发至 MainWindow 顶栏横幅（Elide 截断 + 点击弹窗看全文）。
+    // 手动控制页的提示保留原地不动——横幅只承载本页提示，单一信号源，不引入 TR-087 竞争。
+    void requestGlobalHint(const QString& text, const QString& color);
+
 private slots:
     // 5 按钮（2026-09-07 语义重构：暂停=减速停保持上下文；停止=立即减速停废弃上下文；
     // 复位→清除报警。原「复位」实为一键回零，已归手动控制页）
@@ -77,7 +83,8 @@ private:
     QTextEdit*  m_logTextEdit      = nullptr;
     QLabel*     m_cameraRgbLabel   = nullptr;
     QLabel*     m_cameraOverlayLabel = nullptr;
-    QLabel*     m_hintLabel        = nullptr;
+    // 2026-09-15：底部 m_hintLabel 已删除——提示改由 MainWindow 顶栏全局横幅承载
+    // （SetHint 转发 requestGlobalHint），释放本页竖向空间。
 
     // 循环生产控件（TR-091，一行排布；布局待真机效果后定）
     QComboBox*  m_loopModeCombo    = nullptr;   // 单轮 / 指定次数 / 无限循环

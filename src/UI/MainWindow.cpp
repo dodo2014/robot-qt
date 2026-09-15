@@ -22,6 +22,8 @@
 #include <QPalette>
 #include <QFont>
 #include <QMessageBox>
+#include <QResizeEvent>
+#include <QMouseEvent>
 #include <QSignalBlocker>
 #include <QAbstractButton>
 #include <QVector>
@@ -130,6 +132,87 @@ namespace
         qDebug() << "[Tooltip] instance-level style filter installed";
     }
 }
+
+// =========================================================================
+// 顶栏全局消息横幅（2026-09-15）
+//
+// 动机：自动运行页原底部 m_hintLabel 占用竖向空间，10 寸触控屏上不可接受；
+//       提示改挂顶栏【手动/自动】滑块正左侧，超长省略、点击看全文。
+//
+// 用 QLabel 派生而非 QPushButton：全局 QSS 已给 QPushButton 设了
+//   padding: 10px 18px / font-size: 15px / border-radius: 10px / color: white
+// （见 ApplyGlobalStyle），实例样式漏写任一项就会得到一个不合「扁平无边框」要求的大按钮。
+//
+// 宽度用固定值而非 maximumWidth：布局稳定、截断宽度恒定；同时 setFixedWidth 经
+//   qSmartMinSize 的 boundedTo(maxSize) 把 QLabel 的最小宽度一并夹住——否则长消息
+//   （如急停指导约 60 字）的 minimumSizeHint 会把顶栏顶爆。
+//   顶栏余量核算（最小窗口 1200）：内容区 1120px，中区约 140px、右区约 378px，
+//   左区约 602px，标题+版本约 192px ⇒ 320px 横幅有余量。
+// =========================================================================
+class HintBanner : public QLabel
+{
+public:
+    explicit HintBanner(QWidget* parent = nullptr) : QLabel(parent)
+    {
+        setFixedWidth(320);
+        // 字号走 setFont 而非 QSS：保证 fontMetrics() 与最终渲染一致（elide 精度依赖它）
+        QFont f = font();
+        f.setPixelSize(13);
+        f.setBold(true);
+        setFont(f);
+        setCursor(Qt::PointingHandCursor);
+        setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        setVisible(false);   // 无消息时不占位
+    }
+
+    void SetMessage(const QString& text, const QString& color)
+    {
+        m_full  = text;
+        m_color = color.isEmpty() ? QStringLiteral("#8fd4ff") : color;
+        setStyleSheet(QStringLiteral(
+            "background: transparent; border: none; padding: 0 8px; color: %1;").arg(m_color));
+        ApplyElide();
+        setVisible(!m_full.isEmpty());
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* ev) override
+    {
+        QLabel::resizeEvent(ev);
+        ApplyElide();   // 宽度变化必须重算，否则截断长度停留在上一次
+    }
+
+    void mouseReleaseEvent(QMouseEvent* ev) override
+    {
+        if (ev->button() == Qt::LeftButton && !m_full.isEmpty()) {
+            // 非模态：静态 QMessageBox::information() 内部是 exec()，
+            // 运行中会阻塞主线程事件循环——遥测刷新（约 50ms 一次）与日志追加全部停摆，
+            // worker 在独立线程故运动不停，但界面表现为「卡死」，操作员会误判。
+            auto* box = new QMessageBox(QMessageBox::Information,
+                                        QStringLiteral("消息详情"),
+                                        m_full,
+                                        QMessageBox::Ok,
+                                        this);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setModal(false);
+            box->show();
+        }
+        QLabel::mouseReleaseEvent(ev);
+    }
+
+private:
+    void ApplyElide()
+    {
+        if (m_full.isEmpty()) { QLabel::setText(QString()); return; }
+        const int avail = width() - 16;   // 扣掉样式表左右各 8px padding
+        QLabel::setText(avail > 0
+            ? fontMetrics().elidedText(m_full, Qt::ElideRight, avail)
+            : m_full);
+    }
+
+    QString m_full;
+    QString m_color;
+};
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -411,6 +494,12 @@ void MainWindow::SetupUI()
     stack_->addWidget(configPage_);
     stack_->setCurrentIndex(0);
 
+    // 全局消息横幅接线（2026-09-15）：必须在子页面构造之后——CreateTopBar 早于页面创建，
+    // 且信号在 connect 之前 emit 会被静默丢弃。
+    // 仅接自动运行页：手动控制页的提示保留原地不动（单一信号源，规避 TR-087 提示竞争）。
+    connect(autoRunPage_, &AutoRunPage::requestGlobalHint,
+            this, &MainWindow::UpdateGlobalHint);
+
     bodyLayout->addWidget(stack_, 1);
 
     containerLayout->addWidget(bodyWidget, 1);
@@ -453,6 +542,13 @@ QWidget* MainWindow::CreateTopBar()
     leftSection->addWidget(titleLabel);
     leftSection->addWidget(versionLabel);
     leftSection->addStretch();
+
+    // 全局消息横幅（2026-09-15）：插在标题与【手动/自动】滑块之间，紧贴滑块左侧。
+    // 初始文案由本处给出——AutoRunPage 底部标签已删除，构造期不再有默认提示；
+    // 且信号在 connect 之前 emit 会被静默丢弃（connect 在 SetupUI 建页之后）。
+    globalHint_ = new HintBanner();
+    globalHint_->SetMessage(QStringLiteral("系统就绪"), QStringLiteral("#8fd4ff"));
+    leftSection->addWidget(globalHint_);
 
     // ---- Center section: mode toggle (two buttons as toggle group) ----
     // ---- Center section: mode toggle (自定义滑块方案) ----
@@ -642,6 +738,14 @@ void MainWindow::OnNavButtonClicked(int index)
         SPDLOG_INFO("[MainWindow] 导航切换到页面 {}", index);
         qDebug() << "[MainWindow] Navigated to page" << index;
     }
+}
+
+// 全局消息横幅更新（2026-09-15）：自动运行页 SetHint 的唯一落点。
+// 单槽覆盖式语义与原 m_hintLabel 一致（未引入优先级——发送侧本就是单页单线程顺序调用）。
+void MainWindow::UpdateGlobalHint(const QString& text, const QString& color)
+{
+    if (!globalHint_) return;
+    globalHint_->SetMessage(text, color);
 }
 
 // 模式互锁门禁（TR-075）：

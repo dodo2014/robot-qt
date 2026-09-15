@@ -124,19 +124,21 @@ void AutoRunPage::SetupUI()
     struct LcdItem { QString label; QString value; };
     QVector<LcdItem> lcds = {
         { QStringLiteral("当前节拍 CT"), QStringLiteral("2.4s") },
-        { QStringLiteral("今日产量"),    QStringLiteral("1,286") },
+        { QStringLiteral("今日产量"),    QStringLiteral("12,860") },
     };
     for (const auto& item : lcds)
     {
         auto* lcdWidget = new QWidget();
-        lcdWidget->setStyleSheet("background: #0d1219; border-radius: 10px; padding: 10px;");
+        lcdWidget->setStyleSheet("background: #0d1219; border-radius: 8px; padding: 6px;");
         lcdWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         auto* lcdLayout = new QVBoxLayout(lcdWidget);
         lcdLayout->setAlignment(Qt::AlignCenter);
-        lcdLayout->setSpacing(4);
+        lcdLayout->setSpacing(2);
+
         auto* lbl = new QLabel(item.label);
         lbl->setStyleSheet("color: #7c8a9e; font-size: 13px; background: transparent; border: none;");
         lbl->setAlignment(Qt::AlignCenter);
+
         auto* val = new QLabel(item.value);
         val->setStyleSheet("font-size: 32px; font-weight: 700; color: #cde2ff; font-family: 'Consolas', monospace; background: transparent; border: none;");
         val->setAlignment(Qt::AlignCenter);
@@ -206,7 +208,7 @@ void AutoRunPage::SetupUI()
     schemeLayout->setContentsMargins(0, 0, 0, 0);
     schemeLayout->setSpacing(8);
 
-    auto* schemeLabel = new QLabel(QStringLiteral("运行方案:"));
+    auto* schemeLabel = new QLabel(QStringLiteral("方案"));
     schemeLabel->setStyleSheet("color: #b8cce3; font-size: 14px; font-weight: 600; background: transparent; border: none;");
 
     m_schemeCombo = new QComboBox();
@@ -234,7 +236,7 @@ void AutoRunPage::SetupUI()
     loopLayout->setContentsMargins(0, 0, 0, 0);
     loopLayout->setSpacing(8);
 
-    auto* loopLabel = new QLabel(QStringLiteral("循环:"));
+    auto* loopLabel = new QLabel(QStringLiteral("循环"));
     loopLabel->setStyleSheet("color: #b8cce3; font-size: 14px; font-weight: 600; background: transparent; border: none;");
 
     // 模式下拉：index 与 LoopConfig::Mode 一一对应（0 单轮 / 1 指定次数 / 2 无限循环）
@@ -356,10 +358,9 @@ void AutoRunPage::SetupUI()
     connect(&HardwareManager::instance(), &HardwareManager::enableStateChanged,
             this, [this]() { UpdateControlsEnabled(); });
 
-    // 底部提示
-    m_hintLabel = new QLabel(QStringLiteral("提示：选择方案后点击「启动」开始运行"));
-    m_hintLabel->setStyleSheet("color: #8fd4ff; font-size: 12px; background: transparent; border: none; padding: 2px 0;");
-    rightLayout->addWidget(m_hintLabel);
+    // 底部提示已迁出（2026-09-15）：原 m_hintLabel 占用本页竖向空间，
+    // 现由 SetHint → requestGlobalHint → MainWindow 顶栏全局横幅承载。
+    // 横幅位于【手动/自动】滑块左侧，超长 Elide 截断、点击弹出全文。
 
     // 循环控件变更 → 写回 config（300ms 防抖）+ 刷新使能（唯一出口 UpdateControlsEnabled）
     connect(m_loopModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -558,7 +559,16 @@ void AutoRunPage::OnInitClicked()
         return;
     }
     if (!hw.Initialize()) {
-        SetHint(QStringLiteral("初始化失败：请检查硬件连接与配置"), QStringLiteral("#ff5e6b"));
+        // TR-093：Initialize 返回值 = 硬件是否真正就绪（原实现无条件 return true，
+        // 未连接也报「初始化完成 / 硬件已连接」）。此处给出具体哪一路未就绪；
+        // 「再点一次重试」不是空话——Initialize 二次进入只补做连接（不重建对象、不重启轮询）。
+        const QString status = hw.ConnectionStatus();
+        SetHint(QStringLiteral("初始化失败：%1。请检查设备配置页的连接参数，接好硬件后再点一次「⟳ 初始化」重试")
+                    .arg(status),
+                QStringLiteral("#ff5e6b"));
+        m_logTextEdit->append(QStringLiteral("[%1] 初始化失败：%2")
+                                  .arg(QDateTime::currentDateTime().toString("HH:mm:ss"), status));
+        UpdateControlsEnabled();
         return;
     }
     m_logTextEdit->append(QStringLiteral("[%1] 初始化完成").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
@@ -793,11 +803,9 @@ void AutoRunPage::UpdateControlsEnabled()
 
 void AutoRunPage::SetHint(const QString& text, const QString& color)
 {
-    if (!m_hintLabel) return;
-    m_hintLabel->setText(text);
-    m_hintLabel->setStyleSheet(
-        QStringLiteral("color: %1; font-size: 12px; background: transparent; border: none; padding: 2px 0;")
-            .arg(color));
+    // 2026-09-15：本页不再自绘提示，统一转发给 MainWindow 顶栏全局横幅。
+    // 保留 SetHint 作为唯一出口——30 余处调用点零改动。
+    emit requestGlobalHint(text, color);
 }
 
 void AutoRunPage::UpdateStatusByState(SequenceWorker::WorkerState st,

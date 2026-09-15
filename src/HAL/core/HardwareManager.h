@@ -170,6 +170,9 @@ private:
     void JogTick();
     // 舵机串口断开后的热重连：两个实例共享同一句柄，须一起断开重连
     void ReconnectServos();
+    // 运动卡连接（TR-093）：Initialize 首跑与「再次点初始化」重试共用同一实现。
+    // 运动卡无自动重连路径——Connect 全项目仅此处调用
+    void ConnectMotionCard();
     // P1 拆分：PollTick 的两个子步骤（纯函数重排，无行为变化）
     void PollCardAxis();        // 卡轴：状态映射/软限位拦截/回零完成/报警边沿/异常签名
     void PollServoTelemetry();  // 舵机：离线降频遥测 + 热重连退避

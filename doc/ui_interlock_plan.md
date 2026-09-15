@@ -19,6 +19,8 @@
 
 安全位（TR-074）影响已覆盖：门禁弹窗区分 `IsSafePosSession()` → "正在返回安全位，请稍候"（不诱导停止）；急停恢复链路含"等自动回安全位完成"步骤。**手测 7 条见 TEST_RECORD TR-075，待真机验证阶段统一执行。**
 
+**2026-09-15 补充（TR-092，自动运行页提示迁至顶栏全局横幅）**：`AutoRunPage` 底部 `m_hintLabel` 已删除，`SetHint` 改为 `emit requestGlobalHint(text,color)`，提示统一由 MainWindow 顶栏「全局消息横幅」（`HintBanner`，定义在 `MainWindow.cpp`）承载；**手动页 `hintLabel_` 与 `RefreshSoftLimitHint` 未改动**，故本表「手动页急停提示」行的行为（先 ResetAxisStates 再 SetHint、防被 RefreshSoftLimitHint 覆盖）完全不变，只是该提示的显示位置仍留在手动页。**下文「四、现状核实」与 5.4 节中出现的 `m_hintLabel` 均为 2026-09-07 存档文本**，引用前请以本节与源码为准。
+
 ---
 
 ## ⚠ 2026-09-07 更新：按钮语义已重构为 5 按钮（先行落地，本文 5.3/5.4 节为旧 4 按钮版）

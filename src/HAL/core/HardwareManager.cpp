@@ -103,7 +103,22 @@ HardwareManager::~HardwareManager()
 
 bool HardwareManager::Initialize()
 {
-    if (initialized_) return true;
+    // TR-093：已初始化 → 只补做「连接」，不重建对象、不重启轮询。
+    // 首次初始化时硬件未上电/未插线（Connect 失败）的场景，靠再点一次「⟳ 初始化」恢复，
+    // 不必重启程序——运动卡无自动重连路径（Connect 全项目仅 ConnectMotionCard 内调用），
+    // 舵机虽有 PollTick 热重连，但同样以本函数为唯一显式入口。
+    if (initialized_) {
+        if (!IsMotionCardConnected()) ConnectMotionCard();
+        if (!IsServoConnected())      ReconnectServos();
+        const bool cardOk  = IsMotionCardConnected();
+        const bool servoOk = IsServoConnected();
+        // 与首跑末段一致：先同步边沿缓存再 emit，避免 PollTick 边沿检测重复广播
+        lastCardConnected_  = cardOk;
+        lastServoConnected_ = servoOk;
+        emit connectionChanged();
+        SPDLOG_INFO("[HardwareManager] Initialize complete (re-entry) card={} servo={}", cardOk, servoOk);
+        return cardOk && servoOk;
+    }
 
     SPDLOG_INFO("[HardwareManager] Initialize BEGIN");
 
@@ -113,25 +128,10 @@ bool HardwareManager::Initialize()
     // ---- 1. 创建运动控制卡 ----
     std::string cardType = cfg.getValue<std::string>("simulation.motionCardType", "SimCard");
     motionCard_ = MotionCardFactory::Instance().Create(cardType);
-    if (motionCard_) {
-        std::string ip = cfg.getValue<std::string>("communication.motionCard.ip", "192.168.0.1");
-        // ConfigPage 将该端口绑定为文本(QLineEdit)，故按字符串读取再转换
-        std::string portStr = cfg.getValue<std::string>("communication.motionCard.port", "60000");
-        int port = 60000;
-        try { port = std::stoi(portStr); } catch (...) {}
-        // 网口卡需先注入本地(PC) IP，再建立连接
-        std::string pcIp = cfg.getValue<std::string>("communication.motionCard.pcIp", "192.168.0.200");
-        motionCard_->SetHost(pcIp, port);
-        bool ok = motionCard_->Connect(ip, port);
-        if (ok) {
-            SPDLOG_INFO("[HardwareManager] MotionCard '{}' connected", cardType);
-        } else {
-            SPDLOG_WARN("[HardwareManager] MotionCard '{}' connect FAILED: {}",
-                        cardType, motionCard_->GetLastError());
-        }
-    } else {
+    if (!motionCard_) {
         SPDLOG_INFO("[HardwareManager] MotionCard type '{}' not registered", cardType);
     }
+    ConnectMotionCard();
 
     // ---- 2. 创建舵机 (J2 / R) ----
     std::string servoType = cfg.getValue<std::string>("simulation.servoType", "SimServo");
@@ -235,7 +235,35 @@ bool HardwareManager::Initialize()
     connStateInited_ = true;
     emit connectionChanged();
     SPDLOG_INFO("[HardwareManager] Initialize complete");
-    return true;
+    // TR-093：返回值语义 = 硬件是否真正就绪。原实现无条件 return true，
+    // 使 UI 失败分支（AutoRunPage::OnInitClicked）成为死代码——未连接也报「初始化完成 / 硬件已连接」。
+    // ⚠「Initialize complete」日志行必须无条件打印：Sim 冒烟以此行为通过判据。
+    return IsMotionCardConnected() && IsServoConnected();
+}
+
+// 运动卡连接（TR-093）：抽出供 Initialize 首跑与「再次点初始化」重试共用。
+// 已连接则直接返回——BoPaiCard::Connect 内部 MC_Open 不先 Close，重复调用会重复开卡。
+void HardwareManager::ConnectMotionCard()
+{
+    if (!motionCard_ || motionCard_->IsConnected()) return;
+
+    auto& cfg = ConfigManager::instance();
+    const std::string cardType = cfg.getValue<std::string>("simulation.motionCardType", "SimCard");
+    const std::string ip       = cfg.getValue<std::string>("communication.motionCard.ip", "192.168.0.1");
+    // ConfigPage 将该端口绑定为文本(QLineEdit)，故按字符串读取再转换
+    const std::string portStr  = cfg.getValue<std::string>("communication.motionCard.port", "60000");
+    int port = 60000;
+    try { port = std::stoi(portStr); } catch (...) {}
+    // 网口卡需先注入本地(PC) IP，再建立连接
+    const std::string pcIp = cfg.getValue<std::string>("communication.motionCard.pcIp", "192.168.0.200");
+
+    motionCard_->SetHost(pcIp, port);
+    if (motionCard_->Connect(ip, port)) {
+        SPDLOG_INFO("[HardwareManager] MotionCard '{}' connected", cardType);
+    } else {
+        SPDLOG_WARN("[HardwareManager] MotionCard '{}' connect FAILED: {}",
+                    cardType, motionCard_->GetLastError());
+    }
 }
 
 bool HardwareManager::IsInitialized() const

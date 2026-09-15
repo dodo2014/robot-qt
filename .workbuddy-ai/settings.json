@@ -1,9 +1,6 @@
 {
   "permissions": {
     "deny": [
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(git commit --amend:*)",
       "Bash(git rebase:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
