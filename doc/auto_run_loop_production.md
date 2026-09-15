@@ -1,6 +1,6 @@
 # 自动运行循环生产（Loop Production）需求方案
 
-> 状态：**已实施（代码完成，待真机验证）**——2026-09-14 定稿并当日实施完毕，台账 **TR-091**（🟡 代码完成待真机）。Debug+Release 双编译 EXITCODE=0 + Sim 冒烟 `SMOKE_INIT_COMPLETE=True`；**Sim 无法自动驱动 UI 起停**，8.18–8.26 / 10.21–10.26 需真机执行。
+> 状态：**已实施并真机验证通过（2026-09-15）**——2026-09-14 定稿并当日实施完毕，台账 **TR-091**（🟢）；真机验证记录 **TR-094**（用例 8.18–8.26 / 10.21–10.26：8.18–8.26、10.21–10.23、10.26 🟢；**10.24/10.25 ⚪ 用例不可达**——自动模式导航白名单外 + 模式互锁，操作路径物理不存在，详见 `doc/test/real_machine_plan_phase3.md`）。Debug+Release 双编译 EXITCODE=0 + Sim 冒烟 `SMOKE_INIT_COMPLETE=True`。
 > 实施落点：`src/Logic/SequenceWorker.h/.cpp`（S1/S2/S2b/S2c）、`src/UI/AutoRunPage.h/.cpp`（S3/S4）、`src/main.cpp`（S8）；`MainWindow` / `ProcessPage` / `ManualControlPage` / `HardwareManager` **零改动**（S5 已确认）。**实施偏差一处**：`Impl` 成员命名为 `loopCfg` 而非本文档 §4.1 写的 `loop`（`Impl` 内已有局部 `QEventLoop loop`，同名触发 C4458），以 TR-091 为准。
 > 修订：**2026-09-14 定稿**（对齐 09-09/09-10 落地现状 + 用户裁决）——① §一 行号全线校正、补 TR-083/084/088/090 四条新事实；② §七 代码片段符号修正（原文引用了两个不存在的函数）+ `errorOccurred` 单点化定稿（D17 方案 A）；③ 台账编号由 TR-080 改为 **TR-091** 起；④ 用例编号口径统一（见 §十）；⑤ 新增 **§4.4「严格先抬 Z」保证链**（D19）；⑥ 用户裁决：不做常驻提示条（D13）、循环期间一键回零不可达（D14）、术语统一「回安全位」（D15）、日志保留 7 天（D16）、**循环控件先按一行实现、布局待定**（D18，**TR-072 方案已废弃**）。
 > 来源：真机验收阶段 8 用例 **8.4** —— 用户问「自动运行是单次运行？不是循环运行？」，核实为只跑单轮；用户裁决**需要连续循环生产**。
@@ -411,6 +411,8 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 
 > **不设「循环期间一键回零」用例（2026-09-14 用户裁决）**：一键回零按钮在手动控制页，循环期间模式互锁禁止切回手动页（TR-075）→ 该操作**物理不可达**，无需门禁也无需用例。TR-083 的 `PrepareHomingSession`（Paused 终止会话 / Running 拒绝回零）因此不落在循环路径上（详见 §六 #11）。
 > **10.23 的恢复链已按 TR-081 口径写明**（使能→回零→**手动**回安全位→切自动），与 phase3 阶段 10 同源；引用时注意本文档 10.x 与 phase3 10.x 为同一编号体系（非"独立编号"）。
+>
+> **真机执行结果（2026-09-15，台账 TR-094）**：8.18–8.26、10.21–10.23、10.26 🟢；**10.24/10.25 ⚪ 用例不可达**——自动模式导航白名单 `{自动运行, 视觉检测}` → 工艺流程页/设备配置页置灰，切手动又被模式互锁拒绝，操作路径物理不存在（同 10.12/TR-086 根因族、与 D14 同源；用户裁决标 ⚪ 不单开 TR）。实测记录未逐条留存日志串（用户口头确认通过，已在 phase3 实测记录块如实注明）。
 
 > phase3 第七节「测试记录」增一行「循环生产（8.18-8.26 / 10.21-10.26）」；工时 +0.5 天（实现 0.3 + 真机 0.2）。
 
@@ -428,7 +430,7 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 | S3 ✅ | 循环控件行 + `m_cycleLabel` + `OnCycleChanged` + 启动组装 LoopConfig + 两项门禁（未启用安全位拒绝 / 无限循环二次确认）+ `UpdateControlsEnabled` 内按 `!busy` 置灰（同方案下拉，与 `gate` 无关） | `src/UI/AutoRunPage.h/.cpp` | Sim：单轮=现状；N=3 计数与终态正确；运行中控件置灰 —— **已完成**（控件一行排布：`循环:` + 模式下拉 100×32 + 次数框 78×32 + 「回安全位」复选框 + 进度标签右对齐；`MainWindow` 最小尺寸 1200×700 下右侧面板约 462px，本行最小需求约 400px） |
 | S4 ✅ | 持久化（`production.loop.*` 读写，不 emit paramsChanged） | `src/UI/AutoRunPage.cpp` | 重启后控件保持上次选择；config.json 自动出现 `production` 节点 —— **已完成**（初始化用 `QSignalBlocker` 屏蔽三控件，避免旧 config 首次启动被回写平白生成 `production` 节点） |
 | S5 ✅ | 确认 `MainWindow` 零改动；跑 10.2/10.6/10.13 子集 | — | 无回归 —— **已完成**：`MainWindow`/`ProcessPage`/`ManualControlPage`/`HardwareManager` 确实零改动（10.2/10.6/10.13 子集待真机） |
-| S6 🟡 | Sim 全量冒烟（8.18-8.26 / 10.21-10.26 可仿真子集） | — | Sim 无相机：视觉相关跳过 —— **部分完成**：Sim 启动冒烟通过（SimCard/SimServo/SimAlgo/SimCamera 全正常 + `Initialize complete`）；**Sim 无法自动驱动 UI 起停**（沙箱内 `Start-Process` 被拦），计数/停止/暂停等交互用例需真机或人工点界面 |
+| S6 ✅ | Sim 全量冒烟（8.18-8.26 / 10.21-10.26 可仿真子集） | — | Sim 无相机：视觉相关跳过 —— Sim 启动冒烟通过（SimCard/SimServo/SimAlgo/SimCamera 全正常 + `Initialize complete`）；Sim 无法自动驱动 UI 起停（沙箱内 `Start-Process` 被拦）→ 交互用例已由**真机执行覆盖**（2026-09-15，TR-094：8.18–8.26 / 10.21–10.23、10.26 🟢，10.24/10.25 ⚪ 不可达） |
 | S7 ✅ | 文档回填。**2026-09-14 已完成**：phase3 阶段 8/10 追加用例（8.18–8.26 / 10.21–10.26）+ 编号口径更正 4 处（`TEST_RECORD.md` TR-089 / `AGENTS.md` 里程碑段 / `worklog 2026-09-09.md` / `worklog 2026-09-10.md`）+ 实施后追加 **TR-091** + `AGENTS.md` 记新需求 + `doc/architecture.md` 记 `cycleChanged`/`LoopConfig`/`errorOccurred` 单点化 + `doc/compile_guide.md` 补沙箱编译失败排查 | 7 个 md | 引用一律 `TR-###`；编号口径与 §十 一致 |
 | S8 ✅ | 日志保留：启动时清理 7 天前的 `log/creampuff_*.log`（§九 运维项；可独立提交） | `src/main.cpp` | 只删过期日期文件，当天/7 天内不动 —— **已完成并实测生效**：本次冒烟即删 29 个过期日期文件（cutoff 2026-09-07），`crash.txt` 与 7 天内文件未动，日志 `[Main] Log retention: removed 29 file(s) older than 7 days (cutoff 2026-09-07)` |
 
