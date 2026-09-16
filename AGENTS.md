@@ -54,7 +54,7 @@ SCARA 泡芙抓取机器人控制系统。Qt6 深色主题 HMI + 仿真/真机�
   cmake --build out\build\x64-Debug
   ```
 - **Run**: `out\build\x64-Debug\CreamPuffRobot.exe`
-- **Release**: root `build_release.bat` (relocatable via `%~dp0`, ASCII-only; builds Release + one-click packaging)
+- **Release**: root `build_release.bat` (relocatable via `%~dp0`, ASCII-only) — **build + one-click packaging（2026-09-16 补全打包步骤）**：build 成功后把可部署运行期文件集（exe + 顶层 `*.dll` + `config.json`/`process.json` + Qt 插件目录）复制到 **`out\dist\CreamPuffRobot\`** 并压成 **`out\dist\CreamPuffRobot_x64_Release.zip`**；刻意排除构建产物（`CMakeCache.txt`/`CMakeFiles/`/`vcpkg_installed/`/`src/`/`tests/`/`.qt/`/`*.pdb`/`*.lib`）。`TARGET` 非主程序或 `SKIP_PACKAGE=1` 时跳过打包。**该 dist 目录可直接整目录拷到任意机器运行**（日志落在 exe 旁 `log\`，见 Build 下方日志路径说明）。
 - **用户实际运行 Debug 版**（真机验证用 `out\build\x64-Debug\CreamPuffRobot.exe`）。改动代码后**务必同时编译 Debug + Release**，否则用户拿到的 exe 不含修复。编译前若 `LNK1168 无法写入 exe`，先结束正在运行的 `CreamPuffRobot.exe` 进程——**`out\smoke\build_debug.bat` 与根 `build_release.bat` 已内置 LNK1168 自动处理**（检测到 LNK1168 → `taskkill /IM CreamPuffRobot.exe /F` → 等 1s → 自动重编一次，无需手动干预）。CLI 编译（无需开 VS）：先 `cmd /c "call vcvars64.bat && ninja CreamPuffRobot"`（vcvars 在 `D:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\`，Debug 用 VS 自带 ninja，Release 用 `D:\Qt\Tools\Ninja\ninja.exe`）。
 - **Shell 注意（2026-08-31 踩坑）**：CLI 编译须在 **PowerShell** 执行（`cmd /c "call ""...vcvars64.bat"" >nul && ninja CreamPuffRobot"`，在 out\build\x64-Debug 下）；**Git Bash 直接调 `cmd //c` 会因引号嵌套/MSYS2 路径转换坏掉 vcvars 路径**（报 `'ommunity' 不是内部或外部命令`），勿用。现成编译脚本：`out\smoke\build_debug.bat`（可经 PowerShell `&` 调用）。**`.bat` 文件必须纯 ASCII**（含中文注释会被 cmd 按 GBK 解析成乱码命令，报 `'橀噺' 不是内部或外部命令`）；`.ps1` 若含中文须带 UTF-8 BOM（PowerShell 5.1 无 BOM 按 ANSI 解析）。
 - **沙箱编译方案（2026-09-01 落盘）**：完整权威参考见 **`doc/compile_guide.md`**——含工具链真实路径（MSVC `D:/Program Files/Microsoft Visual Studio/.../MSVC/14.51.36231`，**无 `(x86)`**；WinSDK `D:/Windows Kits/10` 10.0.26100.0；Qt `D:/Qt/6.11.1/msvc2022_64`）、vcvars64/build_release.bat 被 reg.exe 黑名单拦截时的手工 INCLUDE/LIB/PATH 构造 + ninja 内联编译命令（Debug/Release 通用）、LNK1168 处理、首次 cmake 配置、TARGET 切换、Release 冒烟变体。**勿再以"沙箱工具链缺失"误判**——工具链齐全，只是需要手工设环境变量。
@@ -165,7 +165,12 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
 - **QSS**: per-widget stylesheet with full `QPushButton { ... }` selector, never bare properties. `QSizePolicy::Ignored` for stretch participation
 - **Signals**: connected to lambdas that call `qDebug()` stubs until state machine is wired
 - **Naming**: PascalCase classes/methods, camelCase locals, `m_` for members, `QStringLiteral` for all UI strings
-- **spdlog**: `daily_file_sink_mt` at `PROJECT_SOURCE_DIR/log/creampuff.log`, 30-day retention, pattern `[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%P] %v`. `%P` is a custom flag (`RootStripFlag` in `src/main.cpp`) that strips the project-root prefix from `__FILE__`, e.g. `[src\HAL\HardwareManager.cpp:158]`; paths outside the project root stay absolute.
+- **spdlog**: `daily_file_sink_mt` at `<logDir>/creampuff.log`, pattern `[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%P] %v`。`%P` is a custom flag (`RootStripFlag` in `src/main.cpp`) that strips the project-root prefix from `__FILE__`, e.g. `[src\HAL\HardwareManager.cpp:158]`; paths outside the project root stay absolute。
+  - **日志目录判定（2026-09-16 改为便携优先，`src/main.cpp` `ResolveLogDir()`）**，优先级：① `CREAMPUFF_LOG_DIR` 环境变量（现场排障逃生门）→ ② **exe 所在目录位于编译期源码树 `PROJECT_SOURCE_DIR` 之下** → `PROJECT_SOURCE_DIR/log`（开发机行为，与改动前一致）→ ③ 否则 → **exe 旁 `log/`**（便携部署，整目录拷贝即用）→ ④ 兜底 `%APPDATA%/CreamPuffRobot/log`。
+  - **关键**：判定比较的是 **exe 的实际位置** 与烧进 exe 的源码路径字符串，**不是**「盘符存不存在」——所以目标机有无 `D:` 盘都会正确落到 exe 旁。开发机上 Debug/Release 仍共用 `D:\workspace\projects\CreamPuffRobot\log\creampuff_YYYY-MM-DD.log`（daily sink 只按日期命名，无 build 标识，两版混流）。
+  - **不可改成「exe 旁一律优先」**：工程根 `log/` 被 `out\smoke\sim_smoke.ps1:29`（`$root` 硬编码 + 读 `$root\log\creampuff_YYYY-MM-DD.log` 判 `SMOKE_INIT_COMPLETE`）、`doc/compile_guide.md:103/116`、`doc/test/*.md` 硬依赖，改了会造成冒烟**假失败**。
+  - 日志保留 7 天（D16）：启动时 `PurgeOldLogs(logDir, 7)`，只匹配 `^creampuff_YYYY-MM-DD\.log$` 且只删早于 cutoff 的；`crash.txt` 与其它文件不碰。spdlog 自带的 `max_files=30` **实测未生效**（曾积到 35 个文件），故必须自己清。
+  - `crash.txt`（`CrashHandler`）与 `SymInitialize` 符号路径**不再硬编码**（2026-09-16 修）：路径由 `main()` 在日志目录判定后以窄字符预填进 `g_crashLogPath`/`g_symSearchPath`，崩溃上下文不触碰 Qt；`main()` 完成前崩溃则退回当前目录的相对路径。
   - **统一用 `SPDLOG_INFO/WARN/ERROR/CRITICAL` 宏，禁止 `spdlog::info(...)` 等函数式调用**：函数式调用不带 source location，`%P` 会兜底成 `[unknown:0]`（曾全库 67 处误用）。宏默认带上 `__FILE__:__LINE__`
 
 ### C++ & Qt Rules (Strict Constraints)

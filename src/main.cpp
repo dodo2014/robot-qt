@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDate>
 #include <QFile>
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <iterator>
 #include <memory>
 
@@ -44,16 +46,26 @@ static BOOL WINAPI ConsoleSignalHandler(DWORD ctrlType)
 
 extern "C" USHORT __stdcall RtlCaptureStackBackTrace(ULONG, ULONG, PVOID*, PULONG);
 
+// 崩溃转储路径与符号搜索路径：由 main() 在日志目录判定完成后以**窄字符**预填。
+// 为何不在这里调 Qt：CrashHandler 运行在异常上下文（可能已发生堆损坏），
+// QString/QDir 的分配与文件系统调用都有二次崩溃风险，故此处只读静态缓冲。
+static char g_crashLogPath[1024] = {0};
+static char g_symSearchPath[1024] = {0};
+
 // 临时崩溃诊断：记录未处理异常地址与调用栈（带符号解析）
 static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep)
 {
     try {
-        std::ofstream of("D:/workspace/projects/CreamPuffRobot/log/crash.txt", std::ios::app);
+        // 未预填（main() 完成前就崩溃）时退回当前工作目录的相对路径，不再使用硬编码绝对路径。
+        const char* crashPath = (g_crashLogPath[0] != '\0') ? g_crashLogPath : "crash.txt";
+        std::ofstream of(crashPath, std::ios::app);
         void* frames[48] = {};
         USHORT n = RtlCaptureStackBackTrace(0, 48, frames, nullptr);
         HANDLE proc = GetCurrentProcess();
         SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
-        if (!SymInitialize(proc, "D:/workspace/projects/CreamPuffRobot/out/build/x64-Debug", TRUE))
+        // 符号搜索路径 = exe 所在目录（Debug 版 pdb 与 exe 同级；Release 无 pdb，退化为仅模块名）。
+        const char* symPath = (g_symSearchPath[0] != '\0') ? g_symSearchPath : ".";
+        if (!SymInitialize(proc, symPath, TRUE))
             of << "(SymInitialize failed " << GetLastError() << ")\n";
 
         auto dumpAddr = [&](const char* tag, void* p) {
@@ -176,6 +188,72 @@ static void PurgeOldLogs(const QString& logDir, int keepDays)
     }
 }
 
+// 日志目录判定（2026-09-16 改为便携优先，取代原「工程源码 log 目录一律优先」）：
+//   0) 环境变量 CREAMPUFF_LOG_DIR 非空且可创建 → 直接用（现场排障的逃生门，优先级最高）
+//   1) exe 所在目录位于编译期源码树 PROJECT_SOURCE_DIR 之下 → 工程根 log/
+//      —— 开发机行为，与改动前完全一致。**不可去掉这一支**：sim_smoke.ps1 与
+//      doc/test/*.md、doc/compile_guide.md 均以工程根 log/ 为判定依据。
+//   2) 否则 → exe 旁 log/（便携部署：整个输出目录拷到任意机器即可，不受盘符影响）
+//   3) 都不可写 → %APPDATA%/CreamPuffRobot/log
+// 关键：规则 1 比较的是 **exe 的实际位置** 与烧进 exe 的源码路径字符串，而不是
+// 「D: 盘存不存在」——所以目标机有无 D: 盘都会正确落到 exe 旁。
+// reasonOut 回传命中的规则，便于现场按日志定位。
+static QString ResolveLogDir(QString* reasonOut = nullptr)
+{
+    auto setReason = [reasonOut](const char* r) {
+        if (reasonOut) *reasonOut = QString::fromLatin1(r);
+    };
+
+    // 0) 环境变量覆盖
+    const QString overrideDir = qEnvironmentVariable("CREAMPUFF_LOG_DIR").trimmed();
+    if (!overrideDir.isEmpty())
+    {
+        if (QDir().mkpath(overrideDir))
+        {
+            setReason("env CREAMPUFF_LOG_DIR");
+            return QDir::cleanPath(overrideDir);
+        }
+        SPDLOG_WARN("[Main] CREAMPUFF_LOG_DIR not creatable, ignored: {}",
+                    overrideDir.toStdString());
+    }
+
+    // 1) exe 在源码树内 → 工程根 log（开发机）
+    const QString exeDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    const QString srcDir = QDir::cleanPath(QString::fromUtf8(PROJECT_SOURCE_DIR));
+    const QString srcLog = srcDir + QStringLiteral("/log");
+
+    const QString exeNorm = QDir::fromNativeSeparators(exeDir).toLower();
+    const QString srcNorm = QDir::fromNativeSeparators(srcDir).toLower();
+    if (exeNorm == srcNorm || exeNorm.startsWith(srcNorm + QLatin1Char('/')))
+    {
+        if (QDir().mkpath(srcLog))
+        {
+            setReason("source tree");
+            return QDir::cleanPath(srcLog);
+        }
+    }
+
+    // 2) exe 旁 log（便携部署）
+    const QString exeLog = exeDir + QStringLiteral("/log");
+    if (QDir().mkpath(exeLog))
+    {
+        setReason("next to exe");
+        return QDir::cleanPath(exeLog);
+    }
+
+    // 3) 用户数据目录
+    const QString appDataLog =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/log");
+    if (QDir().mkpath(appDataLog))
+    {
+        setReason("appdata");
+        return QDir::cleanPath(appDataLog);
+    }
+
+    setReason("all candidates failed, using exe dir");
+    return exeLog;
+}
+
 int main(int argc, char* argv[])
 {
     SetUnhandledExceptionFilter(CrashHandler);
@@ -188,24 +266,19 @@ int main(int argc, char* argv[])
     app.setApplicationVersion("1.0.0");
     app.setStyle(QStyleFactory::create("Fusion"));
 
-    // spdlog — daily file logger
-    // 日志目录优先级：工程源码 log 目录(开发机) > exe 旁 log(便携部署) > %APPDATA%
-    QString logDir;
-    const QStringList candidates = {
-        QStringLiteral(PROJECT_SOURCE_DIR "/log"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/log"),
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/log"),
-    };
-    for (const auto& c : candidates)
+    // spdlog — daily file logger（判定规则见 ResolveLogDir）
+    QString logReason;
+    const QString logDir = ResolveLogDir(&logReason);
+
+    // 预填崩溃转储与符号路径（窄字符，供 CrashHandler 在异常上下文安全使用）
     {
-        if (QDir().mkpath(c))
-        {
-            logDir = c;
-            break;
-        }
+        const QByteArray crashPath =
+            QDir::toNativeSeparators(logDir + QStringLiteral("/crash.txt")).toLocal8Bit();
+        const QByteArray exeDir =
+            QDir::toNativeSeparators(QCoreApplication::applicationDirPath()).toLocal8Bit();
+        std::snprintf(g_crashLogPath, sizeof(g_crashLogPath), "%s", crashPath.constData());
+        std::snprintf(g_symSearchPath, sizeof(g_symSearchPath), "%s", exeDir.constData());
     }
-    if (logDir.isEmpty())
-        logDir = candidates.front();
 
     const auto logPath = logDir + QStringLiteral("/creampuff.log");
     try
@@ -227,7 +300,8 @@ int main(int argc, char* argv[])
         spdlog::flush_on(spdlog::level::debug);
         spdlog::flush_every(std::chrono::seconds(1));
 
-        SPDLOG_INFO("[Main] Log initialized: {}", logPath.toStdString());
+        SPDLOG_INFO("[Main] Log initialized: {} (rule: {})",
+                    logPath.toStdString(), logReason.toStdString());
     }
     catch (...)
     {
