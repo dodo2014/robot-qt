@@ -2,8 +2,11 @@
 
 #include <QObject>
 
+#include <vector>
+
+#include "ICamera.h"
+
 class QThread;
-class ICamera;
 class CameraCaptureWorker;
 struct CameraFrame;
 
@@ -19,6 +22,9 @@ public:
     ~CameraManager() override;
 
     void SetCamera(ICamera* camera);
+
+    /// 枚举可用设备（P3 / S2）。空相机实例时返回空列表。
+    std::vector<CameraDeviceInfo> EnumerateDevices();
 
     bool Open(int width, int height, double fps);
     void Close();

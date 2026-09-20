@@ -83,7 +83,7 @@ signals:
 | 单步·执行中 | Running | None | true | false |
 | 单步·等待 NextStep | Paused | **Step** | true | **true** |
 | 用户暂停 | Paused | **User** | – | false |
-| 单动作会话 | Running | None | false(内部清) | false | **IsSingleActionSession=true** |
+| 单动作会话 | Running | None | false(内部清) | false（另 **IsSingleActionSession=true**） |
 | 故障 | Fault | None | – | false |
 
 单步按钮可点的**权威条件**：`state==Paused && reason==Step`（比字符串更强，且守 D2）。`Running` 分支按 `IsSingleActionSession()` 还原"● 执行选中动作"文案。

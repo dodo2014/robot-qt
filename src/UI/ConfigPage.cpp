@@ -1,5 +1,6 @@
-#include "ConfigPage.h"
+﻿#include "ConfigPage.h"
 #include "Config/ConfigManager.h"
+#include "Config/ConfigPaths.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -20,8 +21,6 @@
 #include <QListWidget>
 #include <QDebug>
 #include <QMessageBox>
-#include <QCoreApplication>
-#include <QFileInfo>
 
 #include <vector>
 #include <algorithm>
@@ -49,12 +48,8 @@ static double dVal(const char* path, double fallback = 0.0)
     catch (...) { return fallback; }
 }
 
-static int iVal(const char* path, int fallback = 0)
-{
-    auto& cfg = ConfigManager::instance();
-    try { return cfg.getValue<int>(path, fallback); }
-    catch (...) { return fallback; }
-}
+// 注：原有的 iVal() 已删除（2026-09-20，P1 附带清理）。它在 HEAD 中唯一的引用点是
+// bindCombo()（同样已删），整条链路为死代码；删除后不再产生 C4505 警告。
 
 // ---------------------------------------------------------------------------
 ConfigPage::ConfigPage(QWidget* parent)
@@ -81,76 +76,52 @@ void ConfigPage::RefreshSafePosFields()
     }
 }
 
+void ConfigPage::RefreshVisionFields()
+{
+    for (const auto& f : visionInputs_) {
+        if (!f.edit) continue;
+        // setText 不触发 editingFinished（只触发 textChanged），不会反向写入 config
+        f.edit->setText(QString::number(dVal(f.path.constData(), f.fallback)));
+    }
+}
+
 void ConfigPage::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     RefreshSafePosFields();
+    RefreshVisionFields();
 }
 
 // ---------------------------------------------------------------------------
 //  Try to find & load config.json
+//
+//  实现已收敛到 ConfigPaths::ensureConfigLoaded()（全项目唯一一份）——
+//  本文件原先与此前 HardwareManager 内那份逐字重复，见 doc/config_ownership_plan.md 的 C5。
 // ---------------------------------------------------------------------------
-static void ensureConfigLoaded()
-{
-    auto& cfg = ConfigManager::instance();
-    if (!cfg.filePath().isEmpty() && QFileInfo::exists(cfg.filePath()))
-        return; // already loaded
-
-    QStringList candidates = {
-#ifdef PROJECT_SOURCE_DIR
-        QString::fromUtf8(PROJECT_SOURCE_DIR) + QStringLiteral("/config/config.json"),
-#endif
-        QCoreApplication::applicationDirPath() + QStringLiteral("/config.json"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/../config/config.json"),
-    };
-
-    for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
-            cfg.load(path);
-            return;
-        }
-    }
-    qWarning() << "[ConfigPage] No config.json found in any candidate path";
-    SPDLOG_INFO("[ConfigPage] No config.json found in any candidate path");
-}
 
 // ---------------------------------------------------------------------------
 //  Tab utility: auto-save a QLineEdit -> config path (on editingFinished)
 // ---------------------------------------------------------------------------
 static void bindLineEdit(QLineEdit* edit, const char* path)
 {
-    ensureConfigLoaded();
+    ConfigPaths::ensureConfigLoaded();
     edit->setText(sVal(path));
     QObject::connect(edit, &QLineEdit::editingFinished, [edit, p = std::string(path)]() {
         ConfigManager::instance().set(p, edit->text().toStdString());
     });
 }
 
-static void bindDoubleSpin(QDoubleSpinBox* spin, const char* path, double min, double max, double def)
-{
-    ensureConfigLoaded();
-    spin->setRange(min, max);
-    spin->setValue(dVal(path, def));
-    QObject::connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [p = std::string(path)](double v) {
-        ConfigManager::instance().set(p, v);
-    });
-}
-
-static void bindCombo(QComboBox* combo, const char* path, int def = 0)
-{
-    ensureConfigLoaded();
-    combo->setCurrentIndex(iVal(path, def));
-    QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), [p = std::string(path)](int idx) {
-        ConfigManager::instance().set(p, idx);
-    });
-}
+// 注：原有的 bindDoubleSpin / bindCombo 两个 static 辅助函数已删除（2026-09-20，P1 附带清理）。
+// 二者自 HEAD 起即无任何调用点——本页的 spin / combo 一律用文件内的 makeDoubleSpin /
+// makeCombo 局部 lambda 自行构造并直连 ConfigManager，属死代码；且因内部链接，
+// 长期稳定产生两条 C4505「未引用函数」警告，会掩盖真正的新警告。
 
 // ===========================================================================
 //  SetupUI
 // ===========================================================================
 void ConfigPage::SetupUI()
 {
-    ensureConfigLoaded();
+    ConfigPaths::ensureConfigLoaded();
 
     setStyleSheet("background: #262c34;");
 
@@ -563,6 +534,7 @@ QWidget* ConfigPage::CreateTab3Vision()
             bool ok = false; double v = input->text().toDouble(&ok);
             if (ok) ConfigManager::instance().set("vision.confidenceThreshold", v);
         });
+        visionInputs_.push_back({ input, QByteArrayLiteral("vision.confidenceThreshold"), 0.85 });
         rl->addWidget(input);
         rl->addStretch();
         layout->addWidget(row);
@@ -582,6 +554,7 @@ QWidget* ConfigPage::CreateTab3Vision()
             bool ok = false; double v = minInput->text().toDouble(&ok);
             if (ok) ConfigManager::instance().set("vision.depthZMin", v);
         });
+        visionInputs_.push_back({ minInput, QByteArrayLiteral("vision.depthZMin"), 10.0 });
         rl->addWidget(minInput);
 
         rl->addWidget(makeLabel(QStringLiteral("Z max")));
@@ -591,6 +564,7 @@ QWidget* ConfigPage::CreateTab3Vision()
             bool ok = false; double v = maxInput->text().toDouble(&ok);
             if (ok) ConfigManager::instance().set("vision.depthZMax", v);
         });
+        visionInputs_.push_back({ maxInput, QByteArrayLiteral("vision.depthZMax"), 500.0 });
         rl->addWidget(maxInput);
 
         rl->addStretch();

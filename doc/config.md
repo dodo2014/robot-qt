@@ -9,7 +9,7 @@
 | 键 | 类型 | 对应界面 Tab |
 |---|---|---|
 | `communication` | object | 通信与连接 |
-| `simulation` | object | 硬件类型选择 (仿真/真机) |
+| `simulation` | object | **无界面入口**（只能手改本文件，见下） |
 | `kinematics` | object | 运动学参数 |
 | `vision` | object | 视觉与工艺参数 |
 | `tcpCalibration` | object | TCP与标定 |
@@ -37,6 +37,9 @@
 
 **当前配置**（`config/config.json`）：`motionCardType=Bopai`、`servoType=XRServo`、`cameraType=SimCamera`、`algorithmType=SimAlgo`、`enabled=true`（真机模式）。
 
+> ⚠ **本段无界面写入口**（2026-09-18 核实，2026-09-20 P1 复核）：全库对 `simulation.*` 只有读点（`HardwareManager.cpp:105,113,153,168,236`），**没有任何 `ConfigManager::set()` 调用**。`ConfigPage.cpp` 实际只有 5 个标签页（通信与连接 / 运动学参数 / 视觉与工艺参数 / TCP与标定 / 电控与映射），**不存在「硬件类型选择 (仿真/真机)」标签页**。要切换仿真/真机，只能手改 `config/config.json`。
+> ~~另注：`CameraManager.cpp:43` 读取的 `simulation.cameraDeviceId` 在本文件中不存在，永远走硬编码默认值 `"CAM-SIM-001"`。~~ **✅ 已于 P1（C2，2026-09-20）修复**：该读取已删除，相机设备标识收敛为单一键 `communication.camera.sn`（`CameraManager.cpp:50` 读；`ConfigPage.cpp` 与视觉检测页写）。详见 `doc/config_ownership_plan.md` §3.4 / C2 / C4。
+
 ---
 
 ## communication — 通信与连接
@@ -56,11 +59,27 @@ communication
 │   ├── minAngle 0.0               最小角度 (°)
 │   ├── maxAngle 180.0/120.0       最大角度 (°)
 │   └── speed    50.0              运行速度 (°/s)
-└── camera
-    └── sn       "336L"            相机序列号
+└── camera                       相机通信与流参数（P3 / 2026-09-20 补齐，见 doc/camera_integration_plan.md §六）
+    ├── sn             "336L"    相机序列号（设备选择唯一键）
+    ├── colorWidth     1280      彩色流宽（常用档 1280×720，决策 7）
+    ├── colorHeight    720       彩色流高
+    ├── colorFps       30        彩色流帧率
+    ├── colorFormat    "MJPG"    彩色格式首选值（"MJPG"/"YUYV"/"RGB"；空串=用实现内置尝试队列）
+    ├── depthWidth     848       深度流宽（常用档 848×480）
+    ├── depthHeight    480       深度流高
+    ├── depthFps       30        深度流帧率
+    ├── depthFormat    "Y16"     深度格式
+    ├── d2cAlign       "SW"      D2C 对齐："SW"（软对齐，高分辨率必须）/ "HW"（仅 640×480+848×480 档）/ "OFF"
+    └── autoExposure   true      自动曝光（本版固定 true，曝光控件已移除——决策 4）
 ```
 
 > `motionCard.port`、`servo.baudRate`、`camera.sn` 均为字符串，配置界面直接以文本读写。
+
+> **键归属（P1 C4 / P3 S0 统一）**：相机**选型**在 `simulation.cameraType`（与 `motionCardType` / `servoType` 同族）；
+> 相机**通信与流参数**全部归 `communication.camera.*`。幻影键 `simulation.cameraDeviceId` 与
+> `vision.frameWidth` / `frameHeight` / `frameFps` 的读取**已删除**（这些键在 `config.json` 中本就不存在）。
+> 读取点集中在 `CameraManager::BuildStreamConfig()`（`CameraManager.cpp`）——**相机实现自己不读 config**，
+> 沿用「HAL 设备实现不主动读配置」的既有边界（与 `BoPaiCard` / `XRServo` 一致）。
 
 ---
 
@@ -113,8 +132,17 @@ kinematics
 vision
 ├── confidenceThreshold  0.85      识别置信度阈值
 ├── depthZMin            6.0       深度过滤 Z 最小值 (mm)
-└── depthZMax            496.0     深度过滤 Z 最大值 (mm)
+├── depthZMax            496.0     深度过滤 Z 最大值 (mm)
+└── templatePath         ""        算法模板配置路径（可选；P4 新增）
 ```
+
+> **写入口与生效状态（2026-09-20，P1 核实 + P4 更新）**：
+> - `confidenceThreshold` — **P1 起真正生效**：`SimAlgo::Detect()` 按该值过滤掉 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。
+> - `depthZMin` / `depthZMax` — 由 `SimAlgo::Detect` **每次检测实时读**并做深度筛选 → 生效。
+> - `templatePath` — **P4 新增**，写入口＝视觉检测页「模板配置」的「浏览…」（`VisionTestPage::OnBrowseTemplate`）。**⚠ 目前无读点**：`IPuffAlgorithm` 只有 `Detect/LocateBest/LoadConfig`，**没有模板参数**，故本键目前只做「入口 + 持久化」，由将来的算法实现消费（需求原文即写「可选填；留空则用算法内置默认值」）。**不要误以为它已在工作**。
+> - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。改后**无需重启**：`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()` 实时读。设备配置页的「视觉与工艺参数」标签页仍保留写入口。
+> - **`exposure` 键已随 P4 删除**（决策 4：本版固定自动曝光）。它此前唯一的写入口是视觉页的「曝光」输入框，该控件移除后**全库无任何读点**，属「看起来在工作、实际不工作」的死键。相机曝光由 SDK 自动曝光控制（`communication.camera.autoExposure`，见 `camera_integration_plan.md` §六）。注意与**动作级 `ActionData.exposure`**（挤出动作的参数，`doc/process.md`）区分——那是另一个东西。
+> - 上述键**均无全局参数与动作级参数的覆盖关系实现**，动作级覆盖规则的落地属 P5。
 
 ---
 

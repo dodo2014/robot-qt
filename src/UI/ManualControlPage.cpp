@@ -17,6 +17,7 @@
 #include <QFont>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QShowEvent>
 #include <QMessageBox>
 #include <QDebug>
 #include <QStringList>
@@ -75,7 +76,15 @@ void ManualControlPage::OnConnectionChanged()
     connStatusLabel_->setStyleSheet(
         QStringLiteral("font-size: 13px; font-weight: 600; background: transparent; border: none; padding: 0 6px;"));
 
-    // 从配置回填每轴点动速度（Initialize 完成后 connectionChanged 会再次触发）
+    RefreshJogSpeeds();
+}
+
+void ManualControlPage::RefreshJogSpeeds()
+{
+    // 从配置回填每轴点动速度。
+    // `axes.*.jogSpeed` 有两个写入口（本页 + 「设备配置」页的「电控与映射」标签页，C3），
+    // 故除连接状态变化外，每次页面显示时也要重新回填 —— 否则在配置页改完点动速度
+    // 切回本页看到的仍是旧值，误触 valueChanged 还会把旧值写回 config。
     for (int i = 0; i < speedSpins_.size(); ++i) {
         if (i >= static_cast<int>(LogicalAxis::Count)) break;
         double jogSpeed = HardwareManager::instance().GetJogSpeed(static_cast<LogicalAxis>(i));
@@ -85,6 +94,12 @@ void ManualControlPage::OnConnectionChanged()
         speedSpins_[i]->setValue(jogSpeed);
         speedSpins_[i]->blockSignals(false);
     }
+}
+
+void ManualControlPage::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    RefreshJogSpeeds();
 }
 
 void ManualControlPage::OnEnableStateChanged()

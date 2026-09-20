@@ -6,12 +6,11 @@
 #include "AxisConverter.h"
 #include "AxisConfigService.h"
 #include "ConfigManager.h"
+#include "ConfigPaths.h"
 #include "CameraManager.h"
 #include "CameraCaptureWorker.h"
 #include "SimCard.h"
 
-#include <QCoreApplication>
-#include <QFileInfo>
 #include <QThread>
 
 #include <spdlog/spdlog.h>
@@ -24,29 +23,6 @@ namespace {
 const char* kAxisConfigKeys[] = {
     "Axis_J1", "Axis_J2", "Axis_Z", "Axis_R", "Axis_Gripper", "Axis_Extruder"
 };
-
-// 确保 ConfigManager 已加载 config.json（与 ConfigPage 相同候选路径）
-void EnsureConfigLoaded()
-{
-    auto& cfg = ConfigManager::instance();
-    if (!cfg.filePath().isEmpty() && QFileInfo::exists(cfg.filePath()))
-        return;
-
-    QStringList candidates = {
-#ifdef PROJECT_SOURCE_DIR
-        QString::fromUtf8(PROJECT_SOURCE_DIR) + QStringLiteral("/config/config.json"),
-#endif
-        QCoreApplication::applicationDirPath() + QStringLiteral("/config.json"),
-        QCoreApplication::applicationDirPath() + QStringLiteral("/../config/config.json"),
-    };
-    for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
-            cfg.load(path);
-            return;
-        }
-    }
-    SPDLOG_INFO("[HardwareManager] No config.json found, using defaults");
-}
 
 // 轴异常状态的可读描述（用于日志落盘；UI 侧各自组装 tooltip）
 QString DescribeAxisStatus(const MotorStatus& s)
@@ -122,7 +98,7 @@ bool HardwareManager::Initialize()
 
     SPDLOG_INFO("[HardwareManager] Initialize BEGIN");
 
-    EnsureConfigLoaded();
+    ConfigPaths::ensureConfigLoaded();
     auto& cfg = ConfigManager::instance();
 
     // ---- 1. 创建运动控制卡 ----
@@ -179,9 +155,14 @@ bool HardwareManager::Initialize()
     if (!algorithm_) {
         SPDLOG_WARN("[HardwareManager] Algorithm type '{}' not registered", algoType);
     } else {
-        std::string jsonCfg = "{\"confidenceThreshold\":" +
+        // 把当前阈值作为算法的**兜底默认值**喂进去（C1）。算法侧运行时仍以
+        // config.json 的实时值为准，所以此处喂一次快照即可；改动阈值无需重启。
+        // 原实现喂进去的是死数据 —— `SimAlgo::LoadConfig` 当时从不解析。
+        const std::string jsonCfg = "{\"confidenceThreshold\":" +
             std::to_string(cfg.getValue<double>("vision.confidenceThreshold", 0.85)) + "}";
-        algorithm_->LoadConfig(jsonCfg);
+        if (!algorithm_->LoadConfig(jsonCfg)) {
+            SPDLOG_WARN("[HardwareManager] Algorithm '{}' rejected its config", algoType);
+        }
     }
 
     std::string camType = cfg.getValue<std::string>("simulation.cameraType", "SimCamera");
@@ -190,10 +171,14 @@ bool HardwareManager::Initialize()
         SPDLOG_WARN("[HardwareManager] Camera type '{}' not registered", camType);
     } else {
         cameraManager_->SetCamera(camera_.get());
-        int    w   = cfg.getValue<int>("vision.frameWidth", 640);
-        int    h   = cfg.getValue<int>("vision.frameHeight", 480);
-        double fps = cfg.getValue<double>("vision.frameFps", 30.0);
-        CameraOpen(w, h, fps);
+        // 启动时开相机不指定分辨率/帧率：传 0 = 「由相机实现选默认」，
+        // 与 `CameraManager::StartStream` 的 `Open(0, 0, 0)` 同一约定。
+        //
+        // 原实现读 `vision.frameWidth` / `frameHeight` / `frameFps` —— 这三个键在
+        // `config.json` 中**根本不存在**，于是永远走硬编码默认值 640/480/30（C4）。
+        // 相机流参数的权威归属见 `doc/camera_integration_plan.md` §四「统一配置键（M1）」：
+        // 流参数归 `communication.camera.*`，由 **P3** 落地；此处不再保留幽灵键读取。
+        CameraOpen(0, 0, 0);
     }
 
     // ---- 4. 每轴换算参数喂给卡与 AxisConverter ----
@@ -316,6 +301,118 @@ void HardwareManager::StopCameraStream()
 bool HardwareManager::IsCameraStreaming() const
 {
     return cameraManager_ && cameraManager_->IsStreaming();
+}
+
+std::vector<CameraDeviceInfo> HardwareManager::EnumerateCameras()
+{
+    if (!cameraManager_) return {};
+    return cameraManager_->EnumerateDevices();
+}
+
+std::vector<CameraStreamProfile> HardwareManager::GetCameraStreamProfiles(bool isDepth)
+{
+    if (!camera_) return {};
+    return camera_->GetStreamProfiles(isDepth);
+}
+
+CameraLinkState HardwareManager::GetCameraLinkState() const
+{
+    return camera_ ? camera_->GetLinkState() : CameraLinkState::Disconnected;
+}
+
+// ---------------------------------------------------------------------------
+// 相机流持有者集合（P3 / 决策 9，doc/camera_integration_plan.md §2.1）
+//
+// 流是**全局共享资源**，不是某个页面的私有物。「谁启动谁停止」会让视觉页与
+// 自动运行互相踩：自动运行结束停流 → 视觉页黑屏；视觉页点「停止采集」→
+// 打断正在执行的 ExecuteVision。故改为持有者集合：**流运行 ⟺ 集合非空**。
+// ---------------------------------------------------------------------------
+namespace {
+std::string HoldersToString(const std::set<std::string>& s)
+{
+    std::string out;
+    for (const auto& h : s) {
+        if (!out.empty()) out += ",";
+        out += h;
+    }
+    return out.empty() ? "-" : out;
+}
+}  // namespace
+
+bool HardwareManager::AcquireCamera(const std::string& owner)
+{
+    if (owner.empty()) {
+        SPDLOG_WARN("[HardwareManager] AcquireCamera 拒绝空持有者名");
+        return false;
+    }
+    const bool wasEmpty = cameraHolders_.empty();
+    cameraHolders_.insert(owner);   // set：同一持有者重复 acquire 幂等，不叠加
+
+    if (!wasEmpty) {
+        // 流已在运行（别的持有者开着）→ 只登记，不重复启流
+        SPDLOG_INFO("[HardwareManager] Camera acquire '{}' (流已在运行, holders={})",
+                    owner, HoldersToString(cameraHolders_));
+        emit cameraHoldersChanged();
+        return true;
+    }
+
+    // 空 → 非空：真正启流。fps 传 0 = 「用 config 的 communication.camera.colorFps」
+    const bool ok = StartCameraStream(0);
+    SPDLOG_INFO("[HardwareManager] Camera acquire '{}' → 启流 {} (holders={})",
+                owner, ok ? "OK" : "FAILED", HoldersToString(cameraHolders_));
+    emit cameraHoldersChanged();
+    return ok;
+}
+
+bool HardwareManager::ReleaseCamera(const std::string& owner)
+{
+    const auto erased = cameraHolders_.erase(owner);
+    if (erased == 0) {
+        SPDLOG_INFO("[HardwareManager] Camera release '{}' — 本未持有，忽略 (holders={})",
+                    owner, HoldersToString(cameraHolders_));
+        return false;
+    }
+
+    if (!cameraHolders_.empty()) {
+        // 还有别的持有者（典型：自动运行仍在用）→ **不真停**，只登记
+        SPDLOG_INFO("[HardwareManager] Camera release '{}' — 自动运行/其他持有者仍在使用相机，"
+                    "流保持运行 (holders={})", owner, HoldersToString(cameraHolders_));
+        emit cameraHoldersChanged();
+        return true;
+    }
+
+    // 非空 → 空：真正停流
+    StopCameraStream();
+    SPDLOG_INFO("[HardwareManager] Camera release '{}' → 停流 (holders 已空)", owner);
+    emit cameraHoldersChanged();
+    return true;
+}
+
+// 相机链路状态边沿检测（**降频** ≈ 500 ms）。
+// **只做广播，不做恢复**：分级恢复 L1/L2/L3 全在 OrbbecCamera 内部
+// （doc/camera_integration_plan.md §4.2）——恢复动作涉及 sleep 数秒，放在 50ms
+// 的 PollTick 里会卡住 UI 线程。
+void HardwareManager::PollCamera()
+{
+    if (!camera_) return;
+
+    // 降频：50ms tick × 10 = 500ms
+    if (++cameraPollCounter_ < 10) return;
+    cameraPollCounter_ = 0;
+
+    const CameraLinkState st = camera_->GetLinkState();
+    // Unknown = 该实现不提供链路状态（SimCamera）→ 不参与边沿检测，Sim 模式零变化
+    if (st == CameraLinkState::Unknown) return;
+
+    if (!cameraStateInited_ || st != lastCameraState_) {
+        const bool first = !cameraStateInited_;
+        lastCameraState_ = st;
+        cameraStateInited_ = true;
+        if (first) return;   // 首次只建基线，不广播（避免启动时误报一次状态跳变）
+        SPDLOG_INFO("[HardwareManager] camera link state: {}",
+                    static_cast<int>(st));
+        emit cameraStateChanged(st);
+    }
 }
 
 void HardwareManager::LoadAxisConfigsFromConfig()
@@ -1100,6 +1197,10 @@ void HardwareManager::JogTick()
 // ============================================================
 void HardwareManager::PollTick()
 {
+    // 相机链路状态：与运动卡/舵机**无关**，必须在下面的早退之前
+    // （P3 新增；降频 500ms，只做边沿广播，恢复动作在 OrbbecCamera 内部）
+    PollCamera();
+
     if (!motionCard_ && !servoJ2_ && !servoJ3_) return;
 
     CheckAxisBusy();   // 到位后发 axisMoveFinished（UI 恢复 Go 按钮）

@@ -58,8 +58,9 @@ rem ============================================================
 rem  Packaging stage (added 2026-09-16)
 rem  Collects exactly the deployable runtime set from the build dir:
 rem    CreamPuffRobot.exe + top-level *.dll (Qt6 / MSVC runtime /
-rem    MultiCard SDK / OpenCV / spdlog / fmt) + config.json +
-rem    process.json + the Qt plugin folders.
+rem    MultiCard SDK / Orbbec SDK / OpenCV / spdlog / fmt) +
+rem    extensions\ (Orbbec plugin folder, when USE_ORBBEC=ON) +
+rem    config.json + process.json + the Qt plugin folders.
 rem  Deliberately EXCLUDED (build-only artefacts): CMakeCache.txt,
 rem    CMakeFiles\, build.ninja, vcpkg_installed\, src\, tests\,
 rem    CreamPuffRobot_autogen\, .qt\, *.pdb, *.lib.
@@ -81,8 +82,14 @@ if not exist "%DIST%" goto :pkg_err_create
 
 rem --- main binary ---
 copy /Y "%BUILD%\CreamPuffRobot.exe" "%DIST%\" >nul
-rem --- runtime DLLs: Qt6 + MSVC runtime + MultiCard SDK + OpenCV + spdlog/fmt ---
+rem --- runtime DLLs: Qt6 + MSVC runtime + MultiCard SDK + Orbbec SDK + OpenCV + spdlog/fmt ---
 copy /Y "%BUILD%\*.dll" "%DIST%\" >nul
+rem --- Orbbec SDK plugin folder (only present when USE_ORBBEC=ON). depthengine /
+rem     filters / frameprocessor live here and are loaded at runtime relative to
+rem     OrbbecSDK.dll; missing this folder means depth processing fails on the
+rem     target machine. NOTE: opencv_world340.dll from 3rdparty/orbbec/bin is
+rem     deliberately NOT copied (see CMakeLists POST_BUILD whitelist, M3).
+if exist "%BUILD%\extensions" xcopy /E /I /Q /Y "%BUILD%\extensions" "%DIST%\extensions\" >nul
 rem --- runtime config: the app reads config.json / process.json next to the exe ---
 copy /Y "%BUILD%\config.json" "%DIST%\" >nul
 copy /Y "%BUILD%\process.json" "%DIST%\" >nul

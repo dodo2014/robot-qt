@@ -1,14 +1,12 @@
 # ============================================================
 # Logic — 业务逻辑层
-# 状态机 (PickCycle)、示教系统、流程编排
+# 流程编排 (SequenceWorker)、示教系统
 # ============================================================
 set(LOGIC_SOURCES
-    PickCycleController.cpp
     SequenceWorker.cpp
 )
 
 set(LOGIC_HEADERS
-    PickCycleController.h
     SequenceWorker.h
 )
 

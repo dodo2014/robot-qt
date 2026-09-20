@@ -52,6 +52,10 @@ private:
                            double speed, double accel, double decel,
                            const QString& pos, double target, bool isGripper = false, bool isExtrude = false);
     void RefreshStatusDot(int axis);
+    // 每轴点动速度回填（C3）：`axes.*.jogSpeed` 在配置页也有写入口，
+    // 故除连接状态变化外，每次页面显示时也回填，避免显示陈旧值。
+    void RefreshJogSpeeds();
+    void showEvent(QShowEvent* event) override;
     void SetHint(const QString& text, const QString& color = QString());
     void RefreshSoftLimitHint();
     void RefreshCoordPanel();

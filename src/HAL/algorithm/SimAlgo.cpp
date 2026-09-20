@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include "SimVision.h"
@@ -103,6 +104,22 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
         results.push_back(res);
     }
 
+    // 置信度阈值（C1）：低于阈值的结果**丢弃**。
+    // 这才是「置信度阈值」应有的行为 —— 原实现只在视觉页绘制叠加框时用它
+    // （`VisionTestPage.cpp` 的 `DrawOverlays`），算法侧完全不用，配置形同虚设。
+    // 副作用是部分遮挡的目标不再被报出，属预期语义（该目标本就不该被抓取）。
+    const double thr = EffectiveThreshold();
+    if (thr > 0.0) {
+        const auto before = results.size();
+        results.erase(std::remove_if(results.begin(), results.end(),
+                                         [thr](const PuffResult& r) { return r.confidence < thr; }),
+                      results.end());
+        if (results.size() != before) {
+            SPDLOG_INFO("[SimAlgo] confidenceThreshold={:.3f}: filtered {} of {} detection(s)",
+                        thr, before - results.size(), before);
+        }
+    }
+
     return results;
 }
 
@@ -122,8 +139,31 @@ PuffResult SimAlgo::LocateBest(const CameraFrame& frame)
 bool SimAlgo::LoadConfig(const std::string& jsonConfig)
 {
     config_ = jsonConfig;
-    SPDLOG_INFO("[SimAlgo] config loaded ({} bytes)", config_.size());
-    return true;
+
+    // 真正解析（C1）：原实现只把字符串存进 config_ 并打印字节数，**从不解析**，
+    // 于是 `HardwareManager` 喂进来的 `confidenceThreshold` 是死数据 ——
+    // 一条「看起来在工作、实际不工作」的通路。现在解析出的值作为**兜底默认值**，
+    // 运行时以 config.json 的实时值为准（见 EffectiveThreshold）。
+    try {
+        const auto j = nlohmann::json::parse(jsonConfig);
+        if (j.is_object() && j.contains("confidenceThreshold") && j["confidenceThreshold"].is_number()) {
+            confidenceThreshold_ = j["confidenceThreshold"].get<double>();
+            SPDLOG_INFO("[SimAlgo] config loaded: confidenceThreshold={:.3f}", confidenceThreshold_);
+            return true;
+        }
+        SPDLOG_INFO("[SimAlgo] config loaded but no usable confidenceThreshold ({} bytes)", config_.size());
+        return true;
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("[SimAlgo] LoadConfig parse error: {} (raw {} bytes)", e.what(), config_.size());
+        return false;
+    }
+}
+
+double SimAlgo::EffectiveThreshold() const
+{
+    // 实时读 config.json；键缺失（含 config 尚未加载）时 `getValue` 返回传入的默认值，
+    // 即 LoadConfig 解析出的 confidenceThreshold_。
+    return ConfigManager::instance().getValue<double>("vision.confidenceThreshold", confidenceThreshold_);
 }
 
 std::string SimAlgo::GetLastError() const

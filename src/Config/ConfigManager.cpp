@@ -1,6 +1,7 @@
 ﻿#include "ConfigManager.h"
 
 #include <QFile>
+#include <QSaveFile>
 #include <spdlog/spdlog.h>
 
 namespace {
@@ -65,21 +66,36 @@ bool ConfigManager::save()
         SPDLOG_INFO("[Config] No file path, cannot save");
         return false;
     }
-    QFile file(filePath_);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+
+    std::string str;
+    try {
+        str = root_.dump(4);
+    } catch (const std::exception& e) {
+        SPDLOG_INFO("[Config] Serialize error: {}", e.what());
+        return false;
+    }
+
+    // 原子写：QSaveFile 写同目录临时文件，commit() 时原子替换目标文件。
+    //
+    // 原实现以 WriteOnly|Truncate 直接打开目标文件再写入，写入途中崩溃/掉电会留下
+    // 「已截断但未写完」的 config.json；load() 解析失败即把 root_ 重置为空对象
+    // → 全部配置回落到默认值。见 doc/config_ownership_plan.md §七。
+    QSaveFile file(filePath_);
+    if (!file.open(QIODevice::WriteOnly)) {
         SPDLOG_INFO("[Config] Cannot write: {}", filePath_.toStdString());
         return false;
     }
-    try {
-        auto str = root_.dump(4);
-        file.write(str.data(), static_cast<qint64>(str.size()));
-        file.close();
-        SPDLOG_INFO("[Config] Saved: {}", filePath_.toStdString());
-        return true;
-    } catch (const std::exception& e) {
-        SPDLOG_INFO("[Config] Save error: {}", e.what());
+    if (file.write(str.data(), static_cast<qint64>(str.size())) != static_cast<qint64>(str.size())) {
+        SPDLOG_INFO("[Config] Short write, aborting: {}", filePath_.toStdString());
+        file.cancelWriting();
         return false;
     }
+    if (!file.commit()) {
+        SPDLOG_INFO("[Config] Commit failed, original kept: {}", filePath_.toStdString());
+        return false;
+    }
+    SPDLOG_INFO("[Config] Saved: {}", filePath_.toStdString());
+    return true;
 }
 
 nlohmann::json& ConfigManager::get(const std::string& path)

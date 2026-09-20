@@ -492,6 +492,11 @@ void AutoRunPage::OnStartOrResumeClicked()
         SetHint(QStringLiteral("启动失败：引擎忙或门禁未通过"), QStringLiteral("#f7c948"));
         return;
     }
+    // 自动运行是相机流的持有者之一（P3 / 决策 9，doc/camera_integration_plan.md §2.1）：
+    // 流是**全局共享资源**，「谁启动谁停止」会让视觉页与自动运行互相踩
+    // （自动运行结束停流 → 切回视觉页黑屏）。改为持有者集合，**流运行 ⟺ 集合非空**。
+    // 启动成功后才 acquire；对应的 release 在 OnWorkerStateChanged（回到 Idle/Fault）。
+    HardwareManager::instance().AcquireCamera("AutoRun");
     // 不在此改按钮：等 stateChanged(Running) 到达后由 UpdateControlsEnabled 统一处理
     SetHint(loop.mode == LM::Single
                 ? QStringLiteral("方案执行中...")
@@ -753,6 +758,14 @@ void AutoRunPage::ResetCycleLabel()
 void AutoRunPage::OnWorkerStateChanged(SequenceWorker::WorkerState state,
                                        SequenceWorker::PauseReason reason)
 {
+    // 相机持有者释放（P3 / 决策 9，§2.1）：会话结束（Idle）或故障（Fault）时释放
+    // AutoRun 这一份持有。Running/Paused 期间**必须保持持有**——暂停后恢复要继续取帧。
+    // `ReleaseCamera` 对「本未持有」是幂等无副作用的（只记一行日志），
+    // 且集合里还有视觉页时不会真停流。
+    using WS = SequenceWorker::WorkerState;
+    if (state == WS::Idle || state == WS::Fault)
+        HardwareManager::instance().ReleaseCamera("AutoRun");
+
     UpdateStatusByState(state, reason);
     UpdateControlsEnabled();
 }

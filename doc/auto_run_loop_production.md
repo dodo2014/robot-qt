@@ -19,7 +19,7 @@
 | `RunSequence` 启动时无条件重置：cancel/stepGo/paused/stepGatePending/pauseAccumMs/safeSession/**currentIndex=-1**/singleSession；**无循环计数变量** | `SequenceWorker.cpp:150-190`（重置段 `:169-181`） |
 | **`stepMode` 不在 `RunSequence` 清**——清除点在**会话结束**（`StartExecution` `:405`、`RunSingleAction` `:222`）；入口清会吃掉调用方标志（TR-076） | `SequenceWorker.cpp:174-177`、`:405`、`:222` |
 | config.json 无 `loop/cycle/repeat` 键；三页 UI 无循环开关/次数输入 | 已 grep 确认（2026-09-14 复验） |
-| `PickCycleController`（视觉抓取单周期）为**死代码**（仅 CMakeLists 引用），其 StartCycle 亦为单次 | `src/Logic/CMakeLists.txt:6,11` |
+| `PickCycleController`（视觉抓取单周期）为**死代码**（仅 CMakeLists 引用），其 StartCycle 亦为单次 → **已于 P3（2026-09-20）整体删除** | `src/Logic/CMakeLists.txt:6,11`（删除前） |
 | 暂停 = 保留上下文原地续走（PauseGate + reissue 当前绝对目标 MoveAbs） | `SequenceWorker.cpp:629-664`（reissue 构造 `:586-593`、Resume 重发 `:657-660`） |
 | 停止 = `StopImmediate` = cancel + `StopAllAxes` 减速停（保持使能），废弃上下文 | `SequenceWorker.cpp:308-314` |
 | `ConfigManager` 无信号；`paramsChanged` 属 ConfigPage，唯一消费者是 `ReloadFromConfig`（重建 Kinematics） | `src/Config/ConfigManager.*`、`src/UI/MainWindow.cpp:165` |
@@ -457,7 +457,7 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 | D9 | TR 编号 | **本需求 TR-091 起**（2026-09-14 更正：TR-080~TR-090 已被阶段 9/10 验证与缺陷用尽，当前最大 TR-090） |
 | D10 | 循环参数持久化 | **是**（仅持久化 UI 选择，不参与门禁） |
 | D11 | 次数上限 | **1..9999**（SpinBox 限） |
-| D12 | 死代码 `PickCycleController` | **本次不动**（避免与循环功能混在一条提交） |
+| D12 | 死代码 `PickCycleController` | ~~**本次不动**（避免与循环功能混在一条提交）~~ → **已删除**（P3 / 2026-09-20，见 `doc/camera_integration_plan.md` S0 第 4 条） |
 | **D13** | 循环运行常驻提示条 | **不做**（2026-09-14 用户裁决；理由见 §九——单槽提示必被覆盖，进度由 `m_cycleLabel` 承载） |
 | **D14** | 循环期间一键回零 | **不可达，不加门禁、不设用例**（2026-09-14 用户裁决；互锁禁止切回手动页，见 §六 #11） |
 | **D15** | 术语「回安全位」 | 循环行复选框显示文本统一为**「回安全位」**；config 总开关显示名沿用 TR-082 的**「启用安全位」**，两者不混称 |

@@ -5,7 +5,9 @@
 #include <QVector>
 
 #include <memory>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "IMotionCard.h"
 #include "IAxisServo.h"
@@ -132,6 +134,39 @@ public:
     void StopCameraStream();
     bool IsCameraStreaming() const;
 
+    // ---- 相机流持有者集合模型（P3 / 决策 9，doc/camera_integration_plan.md §2.1）----
+    //
+    // **问题**：流的启停入口原先只在视觉页，而 `AutoRunPage` 也订阅 `frameReady`。
+    // 若按「谁启动谁停止」实现，会出现三类故障：① 视觉页启流 → 自动运行再启一次 →
+    // 自动运行结束停流 → 切回视觉页黑屏；② 自动运行中视觉页点「停止采集」→
+    // **打断正在执行的 `ExecuteVision`**（拿不到帧）；③ 自动运行启流后切回视觉页，
+    // 页面不知道该显示还是该禁用。
+    //
+    // **根因**：流的生命周期被绑在了「页面操作」上，而流实际是**全局共享资源**。
+    //
+    // **模型**：流归 HardwareManager 单例持有，内部维护持有者集合，
+    // **流运行 ⟺ 集合非空**。页面/流程的启停 = acquire / release，互不干扰。
+    // 视觉页释放时若自动运行仍持有 → 不真停，只记录日志（状态提示由 UI 侧负责）。
+    //
+    // `StartCameraStream` / `StopCameraStream` 保留为**无持有者的裸接口**（调试/测试用），
+    // 生产路径一律走 Acquire / Release。
+    bool AcquireCamera(const std::string& owner);
+    bool ReleaseCamera(const std::string& owner);
+    /// 当前持有者快照（诊断与 UI 提示用，按字典序）
+    std::set<std::string> CameraHolders() const { return cameraHolders_; }
+
+    /// 枚举可用相机设备（P3 / S2）——「刷新设备」按钮与 SN 下拉框的数据源。
+    /// SimCamera 返回空列表（非纯虚默认实现）。
+    std::vector<CameraDeviceInfo> EnumerateCameras();
+
+    /// 相机链路状态快照（P3 / §4.3）。`SimCamera` 恒为 `Unknown`。
+    CameraLinkState GetCameraLinkState() const;
+
+    /// 某个流的可用 profile 列表（P4）——视觉页 6 个流参数下拉框的数据源。
+    /// `isDepth = false` 彩色流、`true` 深度流。**空列表 = 该实现不提供**
+    /// （`SimCamera`）→ UI 回落为「只显示 config 现值」。
+    std::vector<CameraStreamProfile> GetCameraStreamProfiles(bool isDepth);
+
 signals:
     // 高频状态广播 (50ms)，position 已换算为物理单位 (mm/度)
     void stateUpdated(const QVector<MotorStatus>& axes);
@@ -158,6 +193,13 @@ signals:
     void homeStateChanged(bool homed);
     // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
     void frameReady(const CameraFrame& frame);
+    // 相机链路状态边沿变化（P3 / §4.3）：`ICamera` 不是 QObject 不能发信号，
+    // 由 PollTick 边沿检测后在此广播。**`Unknown`（SimCamera）不参与边沿检测**，
+    // 故 Sim 模式下该信号永不发出。
+    void cameraStateChanged(CameraLinkState state);
+    // 相机持有者集合变化（acquire/release 后发出）：UI 据此决定「停止采集」按钮
+    // 是否真的停掉了流（自动运行仍持有时提示「自动运行仍在使用相机」）。
+    void cameraHoldersChanged();
 
 private:
     HardwareManager();
@@ -176,6 +218,10 @@ private:
     // P1 拆分：PollTick 的两个子步骤（纯函数重排，无行为变化）
     void PollCardAxis();        // 卡轴：状态映射/软限位拦截/回零完成/报警边沿/异常签名
     void PollServoTelemetry();  // 舵机：离线降频遥测 + 热重连退避
+    // P3 新增：相机链路状态边沿检测（**降频**，每 10 个 poll tick ≈ 500ms 一次）。
+    // 不做恢复动作——分级恢复（L1/L2/L3）全在 `OrbbecCamera` 内部，见
+    // doc/camera_integration_plan.md §4.2；此处只负责「边沿 → 广播」。
+    void PollCamera();
     // 回零互锁：标记本轴回零完成，全部完成后置系统 homed 并发 homeStateChanged
     void MarkAxisHomed(int ai);
     // 回零互锁：回零被打断（急停/断使能/手动停止）→ 回零中的绑定轴 homed 复位（部分完成不算完成）
@@ -228,6 +274,17 @@ private:
 
     // 相机生命周期（采集线程/worker/流状态）委托给 CameraManager
     std::unique_ptr<CameraManager>  cameraManager_;
+
+    // ---- 相机流持有者集合（P3 / 决策 9）----
+    // **流运行 ⟺ 本集合非空**。元素是持有者名字面量（"VisionPage" / "AutoRun"），
+    // 用 `std::set` 而非计数器：同一持有者重复 acquire 不会叠加，release 也不会
+    // 因少调一次就把流停掉（幂等）。
+    std::set<std::string> cameraHolders_;
+    // 相机链路状态边沿缓存（PollCamera）：`Unknown` 表示「该实现不提供链路状态」
+    // （SimCamera），此时不做边沿检测、不广播，Sim 模式行为零变化。
+    CameraLinkState lastCameraState_  = CameraLinkState::Unknown;
+    bool            cameraStateInited_ = false;
+    int             cameraPollCounter_ = 0;
     // 每轴速度/单位/软限位查询（委托 AxisConfigService）
     std::unique_ptr<AxisConfigService> axisCfgSvc_;
 

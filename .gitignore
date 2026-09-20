@@ -23,9 +23,18 @@ CMakeSettings.json
 # Logs
 logs/
 *.log
+# Orbbec SDK 自带日志（默认 INFO 级写 CWD；本项目已在 CreateContext 提到 WARN）
+*.log.txt
 
 # vcpkg (ignore the whole directory)
 vcpkg/
+
+# Orbbec SDK — 197 MB / 923 files（含 opencv_world340.dll 65 MB、opencv_world340d.dll 104 MB
+# 与 60+ 个 ob_*.exe 示例），整体不入库（2026-09-20 用户裁定）。
+# 编译/打包所需的子集由 CMakeLists.txt 的 POST_BUILD 白名单与 build_release.bat 各自拷出：
+#   OrbbecSDK.dll + extensions/（depthengine, filters, frameprocessor）
+# 新克隆仓库要启用 USE_ORBBEC=ON（默认 OFF）须自行把 SDK 装到该路径。
+3rdparty/orbbec/
 
 # WorkBuddy private memory (agent workspace notes, not project source)
 .workbuddy/
@@ -34,6 +43,8 @@ vcpkg/
 .workbuddy-ai/settings.local.json
 .workbuddy-ai/.git-commit-authorized
 .workbuddy-ai/memory/
+# 助手侧临时脚本 / 临时文本（一次性的改写脚本、提交信息草稿等），不进仓库
+.workbuddy-ai/tmp_*
 
 # Config override
 config/config.local.json

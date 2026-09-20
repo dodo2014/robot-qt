@@ -1,14 +1,16 @@
 ﻿# ============================================================
-# Config 鈥?閰嶇疆绠＄悊
-# JSON 閰嶇疆鏂囦欢鐨勫姞杞?淇濆瓨/璺緞瀵艰埅/鍘绘姈鍐欏叆
+# Config — 配置管理
+# JSON 配置文件的加载/保存/路径导航/去抖写入
 # ============================================================
 set(CONFIG_SOURCES
     ConfigManager.cpp
+    ConfigPaths.cpp
     ProcessManager.cpp
 )
 
 set(CONFIG_HEADERS
     ConfigManager.h
+    ConfigPaths.h
     ProcessManager.h
 )
 

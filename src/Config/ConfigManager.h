@@ -24,10 +24,10 @@ public:
 
     void markDirty() { if (!saveTimer_->isActive()) saveTimer_->start(); }
 
-    /// 瀵艰埅 dot-path锛堝惈 `key[i]`锛夊苟杩斿洖寮曠敤锛沺ath 绌烘椂杩斿洖 root_
+    /// 导航 dot-path（含 `key[i]`）并返回引用；path 空时返回 root_
     nlohmann::json& get(const std::string& path);
 
-    /// 鍐欏叆鍊硷紙path 绌烘椂涓嶅仛浠讳綍浜嬶級
+    /// 写入值（path 空时不做任何事）
     void set(const std::string& path, nlohmann::json value);
 
     template<typename T>

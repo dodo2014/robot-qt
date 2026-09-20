@@ -6,6 +6,7 @@
 #include <QEventLoop>
 #include <QElapsedTimer>
 #include <QMetaObject>
+#include <QHash>
 
 #include <atomic>
 #include <cmath>
@@ -114,6 +115,14 @@ public:
     // emit errorOccurred 收敛到会话级 2 处出口（ExecuteOnce / StartSingleExecution）。
     // 仅 worker 线程内写/读，不跨线程共享 → 无需加锁。
     QString lastError;
+
+    // 会话视觉结果表（P5，doc/vision_guide_action_plan.md §5.4）：key = **识别动作的 id**。
+    // · 写入：ExecuteVision 末尾（只取 results.front()，与既有"最佳目标"语义一致）；
+    // · 清空：**每次会话开始**（RunSequence / RunSingleAction）——防上次会话的残留结果
+    //   被本次误用（与 TR-091「循环外壳在会话内」同类问题）；
+    // · 循环生产：每轮识别覆盖同 id 的结果，语义正确（每轮重新识别）；
+    // · 只在 worker 线程读写（UI 侧靠 visionResultReady 信号取副本）→ 无需加锁。
+    QHash<int, Pose> visionResults_;
 
     bool WaitForCancelOrTime(int ms)
     {
@@ -233,6 +242,9 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme, const LoopConfig& loo
     impl_->loopCfg = loop;
     impl_->cycleIndex = 0;
     impl_->lastError.clear();
+    // 会话视觉结果表清空（P5 §5.4）：上次会话识别出的坐标对本次无效——相机眼在手外，
+    // 但物料已被取走/换位，复用旧坐标会把动作引到空处。
+    impl_->visionResults_.clear();
     // 安全位数值快照（主线程）：循环间隔回安全位在 worker 线程执行，绝不能读 ConfigManager。
     // 未启用 → safePoseValid=false → 循环间隔回安全位判为故障（UI 侧另有启动门禁，此处兜底）。
     {
@@ -247,8 +259,8 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme, const LoopConfig& loo
     }
 
     SetState(WorkerState::Running);
-    SPDLOG_INFO("[SequenceWorker] RunSequence: {} ({} actions) loop={} count={} safePos={} retry={}",
-                scheme.schemeName.toStdString(), static_cast<int>(scheme.actions.size()),
+    SPDLOG_INFO("[SequenceWorker] RunSequence: {} ({} nodes) loop={} count={} safePos={} retry={}",
+                scheme.schemeName.toStdString(), static_cast<int>(scheme.nodes.size()),
                 static_cast<int>(loop.mode), loop.count,
                 loop.returnToSafePos ? "on" : "off", loop.retryCount);
 
@@ -257,14 +269,16 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme, const LoopConfig& loo
     return true;
 }
 
-bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
+bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int nodeId)
 {
     if (impl_->running.load()) {
         SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: already running");
         return false;
     }
-    if (actionIndex < 0 || actionIndex >= static_cast<int>(scheme.actions.size())) {
-        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: index out of range");
+    // P6：按**节点编号**定位（不再是扁平行号）——编号持久化且不随插入/删除漂移，
+    // 分组同样占编号，故这里既能执行单个动作，也能执行整个分组。
+    if (!ProcessManager::findNode(scheme.nodes, nodeId)) {
+        SPDLOG_WARN("[SequenceWorker] RunSingleAction rejected: node #{} not found", nodeId);
         return false;
     }
     // 使能门禁：与 RunSequence 同一安全门禁（先使能再运动）
@@ -286,21 +300,25 @@ bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int actionIndex)
     impl_->stepGatePending.store(false);
     impl_->pauseAccumMs.store(0);
     impl_->scheme = scheme;
-    impl_->currentIndex = actionIndex;
+    impl_->currentIndex = nodeId;    // 语义：当前节点编号（P6）
     impl_->stepMode.store(false);   // 单动作执行与单步会话互斥（UI 侧另清 m_stepActive）
     impl_->singleSession.store(true);
     // 单动作会话不走循环外壳：清掉循环上下文，防上次循环的 loop/计数残留
     impl_->loopCfg = LoopConfig{};
     impl_->cycleIndex = 0;
     impl_->lastError.clear();
+    // 同 RunSequence：单动作会话也是新会话，视觉结果表清空。
+    // 直接单跑一条「视觉引导」必然取不到结果 → 报错且不运动（§4.3 执行期校验），这是预期行为。
+    impl_->visionResults_.clear();
 
     SetState(WorkerState::Running);   // 原「执行选中动作」文案由 IsSingleActionSession() 还原
-    SPDLOG_INFO("[SequenceWorker] RunSingleAction: [{}] {}", actionIndex,
-                scheme.actions[actionIndex].name.toStdString());
+    const ActionData* node = ProcessManager::findNode(scheme.nodes, nodeId);
+    SPDLOG_INFO("[SequenceWorker] RunSingleAction: node #{} {}", nodeId,
+                node ? node->name.toStdString() : std::string("(missing)"));
 
     // 排队到 worker 线程执行（同 RunSequence 模式）
     QMetaObject::invokeMethod(this, "StartSingleExecution",
-                              Qt::QueuedConnection, Q_ARG(int, actionIndex));
+                              Qt::QueuedConnection, Q_ARG(int, nodeId));
     return true;
 }
 
@@ -320,7 +338,7 @@ bool SequenceWorker::BuildSafePosActionFrom(ActionData& act, double j1, double j
     const double cj2 = InMainThread([] { return HardwareManager::instance().GetPosition(LogicalAxis::J2); });
     const double cr  = InMainThread([] { return HardwareManager::instance().GetPosition(LogicalAxis::R);  });
 
-    // 必须用 worker 自己的 kin 求 FK 填 x/y/z/r——MoveToPoint 的 hasJoints 路径有 ±0.5
+    // 必须用 worker 自己的 kin 求 FK 填 x/y/z/r——RunnerState 的 hasJoints 路径有 ±0.5
     // 一致性校验，两者同源必过；若填 0 会静默回退 IK（可能跳到另一逆解分支）。
     const Pose f1 = impl_->kin.Forward(Joints{ cj1, cj2, z, cr });
     const Pose f2 = impl_->kin.Forward(Joints{ j1, j2, z, r });
@@ -353,11 +371,12 @@ bool SequenceWorker::ReturnToSafePosInline()
     ActionData act;
     if (!BuildSafePosActionFrom(act, impl_->safeJ1, impl_->safeJ2, impl_->safeZ, impl_->safeR))
         return false;                     // 未启用/未捕获 → 判为故障（不静默跳过）
-    return ExecuteMove(act);              // 白得：cancel 检查、PauseGate、reissue 续走、逐点日志
+    // 单元素调度器（P6：原 ExecuteMove 的阻塞式实现已并入 RunnerState 状态机）
+    return ExecuteAction(act, -1);        // 白得：cancel 检查、暂停、reissue 续走、逐点日志
 }
 
 // 回安全位（2026-09-07）：先原地抬 Z（防横扫），再水平走安全位关节角。
-// 复用 RunSequence → ExecuteMove 的 hasJoints 路径——零新运动代码，
+// 复用 RunSequence → ExecuteAction 的 hasJoints 路径——零新运动代码，
 // 白得暂停/停止/使能/回零门禁与自动运行互斥（同一 worker 的 running 门禁）。
 bool SequenceWorker::RunSafePos()
 {
@@ -380,7 +399,7 @@ bool SequenceWorker::RunSafePos()
 
     SchemeData scheme;
     scheme.schemeName = QStringLiteral("安全位");
-    scheme.actions = { act };
+    scheme.nodes = { act };
 
     if (!RunSequence(scheme)) return false;
     // RunSequence 内部会清 safeSession（当作普通方案），这里在排队生效前置位：
@@ -513,31 +532,32 @@ void SequenceWorker::StartExecution()
         SetState(WorkerState::Idle);
 }
 
-void SequenceWorker::StartSingleExecution(int index)
+void SequenceWorker::StartSingleExecution(int nodeId)
 {
-    // 防御：调用链（RunSingleAction 已校验）保证合法，此处兜底防越界 UB
-    if (index < 0 || index >= static_cast<int>(impl_->scheme.actions.size())) {
-        SPDLOG_WARN("[SequenceWorker] StartSingleExecution: index out of range {}", index);
+    // P6：按节点编号定位（调用链 RunSingleAction 已校验，此处兜底防悬垂编号）
+    const ActionData* found = ProcessManager::findNode(impl_->scheme.nodes, nodeId);
+    if (!found) {
+        SPDLOG_WARN("[SequenceWorker] StartSingleExecution: node #{} not found", nodeId);
         SetState(WorkerState::Idle);
         return;
     }
-    const auto& action = impl_->scheme.actions[index];
-    impl_->lastError.clear();          // 防上一动作的陈旧原因被重发（D17 方案 A）
-    emit actionStarted(index, action.name);
-    SPDLOG_INFO("[SequenceWorker] Single action {}: {}", index, action.name.toStdString());
+    const ActionData action = *found;   // 值拷贝：与主线程后续编辑解耦
+    impl_->lastError.clear();           // 防上一节点的陈旧原因被重发（D17 方案 A）
+    emit actionStarted(nodeId, action.name);
+    SPDLOG_INFO("[SequenceWorker] Single node #{}: {}", nodeId, action.name.toStdString());
 
-    bool ok = ExecuteAction(action, index);
+    bool ok = ExecuteNode(action, nodeId);
     if (!ok) {
-        // ExecuteAction 子树**不再 emit**（D17 方案 A 单点化），失败原因写入 Impl::lastError；
-        // 此处是单动作会话的唯一出口。lastError 为空（如 MoveAbs 静默失败）才回退动作名。
+        // ExecuteNode 子树**不再 emit**（D17 方案 A 单点化），失败原因写入 Impl::lastError；
+        // 此处是单节点会话的唯一出口。lastError 为空（如 MoveAbs 静默失败）才回退节点名。
         if (impl_->cancel.load())
             emit interrupted(QStringLiteral("用户停止"));
         else
             emit errorOccurred(impl_->lastError.isEmpty() ? action.name : impl_->lastError);
     } else {
-        emit actionFinished(index, action.name);
+        emit actionFinished(nodeId, action.name);
     }
-    emit singleActionFinished(index);
+    emit singleActionFinished(nodeId);
     impl_->singleSession.store(false);
     impl_->safeSession.store(false);
     // 故障态保持锁存（待 ClearFault 清除），其余一律回空闲
@@ -597,28 +617,34 @@ bool SequenceWorker::ExecuteActions()
     return true;
 }
 
-// 单轮执行：原 ExecuteActions 主体原样搬迁，**仅动作调用点一处**改为 ExecuteActionWithRetry
-// （其余 cancel 检查 / PauseGate / currentIndex / actionStarted / 失败→Fault 锁存 / 单步挂起一行不改）。
+// 单轮执行：原 ExecuteActions 主体原样搬迁，**仅两处**改动——
+// ① 遍历 `scheme.nodes`（两级树的**一级节点**）而非旧的扁平 `actions`；
+// ② 调用点改为 ExecuteNodeWithRetry（节点级重试，分组按 §Q3 重试整组）。
+// 其余 cancel 检查 / PauseGate / currentIndex / actionStarted / 失败→Fault 锁存 / 单步挂起一行不改。
+// ⚠ 单步挂起**只在一级节点边界**：分组的「一步」= 整个分组，组内一律不调用 WaitForStep
+//   （否则 N 个子状态机会争抢同一个 stepGo 原子量，放行顺序不确定，§九 第 5 项）。
 bool SequenceWorker::ExecuteOnce()
 {
-    const auto& actions = impl_->scheme.actions;
-    for (int i = 0; i < actions.size(); ++i) {
+    const auto& nodes = impl_->scheme.nodes;
+    for (int i = 0; i < nodes.size(); ++i) {
         if (impl_->cancel.load()) {
             emit interrupted(QStringLiteral("用户停止"));
             return false;
         }
-        // 动作边界挂起点（无轴参与 → 只挂起）：单步/无硬件动作的暂停在此生效
+        // 节点边界挂起点（无轴参与 → 只挂起）：单步/无硬件动作的暂停在此生效
         if (!PauseGate()) {
             emit interrupted(QStringLiteral("用户停止"));
             return false;
         }
-        impl_->currentIndex = i;
-        const auto& action = actions[i];
-        impl_->lastError.clear();      // 防上一动作的陈旧原因被重发（D17 方案 A）
-        emit actionStarted(i, action.name);
-        SPDLOG_INFO("[SequenceWorker] Action {}: {}", i, action.name.toStdString());
+        const auto& node = nodes[i];
+        impl_->currentIndex = node.id;
+        impl_->lastError.clear();      // 防上一节点的陈旧原因被重发（D17 方案 A）
+        // 信号携带**节点编号**（P6 起不再是扁平行号）；分组与动作共用同一对信号，
+        // 接收方按编号在树里定位。
+        emit actionStarted(node.id, node.name);
+        SPDLOG_INFO("[SequenceWorker] Node #{}: {}", node.id, node.name.toStdString());
 
-        if (!ExecuteActionWithRetry(action, i)) {
+        if (!ExecuteNodeWithRetry(node, node.id)) {
             if (impl_->cancel.load()) {
                 emit interrupted(QStringLiteral("用户停止"));
             } else {
@@ -626,19 +652,19 @@ bool SequenceWorker::ExecuteOnce()
                 // 期间 RunSequence 会因 state != Idle 被拒，UI 也能据此禁用「启动」
                 SetState(WorkerState::Fault);
                 // 【D17 方案 A】原为 emit errorOccurred(action.name)：改用 lastError（具体原因，
-                // 含坐标/轴号），为空才回退动作名——顺带修掉"具体原因被 action.name 覆盖"的既有瑕疵
-                emit errorOccurred(impl_->lastError.isEmpty() ? action.name : impl_->lastError);
+                // 含坐标/轴号），为空才回退节点名——顺带修掉"具体原因被 name 覆盖"的既有瑕疵
+                emit errorOccurred(impl_->lastError.isEmpty() ? node.name : impl_->lastError);
             }
             return false;
         }
 
-        emit actionFinished(i, action.name);
+        emit actionFinished(node.id, node.name);
 
-        // 单步模式：每个动作完成后挂起，等待 NextStep()
+        // 单步模式：每个**一级节点**完成后挂起，等待 NextStep()（分组 = 一步）
         if (impl_->stepMode.load()) {
             impl_->stepGatePending.store(true);
             SetState(WorkerState::Paused, PauseReason::Step);
-            SPDLOG_INFO("[SequenceWorker] Step mode: pausing after action {}", i);
+            SPDLOG_INFO("[SequenceWorker] Step mode: pausing after node #{}", node.id);
             const bool go = impl_->WaitForStep();
             impl_->stepGatePending.store(false);
             if (!go) {
@@ -672,25 +698,74 @@ bool SequenceWorker::WaitRetryDelay(int ms)
     }
 }
 
-// 动作级重试包装（2026-09-14）。retryCount=0（默认）时**直通** ExecuteAction → 零额外行为，
-// 与今天逐字节一致。retryCount=N>0 时：仅 Vision（重新采图定位）与 Move（重新下发目标）可重试；
+// ---------------------------------------------------------------------------
+// P6（doc/action_tree_concurrency_plan.md）：节点执行与单线程协作式调度
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 一个动作节点的「段」数：Move/VisionGuide 按点位，Extrude 按挤出/回抽两段，Gripper 恒 1 段。
+// 段 = 「一次下发 + 一次等待」的最小单元——这正是并发时可以被重叠的部分（§5.1）。
+int SegmentCountOf(const ActionData& a)
+{
+    switch (a.type) {
+    case ActionType::Move:        return a.points.size();
+    case ActionType::VisionGuide: return 2;          // 目标上方 → 目标
+    case ActionType::Gripper:     return 1;
+    case ActionType::Extrude: {
+        int n = 0;
+        if (a.extrudeAmount > 0.0)  ++n;             // 挤出段
+        if (a.suckBackAmount > 0.0) ++n;             // 回抽段
+        return n;
+    }
+    default: return 0;                               // Delay / Vision 不走段模型
+    }
+}
+
+struct ExtrudeSegment { double target; double speed; QString logText; };
+
+// 挤出动作的分段（改造前 ExecuteExtrude 的两段，目标 / 速度 / 日志逐字保留）
+QVector<ExtrudeSegment> ExtrudeSegmentsOf(const ActionData& a)
+{
+    QVector<ExtrudeSegment> segs;
+    if (a.extrudeAmount > 0.0)
+        segs.push_back({ a.extrudeAmount, a.extrudeSpeed,
+                         QStringLiteral("挤出 %1 mm").arg(a.extrudeAmount) });
+    if (a.suckBackAmount > 0.0)
+        // 回抽目标是**绝对量**（挤出量 − 回抽量）。续走重发它不会把轴反向补回满量程再回抽
+        //（否则等于多挤一份料）——语义与改造前 ExecuteExtrude 完全一致。
+        segs.push_back({ a.extrudeAmount - a.suckBackAmount, a.suckBackSpeed,
+                         QStringLiteral("回抽 %1 mm").arg(a.suckBackAmount) });
+    return segs;
+}
+
+} // namespace
+
+// 节点级重试包装（P6 由 ExecuteActionWithRetry 改名并上移到节点层）。
+// retryCount=0（默认）时**直通** ExecuteNode → 零额外行为，与改造前逐字节一致。
+// retryCount=N>0 时：仅 Vision（重新采图定位）与 Move（重新下发目标）可重试；
 // Extrude / Gripper / 回抽 / Delay 重复执行有重复出料、重复夹取风险 → 直接失败。
-// 本函数**不 emit errorOccurred**：重试期间只写 logMessage，失败原因留在 lastError 由会话级出口发出。
-bool SequenceWorker::ExecuteActionWithRetry(const ActionData& action, int index)
+// **分组按 §Q3 重试整个分组**——部分重试会破坏组内资源独占（一个子动作已走完、
+// 另一个重试 → 状态错配）。
+// 本函数**不 emit errorOccurred**：重试期间只写 logMessage，失败原因留在 lastError，
+// 由会话级出口发出（D17 方案 A）。
+bool SequenceWorker::ExecuteNodeWithRetry(const ActionData& node, int index)
 {
     if (impl_->loopCfg.retryCount <= 0)
-        return ExecuteAction(action, index);
+        return ExecuteNode(node, index);
 
     const int maxTry = impl_->loopCfg.retryCount + 1;
-    const bool retryable = (action.type == ActionType::Vision || action.type == ActionType::Move);
+    const bool retryable = node.isGroup()
+                               || node.type == ActionType::Vision
+                               || node.type == ActionType::Move;
 
     for (int attempt = 1; attempt <= maxTry; ++attempt) {
         impl_->lastError.clear();
-        if (ExecuteAction(action, index)) return true;
+        if (ExecuteNode(node, index)) return true;
         if (impl_->cancel.load()) return false;             // 停止/急停：不重试
         if (!retryable || attempt == maxTry) break;         // 不可重试 或 已耗尽 → 上层 Fault
-        emit logMessage(QStringLiteral("动作「%1」失败，%2ms 后重试（%3/%4）")
-                            .arg(action.name)
+        emit logMessage(QStringLiteral("「%1」失败，%2ms 后重试（%3/%4）")
+                            .arg(node.name)
                             .arg(impl_->loopCfg.retryDelayMs)
                             .arg(attempt)
                             .arg(maxTry - 1));
@@ -699,41 +774,401 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& action, int index)
     return false;   // 失败原因留在 lastError，由会话级出口单点发出
 }
 
-// 动作分派。**本函数及其子树一律不 emit errorOccurred**（D17 方案 A）：
-// 失败原因写入 Impl::lastError，由会话级唯一出口发出（ExecuteOnce / StartSingleExecution）。
-// 目的：重试（retryCount>0）期间不误报故障，UI 状态不跳「⛔ 错误」。
+// 节点分派（§九 第 1 项）：按 `nodeType` 分派到动作或分组。
+// **本函数及其子树一律不 emit errorOccurred**（D17 方案 A）。
+bool SequenceWorker::ExecuteNode(const ActionData& node, int index)
+{
+    if (node.isGroup())
+        return ExecuteGroup(node, index);
+    return ExecuteAction(node, index);
+}
+
+// 动作节点 = **单元素调度器**。改造前这里是 5 个阻塞式函数的 switch 分派；P6 起动作体
+// 本身也是可步进状态机（RunnerState），由同一个调度器驱动——这样「暂停 / 停止 / 急停 /
+// 续走」在单动作与分组两条路径上**只有一套实现**。
+// **本函数及其子树一律不 emit errorOccurred**（D17 方案 A）。
 bool SequenceWorker::ExecuteAction(const ActionData& action, int index)
 {
     switch (action.type) {
-    case ActionType::Move:    return ExecuteMove(action);
-    case ActionType::Vision:  return ExecuteVision(action);
-    case ActionType::Extrude: return ExecuteExtrude(action);
-    case ActionType::Delay:   return ExecuteDelay(action);
-    case ActionType::Gripper: return ExecuteGripper(action);
+    case ActionType::Move:
+    case ActionType::Vision:
+    case ActionType::VisionGuide:
+    case ActionType::Extrude:
+    case ActionType::Delay:
+    case ActionType::Gripper:
+        break;
     default:
         SPDLOG_WARN("[SequenceWorker] Unknown action type {}", static_cast<int>(action.type));
-        impl_->lastError = QStringLiteral("未知动作类型 (index %1)").arg(index);
+        impl_->lastError = QStringLiteral("未知动作类型 (节点 #%1)").arg(index);
         return false;
     }
+
+    std::vector<RunnerState> runners(1);
+    runners[0].action = action;
+    return RunScheduler(runners);
 }
 
-bool SequenceWorker::ExecuteMove(const ActionData& action)
+// 分组节点（§九 第 3 项）：为每个子节点建一个子状态机，单线程协作式调度至全部完成。
+// 失败归因 = **首个失败者**（其余仅记日志），原因留在 lastError（§九 第 4 项）。
+bool SequenceWorker::ExecuteGroup(const ActionData& group, int index)
 {
-    const double speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
-    for (int p = 0; p < action.points.size(); ++p) {
-        if (impl_->cancel.load()) return false;
-        // 点边界挂起点（无轴参与 → 只挂起不下发停止）：保证暂停一定生效
-        if (!PauseGate()) return false;
-        emit logMessage(QStringLiteral("移动 → 点 %1 (%2)").arg(p + 1).arg(action.points[p].name));
-        if (!MoveToPoint(action.points[p], speedScale))
-            return false;
+    // 组内校验兜底（§6.2 资源互斥 / §6.4 数据依赖 / §Q5 不嵌套）：UI 已拦，此处再拦一次。
+    // 两个绝对目标同时下发会让轴按后到者走 —— 静默出错比拒绝执行危险得多。
+    const QString bad = ProcessManager::validateGroupChildren(group.children);
+    if (!bad.isEmpty()) {
+        SPDLOG_WARN("[SequenceWorker] Group '{}' rejected: {}",
+                    group.name.toStdString(), bad.toStdString());
+        impl_->lastError = QStringLiteral("并发分组「%1」不可执行：%2").arg(group.name, bad);
+        return false;
     }
-    return true;
+    for (const auto& child : group.children) {
+        if (child.isGroup()) {          // 防御：不嵌套（normalizeActionIds + UI 已拦）
+            impl_->lastError = QStringLiteral("并发分组「%1」含嵌套分组「%2」，拒绝执行")
+                                   .arg(group.name, child.name);
+            return false;
+        }
+    }
+
+    SPDLOG_INFO("[SequenceWorker] Group #{} '{}' (index {}): {} child node(s)",
+                group.id, group.name.toStdString(), index, group.children.size());
+    emit groupStarted(group.id, group.name);
+
+    if (group.children.isEmpty()) {
+        emit logMessage(QStringLiteral("并发分组「%1」为空，跳过").arg(group.name));
+        emit groupFinished(group.id, group.name);
+        return true;
+    }
+
+    std::vector<RunnerState> runners;
+    runners.reserve(static_cast<size_t>(group.children.size()));
+    for (const auto& child : group.children) {
+        runners.emplace_back();
+        runners.back().action = child;
+    }
+
+    emit logMessage(QStringLiteral("并发分组「%1」：%2 个子动作同时下发、统一汇合")
+                        .arg(group.name).arg(group.children.size()));
+    const bool ok = RunScheduler(runners);
+    emit groupFinished(group.id, group.name);
+    return ok;
 }
 
-bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
+// 单线程协作式调度器（§5.2）。
+// 核心语义（§Q1）：**同时下发、统一汇合**——每个 tick 对所有未完成的子状态机调一次
+// StepRunner；先完成「下发」的不会阻塞后完成者，等待阶段自然重叠（省下的正是节拍大头）。
+// 暂停 / 停止 / 急停在此统一处理（组内任一子状态机所在轴参与运动 → **整组减速停**），
+// 子状态机自身**不处理**这些（§九 第 5/6 项）。
+bool SequenceWorker::RunScheduler(std::vector<RunnerState>& runners)
 {
-    auto& hw = HardwareManager::instance();
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
+
+    // 组内所有子状态机当前等待的轴（去重）——整组减速停的目标集合
+    auto collectAxes = [&runners]() {
+        QVector<LogicalAxis> all;
+        for (const auto& r : runners)
+            for (auto a : r.axes)
+                if (!all.contains(a)) all.push_back(a);
+        return all;
+    };
+    // §Q2：置 cancel（或内部失败中止）后**等待所有子动作安全停止**再返回。
+    // 立即返回会让硬件仍在运动时退出执行循环 —— 失控。
+    auto stopAndWaitAll = [&]() {
+        const QVector<LogicalAxis> all = collectAxes();
+        if (all.isEmpty()) return;
+        InMainThread([&] { return hw.StopAxes(all); });
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 3000) {
+            const bool busy = InMainThread([&] {
+                for (auto a : all) if (hw.IsAxisBusy(a)) return true;
+                return false;
+            });
+            if (!busy) return;
+            QThread::msleep(20);
+        }
+        SPDLOG_WARN("[SequenceWorker] group stop: axes still busy after 3000 ms");
+    };
+
+    // 内部中止：某个子状态机失败 → 停全部子动作，但**不置会话级 cancel**
+    //（置 cancel 会让上层把「动作失败」误报成「用户停止」）
+    bool aborting = false;
+
+    for (;;) {
+        // ① 停止 / 急停 / 内部失败中止：先安全停下所有子动作，再返回（§Q2）
+        if (impl_->cancel.load() || aborting) {
+            stopAndWaitAll();
+            return false;
+        }
+
+        // ② 暂停：整组减速停 → 汇合后统一挂起 → 恢复后统一重发当前段（§九 第 6 项）
+        if (impl_->paused.load()) {
+            QElapsedTimer pauseTimer;
+            pauseTimer.start();
+            const bool resumed = PauseGate(collectAxes(), [&] {
+                for (auto& r : runners) {
+                    if (r.done() || r.failed) continue;
+                    if (r.phase != RunnerState::PhaseWait) continue;   // 只在等待中的段有目标可重发
+                    ReissueRunnerSegment(r);
+                }
+                return true;
+            });
+            const long long pausedMs = pauseTimer.elapsed();
+            for (auto& r : runners) r.pauseAccumMs += pausedMs;   // Delay 按剩余时间续算
+            if (!resumed) continue;                               // 暂停中被停止 → 回到 ①
+            continue;
+        }
+
+        // ③ 推进所有未完成的子状态机（单线程轮询：下发互不阻塞）
+        bool allDone = true;
+        for (auto& r : runners) {
+            if (r.done() || r.failed) continue;
+            if (!StepRunner(r)) {
+                // 失败归因 = 首个失败者（其余仅记日志，§九 第 4 项）
+                if (impl_->lastError.isEmpty())
+                    impl_->lastError = r.failReason.isEmpty()
+                                           ? QStringLiteral("动作「%1」执行失败").arg(r.action.name)
+                                           : r.failReason;
+                SPDLOG_WARN("[SequenceWorker] runner failed: node #{} '{}' — {}",
+                            r.action.id, r.action.name.toStdString(),
+                            impl_->lastError.toStdString());
+                aborting = true;
+                break;
+            }
+            if (!r.done()) allDone = false;
+        }
+        if (aborting) continue;      // 回到 ① 做安全停止（§Q2）
+        if (allDone) return true;
+
+        QThread::msleep(20);         // 轮询节拍：与改造前 WaitForAxes 的 20ms 一致
+    }
+}
+
+// 推进一个子状态机一次（§5.2）。三种形态：
+//   · Delay（含"无相机视觉"的模拟延时）—— 纯计时，无轴参与；
+//   · Vision —— 同步检测（数十 ms 量级，§5.4 单线程足够），一次 Step 走完；
+//   · 其余（Move / VisionGuide / Extrude / Gripper）—— 归约为「段序列」：
+//     Begin（解析目标）→ Dispatch（下发）→ Wait（等到位）→ 下一段。
+bool SequenceWorker::StepRunner(RunnerState& r)
+{
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
+    const ActionData& action = r.action;
+    r.failReason.clear();
+
+    // ---- Delay：暂停时长不计入延时预算（10s 延时跑到第 8s 被暂停，恢复后只应再等约 2s）----
+    if (action.type == ActionType::Delay) {
+        if (!r.delayStarted) {
+            emit logMessage(QStringLiteral("延时 %1 ms").arg(action.delayMs));
+            r.delayTimer.start();
+            r.delayStarted = true;
+        }
+        const long long eff = r.delayTimer.elapsed() - r.pauseAccumMs;
+        if (eff >= action.delayMs) { r.phase = RunnerState::PhaseDone; return true; }
+        return true;
+    }
+
+    // ---- 识别：同步检测 ----
+    if (action.type == ActionType::Vision) {
+        if (r.phase == RunnerState::PhaseBegin) {
+            auto* camera = InMainThread([&] { return hw.camera(); });
+            auto* algo   = InMainThread([&] { return hw.algorithm(); });
+            if (!camera || !algo) {
+                SPDLOG_WARN("[SequenceWorker] Vision: camera/algo not available, simulate");
+                emit logMessage(QStringLiteral("视觉：无相机/算法，模拟延时"));
+                r.delayTimer.start();
+                r.delayStarted = true;
+                r.phase = RunnerState::PhaseWait;
+                return true;
+            }
+            emit logMessage(QStringLiteral("视觉：采帧中 (%1)...").arg(action.visionType));
+            CameraFrame frame = InMainThread([&] { return camera->CaptureFrame(); });
+
+            emit logMessage(QStringLiteral("视觉：检测中 (阈值 %1)...").arg(action.threshold));
+            auto results = InMainThread([&] { return algo->Detect(frame); });
+
+            if (results.empty()) {
+                SPDLOG_WARN("[SequenceWorker] Vision: no target detected");
+                r.failReason = QStringLiteral("视觉未检出目标");
+                r.failed = true;
+                return false;
+            }
+
+            const auto& best = results.front();
+            Pose robot = impl_->coord.CameraToRobot(best.x, best.y, best.z);
+            // P5 §5.4：结果落进会话结果表，供「视觉引导」动作按 sourceActionId 取用。
+            // 用 action.id 作 key —— 这正是"按稳定编号引用"而非"按时序邻近"的落点：
+            // 中间插入/删除/重排节点都不会让引用错位。
+            // ⚠ 注意 PuffResult.yaw **不参与**：yaw 是相机图像平面内的偏航角，本项目无工艺意义（§七）。
+            impl_->visionResults_.insert(action.id, robot);
+            SPDLOG_INFO("[SequenceWorker] Vision target: cam({:.1f},{:.1f},{:.1f}) conf={:.2f} "
+                        "→ robot({:.1f},{:.1f},{:.1f}) [node #{} yaw={:.1f} ignored]",
+                        best.x, best.y, best.z, best.confidence, robot.x, robot.y, robot.z,
+                        action.id, best.yaw);
+            emit visionResultReady(action.id, robot.x, robot.y, robot.z);
+            emit logMessage(QStringLiteral("视觉定位：基座 (%1, %2, %3) 置信度 %4")
+                                .arg(robot.x, 0, 'f', 1)
+                                .arg(robot.y, 0, 'f', 1)
+                                .arg(robot.z, 0, 'f', 1)
+                                .arg(best.confidence, 0, 'f', 2));
+            r.phase = RunnerState::PhaseDone;
+            return true;
+        }
+        // PhaseWait = 无相机时的模拟延时（改造前为 WaitForCancelOrTime(500)）
+        if (r.delayTimer.elapsed() - r.pauseAccumMs >= 500) {
+            r.phase = RunnerState::PhaseDone;
+            return true;
+        }
+        return true;
+    }
+
+    // ---- 段序列（Move / VisionGuide / Extrude / Gripper）----
+    for (;;) {
+        if (r.phase == RunnerState::PhaseBegin) {
+            if (!PrepareRunnerSegment(r)) { r.failed = true; return false; }
+            r.phase = RunnerState::PhaseDispatch;
+        }
+        if (r.phase == RunnerState::PhaseDispatch) {
+            if (!DispatchRunnerSegment(r)) {
+                r.failReason = QStringLiteral("动作「%1」下发失败").arg(action.name);
+                r.failed = true;
+                return false;
+            }
+            r.waitTimer.restart();
+            r.phase = RunnerState::PhaseWait;
+            return true;            // 已下发：下一 tick 才检查到位（下发互不阻塞的关键）
+        }
+        // PhaseWait：等本段参与轴到位
+        const bool busy = InMainThread([&] {
+            for (auto a : r.axes) if (hw.IsAxisBusy(a)) return true;
+            return false;
+        });
+        if (busy) {
+            if (r.timeoutMs > 0 && r.waitTimer.elapsed() > r.timeoutMs) {
+                r.failReason = QStringLiteral("动作「%1」到位超时").arg(action.name);
+                r.failed = true;
+                return false;
+            }
+            return true;
+        }
+        // 本段完成 → 下一段（或整节点完成）
+        if (!AdvanceRunnerSegment(r)) { r.phase = RunnerState::PhaseDone; return true; }
+        r.phase = RunnerState::PhaseBegin;
+    }
+}
+
+// Begin：解析当前段的目标（IK / 软限位 / 日志）。失败返回 false 并写 r.failReason。
+bool SequenceWorker::PrepareRunnerSegment(RunnerState& r)
+{
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
+    const ActionData& action = r.action;
+
+    switch (action.type) {
+    case ActionType::Move: {
+        if (r.segIdx >= action.points.size()) return true;      // 无点位 → 直接收尾
+        const PointData& pt = action.points[r.segIdx];
+        emit logMessage(QStringLiteral("移动 → 点 %1 (%2)").arg(r.segIdx + 1).arg(pt.name));
+        if (!ResolveRunnerJoints(r, pt)) return false;
+        r.speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
+        r.axes = { LogicalAxis::J1, LogicalAxis::J2, LogicalAxis::Z, LogicalAxis::R };
+        r.timeoutMs = 30000;
+        return true;
+    }
+    case ActionType::VisionGuide: {
+        // ① 取识别结果（§5.3 步骤 1）。取不到 → 报错且**不产生任何运动**（§4.3 执行期校验）。
+        if (!r.baseResolved) {
+            r.baseResolved = true;
+            if (action.sourceActionId <= 0) {
+                r.failReason = QStringLiteral(
+                    "视觉引导：未指定识别动作编号，请先编辑该动作选择引用的识别动作");
+                return false;
+            }
+            const auto it = impl_->visionResults_.constFind(action.sourceActionId);
+            if (it == impl_->visionResults_.constEnd()) {
+                r.failReason = QStringLiteral("视觉引导：未找到识别动作 #%1 的结果"
+                                              "（该识别动作本次会话未执行，或未检出目标）")
+                                   .arg(action.sourceActionId);
+                return false;
+            }
+            r.baseX = it.value().x;
+            r.baseY = it.value().y;
+            r.baseZ = it.value().z;
+            r.baseOk = true;
+            SPDLOG_INFO("[SequenceWorker] VisionGuide #{} ← Vision #{}: base({:.1f},{:.1f},{:.1f}) "
+                        "offsetZ={:.1f} r={:.1f}",
+                        action.id, action.sourceActionId, r.baseX, r.baseY, r.baseZ,
+                        action.offsetZ, action.guideR);
+            emit logMessage(QStringLiteral("视觉引导：引用 #%1 → 目标上方 (%2, %3, %4) → 目标 (%5, %6, %7)")
+                                .arg(action.sourceActionId)
+                                .arg(r.baseX, 0, 'f', 1).arg(r.baseY, 0, 'f', 1)
+                                .arg(r.baseZ + action.offsetZ, 0, 'f', 1)
+                                .arg(r.baseX, 0, 'f', 1).arg(r.baseY, 0, 'f', 1)
+                                .arg(r.baseZ, 0, 'f', 1));
+        }
+        if (!r.baseOk) {
+            r.failReason = QStringLiteral("视觉引导：识别结果不可用");
+            return false;
+        }
+
+        // ② 两组坐标（§5.2）：r 一律取 guideR（轴 4 固定值），**不是** PuffResult.yaw。
+        // offsetZ 按**末端高度 Pose.z** 算、正值向上（决策 3），与 PointData.j3（Z 电机坐标）无关。
+        // hasJoints 保持 false：坐标由识别结果决定，没有示教关节角可继承 → 走 IK。
+        PointData pt;
+        pt.name = (r.segIdx == 0) ? QStringLiteral("目标上方") : QStringLiteral("目标");
+        pt.x = r.baseX;
+        pt.y = r.baseY;
+        pt.z = (r.segIdx == 0) ? (r.baseZ + action.offsetZ) : r.baseZ;
+        pt.r = action.guideR;
+
+        if (!ResolveRunnerJoints(r, pt)) return false;
+        r.speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
+        r.axes = { LogicalAxis::J1, LogicalAxis::J2, LogicalAxis::Z, LogicalAxis::R };
+        r.timeoutMs = 30000;
+        return true;
+    }
+    case ActionType::Extrude: {
+        const QVector<ExtrudeSegment> segs = ExtrudeSegmentsOf(action);
+        if (r.segIdx >= segs.size()) return true;
+        r.segTarget = segs[r.segIdx].target;
+        r.segSpeed  = segs[r.segIdx].speed;
+        emit logMessage(segs[r.segIdx].logText);
+        r.axes = { LogicalAxis::Extruder };
+        r.timeoutMs = 10000;
+        return true;
+    }
+    case ActionType::Gripper: {
+        // 行程 = 轴5 绝对目标坐标（mm），语义与手动控制页轴5 Go 一致：0 = 夹紧、负值 = 松开
+        const double lo = InMainThread([&] { return hw.GetLimitMin(LogicalAxis::Gripper); });
+        const double hi = InMainThread([&] { return hw.GetLimitMax(LogicalAxis::Gripper); });
+        const double target = action.gripperTarget;
+        // 软限位硬性拦截（与手动页 Go / MoveAbs 内部同源）：越界拒绝，绝不静默改写目标
+        if (!InMainThread([&] { return hw.IsWithinSoftLimits(LogicalAxis::Gripper, target); })) {
+            SPDLOG_WARN("[SequenceWorker] Gripper target {:.2f} out of soft limits [{:.2f}, {:.2f}]",
+                        target, lo, hi);
+            r.failReason = QStringLiteral("夹爪目标行程 %1 mm 超出轴5软限位（%2 ~ %3 mm）")
+                               .arg(QString::number(target, 'f', 2),
+                                    QString::number(lo, 'f', 2), QString::number(hi, 'f', 2));
+            return false;
+        }
+        r.speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
+        r.segTarget = target;
+        r.segSpeed  = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::Gripper); }) * r.speedScale;
+        emit logMessage(QStringLiteral("夹爪%1 → 目标 %2 mm（速度 %3 mm/s）")
+                            .arg(action.isGripperOpen ? QStringLiteral("张开") : QStringLiteral("闭合"),
+                                 QString::number(target, 'f', 2),
+                                 QString::number(r.segSpeed, 'f', 2)));
+        r.axes = { LogicalAxis::Gripper };
+        r.timeoutMs = 0;    // 下发后按 MarkAxisBusy 估算的耗时动态兜底（见 DispatchRunnerSegment）
+        return true;
+    }
+    default:
+        return true;
+    }
+}
+
+// 把点位解析为关节目标：示教 joints 优先（FK 一致性校验 ±0.5mm / ±0.5°，不匹配即回退 IK）。
+// 逻辑与改造前 MoveToPoint 的前半段逐行一致，只是结果落到 RunnerState。
+bool SequenceWorker::ResolveRunnerJoints(RunnerState& r, const PointData& pt)
+{
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
 
     const double curJ2 = InMainThread([&] { return hw.GetPosition(LogicalAxis::J2); });
 
@@ -742,23 +1177,20 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
     // Kinematics::ValidateJoints 按 [rMin,rMax] 拒绝 wrap 值会报"目标点不可达"
     target.r = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, target.r); });
 
-    Joints joints;
     bool usedTeach = false;
     if (pt.hasJoints) {
         // 示教关节角路径：j1/j2=逻辑关节角、j3=Z 电机坐标（MoveAbs 同坐标系）、j4=R 角，
         // 直接下发，确定性复现示教姿态（无 IK 双解歧义）
-        Joints j{ pt.j1, pt.j2, pt.j3, pt.j4 };
-        j.r = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, j.r); });
+        double j1 = pt.j1, j2 = pt.j2, jz = pt.j3, jr = pt.j4;
+        jr = InMainThread([&] { return hw.NormalizeRotationAngle(LogicalAxis::R, jr); });
         // FK 一致性校验（±0.5mm / ±0.5°）：joints 与 coord 不匹配（json 手改未走 UI 作废、
         // 旧版硬编码全 0 占位残留等）时回退 IK，绝不按错误关节角运动。
-        // 例：旧版 save 对所有点硬编码写 joints=0.0，fill_start(85,92,22) 若采信 J(0,0,0)
-        // 会走到 (358.69,0,165)——校验失败即回退，位置仍正确
-        const Pose fk = impl_->kin.Forward(j);
+        const Pose fk = impl_->kin.Forward(Joints{ j1, j2, jz, jr });
         double dr = std::fabs(fk.r - pt.r);
         while (dr > 180.0) dr = std::fabs(dr - 360.0);   // ±180 回绕感知的角度差
         if (std::fabs(fk.x - pt.x) <= 0.5 && std::fabs(fk.y - pt.y) <= 0.5 &&
             std::fabs(fk.z - pt.z) <= 0.5 && dr <= 0.5) {
-            joints = j;
+            r.j1 = j1; r.j2 = j2; r.jz = jz; r.jr = jr;
             usedTeach = true;
         } else {
             SPDLOG_WARN("[SequenceWorker] joints/coord mismatch at '{}' "
@@ -767,70 +1199,94 @@ bool SequenceWorker::MoveToPoint(const PointData& pt, double speedScale)
         }
     }
     if (!usedTeach) {
+        Joints joints;
         if (!impl_->kin.InverseSmart(target, joints, curJ2)) {
             SPDLOG_WARN("[SequenceWorker] IK failed for point ({:.1f}, {:.1f}, {:.1f}) r={:.1f}",
                         pt.x, pt.y, pt.z, pt.r);
-            impl_->lastError = QStringLiteral("目标点不可达：(%1, %2, %3)").arg(pt.x).arg(pt.y).arg(pt.z);
+            r.failReason = QStringLiteral("目标点不可达：(%1, %2, %3)").arg(pt.x).arg(pt.y).arg(pt.z);
             return false;
         }
+        r.j1 = joints.j1; r.j2 = joints.j2; r.jz = joints.z; r.jr = joints.r;
         SPDLOG_INFO("[SequenceWorker] IK → J({:.2f}, {:.2f}, {:.2f}, {:.2f})",
-                    joints.j1, joints.j2, joints.z, joints.r);
+                    r.j1, r.j2, r.jz, r.jr);
     } else {
         SPDLOG_INFO("[SequenceWorker] Teach joints → J({:.2f}, {:.2f}, {:.2f}, {:.2f})",
-                    joints.j1, joints.j2, joints.z, joints.r);
-    }
-
-    // 各轴速度：maxSpeed × speedPercent
-    const double v1 = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::J1); }) * speedScale;
-    const double v2 = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::J2); }) * speedScale;
-    const double vz = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::Z); }) * speedScale;
-    const double vr = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::R); }) * speedScale;
-
-    // 分步移动：先舵机（J2/R）再卡轴（J1/Z），避免机械干涉。
-    // 已在位轴（差 ≤ 0.01）跳过下发 —— 见 DispatchPointMove 注释（S2c / D19 加固）。
-    if (!InMainThread([&] { return DispatchPointMove(joints, v1, v2, vz, vr); })) return false;
-
-    // 等待全部轴到位（IsAxisBusy 时间戳 + 轮询；超时 30s 兜底）
-    QVector<LogicalAxis> axes{ LogicalAxis::J1, LogicalAxis::J2, LogicalAxis::Z, LogicalAxis::R };
-    // 暂停恢复用：重发**当前点**的绝对目标。MoveAbs 是绝对坐标，
-    // 从半路续走到目标不会累积误差，也不会回退到上一个点。
-    // （在 PauseGate 内已切到主线程执行，无需再包 InMainThread）
-    auto reissue = [joints, v1, v2, vz, vr]() {
-        // 与首次下发同规则（含在位轴跳过）：恢复瞬间不把已在位轴重下发
-        return DispatchPointMove(joints, v1, v2, vz, vr);
-    };
-    if (!WaitForAxes(axes, 30000, reissue)) {
-        if (impl_->cancel.load()) return false;
-        SPDLOG_WARN("[SequenceWorker] WaitForAxes timeout at point ({:.1f}, {:.1f}, {:.1f})",
-                    pt.x, pt.y, pt.z);
-        impl_->lastError = QStringLiteral("移动到位超时");
-        return false;
+                    r.j1, r.j2, r.jz, r.jr);
     }
     return true;
 }
 
-bool SequenceWorker::WaitForAxes(const QVector<LogicalAxis>& axes, int timeoutMs,
-                                 std::function<bool()> reissue)
+// Dispatch：下发当前段。**非阻塞**——MoveAbs 立即返回，到位靠 IsAxisBusy 轮询
+//（这正是并发能重叠等待的前提：下发不占时间，等待才占）。
+bool SequenceWorker::DispatchRunnerSegment(RunnerState& r)
+{
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
+
+    switch (r.action.type) {
+    case ActionType::Move:
+    case ActionType::VisionGuide:
+        // 分步移动：先舵机（J2/R）再卡轴（J1/Z），避免机械干涉。
+        // 已在位轴（差 ≤ 0.01）跳过下发 —— 见 DispatchPointMove 注释（S2c / D19 加固）。
+        return InMainThread([&] {
+            return DispatchPointMove(Joints{ r.j1, r.j2, r.jz, r.jr },
+                                     hw.GetMaxSpeed(LogicalAxis::J1) * r.speedScale,
+                                     hw.GetMaxSpeed(LogicalAxis::J2) * r.speedScale,
+                                     hw.GetMaxSpeed(LogicalAxis::Z)  * r.speedScale,
+                                     hw.GetMaxSpeed(LogicalAxis::R)  * r.speedScale);
+        });
+    case ActionType::Extrude:
+        return InMainThread([&] {
+            return hw.MoveAbs(LogicalAxis::Extruder, r.segTarget, r.segSpeed);
+        });
+    case ActionType::Gripper: {
+        if (!InMainThread([&] {
+                return hw.MoveAbs(LogicalAxis::Gripper, r.segTarget, r.segSpeed);
+            }))
+            return false;
+        // 到位等待：按 MoveAbs 里 MarkAxisBusy 估算的耗时动态兜底——
+        // 低速（如 10% ≈ 0.2mm/s 走 3mm 需 15s）时固定 10s 会误判超时；下限 3000 防 est=0 无限等待
+        const int estMs = InMainThread([&] { return hw.GetAxisBusyMs(LogicalAxis::Gripper); });
+        r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
+        return true;
+    }
+    default:
+        return true;
+    }
+}
+
+// 段完成 → segIdx+1；返回 true = 还有下一段。
+bool SequenceWorker::AdvanceRunnerSegment(RunnerState& r)
+{
+    ++r.segIdx;
+    r.axes.clear();     // 防上一段的轴集合被下一段误用（segIdx 越界时也靠它立即"不忙"）
+    return r.segIdx < SegmentCountOf(r.action);
+}
+
+// 恢复续走：重发**当前段**的绝对目标。**须在 InMainThread 内调用。**
+void SequenceWorker::ReissueRunnerSegment(RunnerState& r)
 {
     auto& hw = HardwareManager::instance();
-    QElapsedTimer t;
-    t.start();
-    for (;;) {
-        // 顺序约束：cancel/paused 检查必须在 allDone 判定**之前**——
-        // 否则减速停清 busy 后会被误判成"已到位"，导致动作假成功
-        if (impl_->cancel.load()) return false;
-        if (impl_->paused.load()) {
-            if (!PauseGate(axes, reissue)) return false;   // 暂停中被 Stop/急停 → 终止动作
-            t.restart();                                    // 暂停时长不占超时预算
-            continue;
+    switch (r.action.type) {
+    case ActionType::Move:
+    case ActionType::VisionGuide:
+        // 与首次下发同规则（含在位轴跳过）：恢复瞬间不把已在位轴重下发
+        DispatchPointMove(Joints{ r.j1, r.j2, r.jz, r.jr },
+                          hw.GetMaxSpeed(LogicalAxis::J1) * r.speedScale,
+                          hw.GetMaxSpeed(LogicalAxis::J2) * r.speedScale,
+                          hw.GetMaxSpeed(LogicalAxis::Z)  * r.speedScale,
+                          hw.GetMaxSpeed(LogicalAxis::R)  * r.speedScale);
+        break;
+    case ActionType::Extrude:
+        hw.MoveAbs(LogicalAxis::Extruder, r.segTarget, r.segSpeed);
+        break;
+    case ActionType::Gripper:
+        if (hw.MoveAbs(LogicalAxis::Gripper, r.segTarget, r.segSpeed)) {
+            const int estMs = hw.GetAxisBusyMs(LogicalAxis::Gripper);
+            r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
         }
-        bool allDone = true;
-        for (auto a : axes) {
-            if (InMainThread([&] { return hw.IsAxisBusy(a); })) { allDone = false; break; }
-        }
-        if (allDone) return true;
-        if (timeoutMs > 0 && t.elapsed() > timeoutMs) return false;
-        QThread::msleep(20);
+        break;
+    default:
+        break;
     }
 }
 
@@ -868,144 +1324,5 @@ bool SequenceWorker::PauseGate(const QVector<LogicalAxis>& axes,
     if (reissue) InMainThread([&] { return reissue(); });
 
     SetState(WorkerState::Running);
-    return true;
-}
-
-bool SequenceWorker::ExecuteVision(const ActionData& action)
-{
-    auto& hw = HardwareManager::instance();
-
-    auto* camera = InMainThread([&] { return hw.camera(); });
-    auto* algo   = InMainThread([&] { return hw.algorithm(); });
-    if (!camera || !algo) {
-        SPDLOG_WARN("[SequenceWorker] Vision: camera/algo not available, simulate");
-        emit logMessage(QStringLiteral("视觉：无相机/算法，模拟延时"));
-        return impl_->WaitForCancelOrTime(500);
-    }
-
-    emit logMessage(QStringLiteral("视觉：采帧中 (%1)...").arg(action.visionType));
-    CameraFrame frame = InMainThread([&] { return camera->CaptureFrame(); });
-
-    emit logMessage(QStringLiteral("视觉：检测中 (阈值 %1)...").arg(action.threshold));
-    auto results = InMainThread([&] { return algo->Detect(frame); });
-
-    if (results.empty()) {
-        SPDLOG_WARN("[SequenceWorker] Vision: no target detected");
-        impl_->lastError = QStringLiteral("视觉未检出目标");
-        return false;
-    }
-
-    const auto& best = results.front();
-    Pose robot = impl_->coord.CameraToRobot(best.x, best.y, best.z);
-    SPDLOG_INFO("[SequenceWorker] Vision target: cam({:.1f},{:.1f},{:.1f}) conf={:.2f} → robot({:.1f},{:.1f},{:.1f})",
-                best.x, best.y, best.z, best.confidence, robot.x, robot.y, robot.z);
-    emit logMessage(QStringLiteral("视觉定位：基座 (%1, %2, %3) 置信度 %4")
-                        .arg(robot.x, 0, 'f', 1)
-                        .arg(robot.y, 0, 'f', 1)
-                        .arg(robot.z, 0, 'f', 1)
-                        .arg(best.confidence, 0, 'f', 2));
-    return true;
-}
-
-bool SequenceWorker::ExecuteExtrude(const ActionData& action)
-{
-    auto& hw = HardwareManager::instance();
-
-    if (action.extrudeAmount > 0.0) {
-        emit logMessage(QStringLiteral("挤出 %1 mm").arg(action.extrudeAmount));
-        if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Extruder, action.extrudeAmount, action.extrudeSpeed); }))
-            return false;
-        QVector<LogicalAxis> axes{ LogicalAxis::Extruder };
-        // 续走只重发"挤出段"目标（绝对量），不会重复挤出
-        auto reissue = [this, action]() {
-            return HardwareManager::instance().MoveAbs(
-                LogicalAxis::Extruder, action.extrudeAmount, action.extrudeSpeed);
-        };
-        if (!WaitForAxes(axes, 10000, reissue)) {
-            if (impl_->cancel.load()) return false;
-            impl_->lastError = QStringLiteral("挤出到位超时");
-            return false;
-        }
-    }
-    if (action.suckBackAmount > 0.0) {
-        emit logMessage(QStringLiteral("回抽 %1 mm").arg(action.suckBackAmount));
-        const double target = action.extrudeAmount - action.suckBackAmount;
-        if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Extruder, target, action.suckBackSpeed); }))
-            return false;
-        QVector<LogicalAxis> axes{ LogicalAxis::Extruder };
-        // 续走只重发"回抽段"目标（绝对量 target），**绝不重发挤出段**——
-        // 否则会把挤出轴反向补回满量程再回抽，等于多挤一份料
-        const double suckTarget = target;
-        auto reissue = [this, suckTarget, action]() {
-            return HardwareManager::instance().MoveAbs(
-                LogicalAxis::Extruder, suckTarget, action.suckBackSpeed);
-        };
-        if (!WaitForAxes(axes, 10000, reissue)) {
-            if (impl_->cancel.load()) return false;
-            impl_->lastError = QStringLiteral("回抽到位超时");
-            return false;
-        }
-    }
-    return true;
-}
-
-bool SequenceWorker::ExecuteDelay(const ActionData& action)
-{
-    emit logMessage(QStringLiteral("延时 %1 ms").arg(action.delayMs));
-    // 暂停感知：暂停时长不计入延时预算——按"剩余时间"续算，而不是恢复后重新完整计时
-    // （10s 延时跑到第 8s 被暂停，恢复后只应再等约 2s）
-    QElapsedTimer t;
-    t.start();
-    long long pauseAccum = 0;
-    for (;;) {
-        if (impl_->cancel.load()) return false;
-        if (impl_->paused.load()) {
-            const long long effectiveBeforePause = t.elapsed() - pauseAccum;
-            if (!PauseGate()) return false;          // 暂停中被 Stop / 急停 → 终止
-            pauseAccum = t.elapsed() - effectiveBeforePause;   // 把暂停段计入 offset
-            continue;
-        }
-        if (t.elapsed() - pauseAccum >= action.delayMs) return true;
-        QThread::msleep(20);
-    }
-}
-
-bool SequenceWorker::ExecuteGripper(const ActionData& action)
-{
-    auto& hw = HardwareManager::instance();
-    // 行程 = 轴5 绝对目标坐标（mm），语义与手动控制页轴5 Go 一致：0 = 夹紧、负值 = 松开
-    const double lo = InMainThread([&] { return hw.GetLimitMin(LogicalAxis::Gripper); });
-    const double hi = InMainThread([&] { return hw.GetLimitMax(LogicalAxis::Gripper); });
-    const double target = action.gripperTarget;
-    // 软限位硬性拦截（与手动页 Go / MoveAbs 内部同源）：越界拒绝，绝不静默改写目标
-    if (!InMainThread([&] { return hw.IsWithinSoftLimits(LogicalAxis::Gripper, target); })) {
-        SPDLOG_WARN("[SequenceWorker] Gripper target {:.2f} out of soft limits [{:.2f}, {:.2f}]",
-                    target, lo, hi);
-        impl_->lastError = QStringLiteral("夹爪目标行程 %1 mm 超出轴5软限位（%2 ~ %3 mm）")
-                               .arg(QString::number(target, 'f', 2),
-                                    QString::number(lo, 'f', 2), QString::number(hi, 'f', 2));
-        return false;
-    }
-    // 速度映射到轴5：maxSpeed × speedPercent（与 MoveToPoint 同源），MoveAbs 内部再按卡上限截断
-    const double speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
-    const double speed = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::Gripper); }) * speedScale;
-    emit logMessage(QStringLiteral("夹爪%1 → 目标 %2 mm（速度 %3 mm/s）")
-                        .arg(action.isGripperOpen ? QStringLiteral("张开") : QStringLiteral("闭合"),
-                             QString::number(target, 'f', 2), QString::number(speed, 'f', 2)));
-    if (!InMainThread([&] { return hw.MoveAbs(LogicalAxis::Gripper, target, speed); }))
-        return false;
-    // 到位等待：按 MoveAbs 里 MarkAxisBusy 估算的耗时动态兜底——
-    // 低速（如 10% ≈ 0.2mm/s 走 3mm 需 15s）时固定 10s 会误判超时；下限 3000 防 est=0 无限等待
-    const int estMs = InMainThread([&] { return hw.GetAxisBusyMs(LogicalAxis::Gripper); });
-    QVector<LogicalAxis> axes{ LogicalAxis::Gripper };
-    // 续走只重发当前目标（绝对行程），不重复走已完成段
-    auto reissue = [this, target, speed]() {
-        return HardwareManager::instance().MoveAbs(LogicalAxis::Gripper, target, speed);
-    };
-    if (!WaitForAxes(axes, qMax(3000, static_cast<int>(estMs * 1.2) + 3000), reissue)) {
-        if (impl_->cancel.load()) return false;
-        impl_->lastError = QStringLiteral("夹爪到位超时");
-        return false;
-    }
     return true;
 }

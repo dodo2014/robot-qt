@@ -4,6 +4,10 @@
 # ============================================================
 option(USE_BOPAI "Build BoPai motion card support" ON)
 option(USE_XRSERVO "Build XR serial servo support" ON)
+# Orbbec 3D 相机（Gemini 336）。**默认 OFF**：SDK 为闭源二进制，且仅真机环境需要；
+# OFF 时 `OrbbecCamera.cpp` 不参与编译，`simulation.cameraType` 回落 `SimCamera`
+# 即可一键回到仿真（doc/camera_integration_plan.md §七 回退）。
+option(USE_ORBBEC "Build Orbbec 3D camera support" OFF)
 
 set(HAL_SOURCES
     motioncard/SimCard.cpp
@@ -51,6 +55,11 @@ if(USE_XRSERVO)
     list(APPEND HAL_HEADERS servo/XRServo.h)
 endif()
 
+if(USE_ORBBEC)
+    list(APPEND HAL_SOURCES camera/OrbbecCamera.cpp)
+    list(APPEND HAL_HEADERS camera/OrbbecCamera.h)
+endif()
+
 add_library(HAL STATIC
     ${HAL_SOURCES}
     ${HAL_HEADERS}
@@ -86,6 +95,13 @@ endif()
 if(USE_XRSERVO)
     target_compile_definitions(HAL PRIVATE USE_XRSERVO)
     target_link_libraries(HAL PRIVATE setupapi)
+endif()
+
+if(USE_ORBBEC)
+    # SDK 头以 <libobsensor/...> 形式包含，故 include 根是 3rdparty/orbbec/include
+    target_include_directories(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/include)
+    target_compile_definitions(HAL PRIVATE USE_ORBBEC)
+    target_link_libraries(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/lib/OrbbecSDK.lib)
 endif()
 
 # 在仿真模式下传递宏给 HAL 自身

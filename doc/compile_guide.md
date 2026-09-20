@@ -107,6 +107,42 @@ kill -9 $APP_PID
 **注意**：这一跑会让程序执行启动期逻辑——含 **S8 日志清理（删 7 天前 `log/creampuff_*.log`）**，
 即冒烟会真实删除过期日志文件，属预期行为。
 
+### 3.5 改了 `CMakeLists.txt` 后的首次重新配置（vcpkg 陷阱，2026-09-20 实测）
+
+ninja 会在任一 `CMakeLists.txt` 比 `build.ninja` 新时**自动重跑 CMake configure**（**新增/删除源文件必然触发**）。
+而 configure 中 `vcpkg.cmake` 会跑一次 `vcpkg install`（manifest 模式），**沙箱内必失败**：
+
+```
+-- Running vcpkg install
+internal error: D:\a\_work\1\s\src\vcpkg\visualstudio.cpp(90): Value was null
+-- Running vcpkg install - failed
+CMake Error at vcpkg/scripts/buildsystems/vcpkg.cmake:984 (message):
+```
+
+**根因**：`vcpkg-tool` 用 `cmd_execute_and_capture_output()` 起 `vswhere.exe` 并**读它的 stdout 管道**，
+再解析输出定位 VS 实例；沙箱对 native exe 的**管道/重定向一律拦截**（同 §3.3），于是输出为空 → 解析到 null
+→ 报 `Value was null`。
+
+**已实测排除的因素**（别再往这些方向试）：`vswhere.exe` 本身能跑且返回正确 JSON（VS 18 Community 在列）；
+`VCPKG_VISUAL_STUDIO_PATH`、`VSINSTALLDIR` / `VCINSTALLDIR` / `VCToolsInstallDir` 都设了也没用；
+`vcpkg.exe version` 正常。**这不是本项目缺陷**——开发机（无沙箱）configure 正常，`.bat` 一键流程不受影响。
+
+**沙箱内的绕法**（依赖已装在 `out/build/<cfg>/vcpkg_installed/x64-windows`，无需重装）：
+
+```bash
+# 与 §3.3 同一套 INCLUDE/LIB/PATH，然后：
+"/d/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" \
+  --regenerate-during-build -DVCPKG_MANIFEST_INSTALL=OFF \
+  -SD:/workspace/projects/CreamPuffRobot -BD:/workspace/projects/CreamPuffRobot/out/build/x64-Debug
+```
+
+- **必须用 `build.ninja` 里记录的同一个 `cmake.exe`**（VS 自带那个，见上；**不要**用 Qt 自带的 CMake）。
+- `VCPKG_MANIFEST_INSTALL=OFF` 会**写进 `CMakeCache.txt`**。包已在 `vcpkg_installed/` 中，`find_package` 照常命中
+  （实测 `nlohmann_json` / `OpenCV 4.12.0` / `spdlog` / `Eigen3 5.0.1` 全部 found）。
+- **用完请改回 `ON`**，保持与开发机一致：
+  `sed -i 's/^VCPKG_MANIFEST_INSTALL:BOOL=OFF/VCPKG_MANIFEST_INSTALL:BOOL=ON/' out/build/<cfg>/CMakeCache.txt`
+- **Debug 与 Release 各自独立**：两边都改过 `CMakeLists.txt` 时，两个 build 目录都要各来一次。
+
 ## 4. Sim 冒烟验证（编译后必跑）
 
 标准脚本 `out\smoke\sim_smoke.ps1` 默认跑 **Debug** exe。冒烟 Release 时临时改 exe 路径

@@ -150,6 +150,30 @@ else()
     message(WARNING "[POST_BUILD] No DLLs found in ${BOPAI_DLL_DIR} — skipping DLL copy")
 endif()
 
+# ---- Orbbec 3D 相机 SDK（仅 USE_ORBBEC=ON 时）----
+# ⚠ **白名单拷贝，只拷运行必需项**（doc/camera_integration_plan.md M3）：
+#   `3rdparty/orbbec/bin/` 里还躺着 `opencv_world340.dll`(65MB) / `opencv_world340d.dll`(104MB)
+#   与 60+ 个 `ob_*.exe` 示例程序 —— 用 `file(GLOB ...)` 全拷会污染输出目录并
+#   与项目自带的 OpenCV 版本冲突（运行时 DLL 冲突）。故此处**逐个显式指定**：
+#   - `OrbbecSDK.dll`：核心库（依赖仅系统 DLL + MSVC 运行时，由 windeployqt --compiler-runtime 覆盖）
+#   - `extensions/`：depthengine / filters / frameprocessor 等运行时插件（共约 1.2MB，深度处理必需）
+if(USE_ORBBEC)
+    set(ORBBEC_BIN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/orbbec/bin")
+    if(EXISTS "${ORBBEC_BIN_DIR}/OrbbecSDK.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORBBEC_BIN_DIR}/OrbbecSDK.dll"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${ORBBEC_BIN_DIR}/extensions"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/extensions"
+            COMMENT "[POST_BUILD] Copying Orbbec SDK runtime (OrbbecSDK.dll + extensions/, whitelist only)..."
+        )
+    else()
+        message(WARNING "[POST_BUILD] OrbbecSDK.dll not found in ${ORBBEC_BIN_DIR} — skipping")
+    endif()
+endif()
+
 # Qt6 DLL 部署：使用 windeployqt 自动复制运行所需的所有 Qt DLL
 set(QT6_BIN_DIR "D:/Qt/6.11.1/msvc2022_64/bin")
 if(EXISTS "${QT6_BIN_DIR}/windeployqt.exe")

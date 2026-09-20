@@ -11,11 +11,17 @@
 | 急停锁存归属 | AutoRunPage 自持 `m_estopPending`（5.4h） | **HardwareManager::estopPending_**（全局硬件级状态，Gemini Q6）；置位于 `EmergencyStop` 的 `emit enableStateChanged()` 之前；清除唯一条件=急停后全轴回零（MarkAxisHomed allHomed），先清后发专用信号 `estopCleared()` |
 | 模式切换门禁 | IsExecutionActive()（含 Fault） | **仅 Running/Paused 拦截**（Fault 放行——无运动在执行，切手动脱困合法；清报警回自动页做） |
 | 单步会话切模式 | 禁止切换并弹窗 | **Q12 形态**：切自动→强制 `AbortStepSession()`（Stop+ResetStepSession）后放行；切手动→放行（工艺页手动模式可达） |
-| 导航白名单 | 仅自动运行（决策 2） | **{0 自动运行，3 视觉检测}**（Gemini Q9）；视觉页 `SetParamsLocked` 锁 9 个参数控件（4 检测参数+deviceId+相机类型/分辨率/帧率/算法），操作类控件（相机开关/采集/检测/视图/截图）保持可用 |
+| 导航白名单 | 仅自动运行（决策 2） | **{0 自动运行，3 视觉检测}**（Gemini Q9）；视觉页 `SetParamsLocked` 锁参数/配置类控件；操作类控件中**采集启停也已并入锁定**（⚠ 2026-09-20 修正，见本表下方 blockquote） |
 | 方案下拉 | `gate && !busy`（手动模式全灭） | **`!busy`**——手动模式与急停锁存期保留预选能力（对齐原评审稿 5.3 表格） |
 | 标签高亮 | toggled lambda 内（5.5 称"回弹无需补偿"） | **迁入 `ApplyModeState`**（模式态唯一出口）——5.5 结论有误：拒绝回弹经 QSignalBlocker 屏蔽 toggled，高亮留在 lambda 会残留被拒模式色 |
 | 手动页急停提示 | 明确不做（原第九节） | **已做**（Gemini 修正 2）：estop 时先 ResetAxisStates 再 SetHint 分步恢复指导（防被 RefreshSoftLimitHint 覆盖）；`estopCleared` 绿字提示；OnGlobalEnable 成功且 IsEStopPending 时提示"请执行一键回零" |
 | 强制跳页 | `setChecked(true)` 触发 idClicked | **双写** `setChecked(true)+setCurrentIndex(0)`（程序化置位不发 idClicked） |
+
+> **⚠ 对「视觉页只读条款」的修正（P3 决策 10 + P4 §6.2，2026-09-20）**：本表与下方「模式白名单」行原先写「操作类控件（相机开关 / 采集 / 检测 / 视图 / 截图）保持可用」。**该约定已改**：
+> - **采集启停（原「相机开关 / 开始采集 / 停止采集」）由「可用」改为「置灰」**。原因：P3 起相机流是**全局共享资源**，启停权归持有者集合（`HardwareManager::AcquireCamera/ReleaseCamera`）。自动运行期间若视觉页能点「停止采集」，会 release 掉 `AutoRun` 的持有者，**打断正在执行的 `ExecuteVision`**（拿不到帧）——这是「生产观察通道」本意下的真实故障，不是理论风险。
+> - P4 视觉页重构后，锁定清单以 `doc/vision_test_page_redesign_plan.md` §6.2 为准：**置灰** ＝ 相机型号 / SN / 刷新设备 / 彩色流与深度流各 3 个参数 / D2C 对齐 / 算法引擎 / 模板配置 / **采集启停**；**保持可用** ＝ 存图三开关 / 单次检测 / 连续检测 / 加载本地图片 / 识别框开关 / 保存当前帧 / 三个画面。
+> - `SetParamsLocked(bool)` **签名未变**（`MainWindow.cpp:822` 无需改动）；视图切换按钮已随 P4 重构删除（三格同时显示，不再需要切换）。
+> - 另：P4 起检测参数（置信度 / Z min / Z max）与曝光控件**已从视觉页移除**（决策 4 + 方案 V5），调参走 `config.json`；`vision.exposure` 键已随之删除（无读点的死键）。
 
 安全位（TR-074）影响已覆盖：门禁弹窗区分 `IsSafePosSession()` → "正在返回安全位，请稍候"（不诱导停止）；急停恢复链路含"等自动回安全位完成"步骤。**手测 7 条见 TEST_RECORD TR-075，待真机验证阶段统一执行。**
 
@@ -37,7 +43,7 @@
 | Fault | 无 | 动作失败且非 cancel → `Fault` 锁存（保留上下文），`ClearFault()` 回 Idle（不动硬件使能） |
 | 按钮启用出口 | `UpdateControlsEnabled()`（4 钮矩阵） | 已落地同名函数（**5 钮矩阵**，见 `AutoRunPage.cpp`），互锁只需扩展 `gate = m_autoModeActive && !m_estopPending` 分支 |
 | 急停锁存 | `m_estopPending` 放 AutoRunPage | **改放 `HardwareManager`（如 `IsEStopPending()`）**——急停是全局硬件状态，任何页面按钮都该受限（Gemini 复核意见 Q6）；提示文案可放手动页 m_hintLabel |
-| 模式白名单 | 仅自动运行 | **自动运行 + 视觉检测**（生产需观察相机；视觉页只读，禁改参数）——Gemini 复核意见 Q9 |
+| 模式白名单 | 仅自动运行 | **自动运行 + 视觉检测**（生产需观察相机；视觉页只读，禁改参数）——Gemini 复核意见 Q9。**⚠ 2026-09-20 修正：视觉页的「采集启停」也一并置灰**，理由见上方「对视觉页只读条款的修正」 |
 | 单步会话切换 | 禁止切换并弹窗 | **切自动时强制 Stop() + ResetStepSession()**（不留脏数据）——Gemini 复核意见 Q12 |
 | `IsExecutionActive` | private → public | 未做（本轮未动 ProcessPage.h），实施时需上移 |
 
