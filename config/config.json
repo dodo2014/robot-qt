@@ -145,7 +145,17 @@
     },
     "communication": {
         "camera": {
-            "sn": "336L"
+            "autoExposure": true,
+            "colorFormat": "MJPG",
+            "colorFps": 15.0,
+            "colorHeight": 720,
+            "colorWidth": 1280,
+            "d2cAlign": "SW",
+            "depthFormat": "Y16",
+            "depthFps": 15.0,
+            "depthHeight": 480,
+            "depthWidth": 848,
+            "sn": "CP9KB530005S"
         },
         "motionCard": {
             "ip": "192.168.0.1",
@@ -210,14 +220,14 @@
     },
     "production": {
         "loop": {
-            "count": 16,
+            "count": 100,
             "mode": 1,
             "returnToSafePos": true
         }
     },
     "simulation": {
         "algorithmType": "SimAlgo",
-        "cameraType": "SimCamera",
+        "cameraType": "OrbbecCamera",
         "enabled": true,
         "motionCardType": "Bopai",
         "servoType": "XRServo"
@@ -249,6 +259,7 @@
     "vision": {
         "confidenceThreshold": 0.85,
         "depthZMax": 496.0,
-        "depthZMin": 6.0
+        "depthZMin": 6.0,
+        "templatePath": ""
     }
 }
