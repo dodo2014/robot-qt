@@ -49,6 +49,7 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
     };
 
     Acc acc[SimVision::kTargetCount];
+    int zFiltered = 0;   // 深度过滤计数（供与 confidenceThreshold 对称的汇总日志）
 
     const int stride = w * 3;
     for (int y = 0; y < h; ++y) {
@@ -90,8 +91,17 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
         if (!frame.depthData.empty() && res.pixelV >= 0 && res.pixelV < h &&
             res.pixelU >= 0 && res.pixelU < w) {
             float d = frame.depthData[static_cast<size_t>(res.pixelV) * w + res.pixelU];
-            if (d > 0.0f && d >= zMin && d <= zMax)
+            if (d > 0.0f && d >= zMin && d <= zMax) {
                 z = d;
+            } else if (d > 0.0f) {
+                // 深度有效但落在 [zMin, zMax] 之外 → 该目标不在工作范围内，**丢弃**。
+                // 语义与下方 confidenceThreshold 一致（都是「过滤掉」，不是「降级保留」）。
+                // 修复前：z 保持 0 仍入表 → 结果表出现 x=y=z=0 的伪目标，且会被
+                // SequenceWorker 识别分支的 results.front() 取走并喂给视觉引导（TR-103）。
+                ++zFiltered;
+                continue;
+            }
+            // d <= 0（深度缺失 / 无深度图）→ 保持 z = 0，仍报告 2D 位置（纯 2D 检测语义）
         }
         res.z   = z;
         res.x   = (res.pixelU - cx) / fx * z;
@@ -102,6 +112,12 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
         res.confidence = std::clamp(coverage * 1.08, 0.0, 1.0);
 
         results.push_back(res);
+    }
+
+    // 深度过滤汇总（TR-103）：与下方置信度过滤的日志对称，便于验收时确认生效。
+    if (zFiltered > 0) {
+        SPDLOG_INFO("[SimAlgo] depthZ[{:.1f},{:.1f}]: filtered {} of {} detection(s)",
+                    zMin, zMax, zFiltered, SimVision::kTargetCount);
     }
 
     // 置信度阈值（C1）：低于阈值的结果**丢弃**。

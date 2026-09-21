@@ -43,6 +43,10 @@ QString CameraTimeText(int64_t ms)
     return QDateTime::fromMSecsSinceEpoch(ms).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
+// 可勾选按钮样式（当前仅 `continuousBtn_` 使用）。
+// 伪状态特异性：`:hover:enabled`（2 个伪状态）强于 `:checked`（1 个），
+// 若不显式补一条勾选态的悬停规则，勾选后悬停会被蓝色顶掉。故补
+// `:checked:enabled:hover`（3 个）→ 勾选态悬停保持绿色系。
 void SetButtonCheckedStyle(QPushButton* btn)
 {
     btn->setStyleSheet(R"(
@@ -50,20 +54,27 @@ void SetButtonCheckedStyle(QPushButton* btn)
             background: #2f6f9f; color: white; border: none;
             border-radius: 8px; padding: 8px 14px; font-weight: 600; font-size: 13px;
         }
-        QPushButton:hover { background: #3f80b5; }
+        QPushButton:hover:enabled { background: #3f80b5; }
         QPushButton:checked { background: #27b95c; }
+        QPushButton:checked:enabled:hover { background: #2fd06a; }
     )");
 }
 
-void SetButtonActionStyle(QPushButton* btn, const char* baseColor)
+// 动作按钮样式：`baseColor` 为常态底色，`hoverColor` 为悬停高亮色。
+// 二者必须不同：此前 `%1` 与 `%2` 都填了 `baseColor`，悬停色等于常态色，
+// 鼠标移上去没有任何视觉反馈（2026-09-21 修复）。
+// `:enabled` 限定不可省——`SetParamsLocked` 与 `UpdateButtons` 会用
+// `setEnabled(false)` 置灰按钮，缺了限定则置灰按钮悬停反而变亮，
+// 产生「看着可点」的误导。
+void SetButtonActionStyle(QPushButton* btn, const char* baseColor, const char* hoverColor)
 {
     btn->setStyleSheet(QStringLiteral(R"(
         QPushButton {
             background: %1; color: white; border: none;
             border-radius: 8px; padding: 8px 14px; font-weight: 600; font-size: 13px;
         }
-        QPushButton:hover { background: %2; }
-    )").arg(QString::fromUtf8(baseColor), QString::fromUtf8(baseColor)));
+        QPushButton:hover:enabled { background: %2; }
+    )").arg(QString::fromUtf8(baseColor), QString::fromUtf8(hoverColor)));
 }
 
 QWidget* MakeSection(const QString& title, QLayout* content)
@@ -116,11 +127,12 @@ QCheckBox* MakeCheck(const QString& text)
     return c;
 }
 
-QPushButton* MakeButton(const QString& text, const char* objectName, const char* color)
+QPushButton* MakeButton(const QString& text, const char* objectName,
+                        const char* color, const char* hoverColor)
 {
     auto* b = new QPushButton(text);
     b->setObjectName(QString::fromUtf8(objectName));
-    SetButtonActionStyle(b, color);
+    SetButtonActionStyle(b, color, hoverColor);
     return b;
 }
 
@@ -366,7 +378,7 @@ QWidget* VisionTestPage::CreateControlPanel()
             });
             snRow->addWidget(deviceSnCombo_, 1);
 
-            refreshDevBtn_ = MakeButton(QStringLiteral("刷新"), "refreshDeviceBtn", "#3a4450");
+            refreshDevBtn_ = MakeButton(QStringLiteral("刷新"), "refreshDeviceBtn", "#3a4450", "#4c586a");
             connect(refreshDevBtn_, &QPushButton::clicked, this, &VisionTestPage::OnRefreshDevices);
             snRow->addWidget(refreshDevBtn_);
             grid->addLayout(snRow, row++, 1);
@@ -455,11 +467,11 @@ QWidget* VisionTestPage::CreateControlPanel()
         // 则自动关相机（不留占设备的状态）。
         auto* btnRow = new QHBoxLayout();
         btnRow->setSpacing(8);
-        startStreamBtn_ = MakeButton(QStringLiteral("开始采集"), "startStreamBtn", "#27b95c");
+        startStreamBtn_ = MakeButton(QStringLiteral("开始采集"), "startStreamBtn", "#27b95c", "#2fd06a");
         connect(startStreamBtn_, &QPushButton::clicked, this, &VisionTestPage::OnStartStream);
         btnRow->addWidget(startStreamBtn_);
 
-        stopStreamBtn_ = MakeButton(QStringLiteral("停止采集"), "stopStreamBtn", "#c0524a");
+        stopStreamBtn_ = MakeButton(QStringLiteral("停止采集"), "stopStreamBtn", "#c0524a", "#d4635a");
         connect(stopStreamBtn_, &QPushButton::clicked, this, &VisionTestPage::OnStopStream);
         btnRow->addWidget(stopStreamBtn_);
         grid->addLayout(btnRow, row++, 0, 1, 2);
@@ -494,7 +506,7 @@ QWidget* VisionTestPage::CreateControlPanel()
             "background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0;"
             "padding: 4px 8px; border-radius: 6px; font-size: 12px;");
         tplRow->addWidget(templatePathEdit_, 1);
-        browseTemplateBtn_ = MakeButton(QStringLiteral("浏览"), "browseTemplateBtn", "#3a4450");
+        browseTemplateBtn_ = MakeButton(QStringLiteral("浏览"), "browseTemplateBtn", "#3a4450", "#4c586a");
         connect(browseTemplateBtn_, &QPushButton::clicked, this, &VisionTestPage::OnBrowseTemplate);
         tplRow->addWidget(browseTemplateBtn_);
         v->addLayout(tplRow);
@@ -516,22 +528,22 @@ QWidget* VisionTestPage::CreateControlPanel()
 
         auto* algoBtnRow = new QHBoxLayout();
         algoBtnRow->setSpacing(8);
-        singleDetectBtn_ = MakeButton(QStringLiteral("单次检测"), "singleDetectBtn", "#2f6f9f");
+        singleDetectBtn_ = MakeButton(QStringLiteral("单次检测"), "singleDetectBtn", "#2f6f9f", "#3f80b5");
         connect(singleDetectBtn_, &QPushButton::clicked, this, &VisionTestPage::OnSingleDetect);
         algoBtnRow->addWidget(singleDetectBtn_);
 
-        continuousBtn_ = MakeButton(QStringLiteral("连续检测"), "continuousBtn", "#2f6f9f");
+        continuousBtn_ = MakeButton(QStringLiteral("连续检测"), "continuousBtn", "#2f6f9f", "#3f80b5");
         continuousBtn_->setCheckable(true);
         SetButtonCheckedStyle(continuousBtn_);
         connect(continuousBtn_, &QPushButton::clicked, this, &VisionTestPage::OnToggleContinuous);
         algoBtnRow->addWidget(continuousBtn_);
 
-        loadImgBtn_ = MakeButton(QStringLiteral("加载本地图片"), "loadImgBtn", "#3a4450");
+        loadImgBtn_ = MakeButton(QStringLiteral("加载本地图片"), "loadImgBtn", "#3a4450", "#4c586a");
         connect(loadImgBtn_, &QPushButton::clicked, this, &VisionTestPage::OnLoadImage);
         algoBtnRow->addWidget(loadImgBtn_);
         v->addLayout(algoBtnRow);
 
-        saveFrameBtn_ = MakeButton(QStringLiteral("保存当前帧"), "saveFrameBtn", "#27b95c");
+        saveFrameBtn_ = MakeButton(QStringLiteral("保存当前帧"), "saveFrameBtn", "#27b95c", "#2fd06a");
         connect(saveFrameBtn_, &QPushButton::clicked, this, &VisionTestPage::OnSnapshot);
         v->addWidget(saveFrameBtn_);
 
@@ -544,7 +556,7 @@ QWidget* VisionTestPage::CreateControlPanel()
     statusLabel_->setWordWrap(true);
     layout->addWidget(statusLabel_);
 
-    auto* openLogBtn = MakeButton(QStringLiteral("打开日志目录"), "openLogDirBtn", "#3a4450");
+    auto* openLogBtn = MakeButton(QStringLiteral("打开日志目录"), "openLogDirBtn", "#3a4450", "#4c586a");
     connect(openLogBtn, &QPushButton::clicked, this, &VisionTestPage::OnOpenLogDir);
     layout->addWidget(openLogBtn);
 

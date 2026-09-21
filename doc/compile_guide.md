@@ -70,14 +70,16 @@ WorkBuddy 会话里的 PowerShell 工具**跑不了 native exe 的管道/重定�
 `out\smoke\build_debug.bat` / 根 `build_release.bat` 在沙箱内会**静默无输出直接退出**（vcvars64 的
 `reg.exe` 依赖被拦，见第 2 节），**不要靠它们判断编译结果**。`Start-Process`（拉 GUI/分离进程）同样被拦。
 
-**可用路径：改用 Bash 工具跑 Git Bash**（不受上述限制），env 用 `;` 分隔的 Windows 路径：
+**可用路径：改用 Bash 工具跑 Git Bash**（不受上述限制）。⚠ 两类环境变量写法**不同**：
+`INCLUDE` / `LIB` 是 Windows 环境变量，用 `;` 分隔的 Windows 路径；**`PATH` 是 Git Bash
+自己的变量，必须用 `:` 分隔的 POSIX 路径**（`/d/...` 而非 `D:/...`）——理由与实测见 §8 末条：
 
 ```bash
 cd /d/workspace/projects/CreamPuffRobot
 export MSYS2_ARG_CONV_EXCL="*"
 export INCLUDE="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/include;D:/Windows Kits/10/Include/10.0.26100.0/ucrt;D:/Windows Kits/10/Include/10.0.26100.0/shared;D:/Windows Kits/10/Include/10.0.26100.0/um"
 export LIB="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/lib/x64;D:/Windows Kits/10/Lib/10.0.26100.0/ucrt/x64;D:/Windows Kits/10/Lib/10.0.26100.0/um/x64"
-export PATH="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64;D:/Windows Kits/10/Bin/10.0.26100.0/x64;D:/Qt/Tools/Ninja;D:/Qt/Tools/CMake_64/bin;D:/Qt/6.11.1/msvc2022_64/bin;$PATH"
+export PATH="/d/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64:/d/Windows Kits/10/Bin/10.0.26100.0/x64:/d/Qt/Tools/Ninja:/d/Qt/Tools/CMake_64/bin:/d/Qt/6.11.1/msvc2022_64/bin:$PATH"
 "/d/Qt/Tools/Ninja/ninja.exe" -C "D:/workspace/projects/CreamPuffRobot/out/build/x64-Debug" CreamPuffRobot 2>&1 | tail -50
 ```
 
@@ -194,7 +196,8 @@ ninja/CMake 自动加；手敲时缺一即编译失败：
 ```bash
 export MSYS2_ARG_CONV_EXCL="*"
 export INCLUDE="<MSVC>/include;<SDK>/Include/10.0.26100.0/ucrt;<SDK>/Include/10.0.26100.0/shared;<SDK>/Include/10.0.26100.0/um;<QT>/include;<QT>/include/QtWidgets;<QT>/include/QtGui;<QT>/include/QtCore;<QT>/include/QtWidgets/6.11.1;<QT>/include/QtGui/6.11.1;<QT>/include/QtCore/6.11.1;<QT>/include/QtWidgets/6.11.1/QtWidgets;<QT>/include/QtGui/6.11.1/QtGui;<QT>/include/QtCore/6.11.1/QtCore"
-export PATH="<MSVC>/bin/Hostx64/x64;<SDK>/Bin/10.0.26100.0/x64;<QT>/bin:$PATH"
+# ⚠ PATH 必须用 POSIX 路径（/d/...）；写成 D:/... 会被 MSYS 的 `:` 切碎，见本节末条
+export PATH="/d/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64:/d/Windows Kits/10/Bin/10.0.26100.0/x64:/d/Qt/6.11.1/msvc2022_64/bin:$PATH"
 "<MSVC>/bin/Hostx64/x64/cl.exe" /nologo /std:c++17 /permissive- /Zc:__cplusplus /EHsc /O2 /utf-8 tool.cpp /Fe:tool.exe /link /LIBPATH:"<QT>/lib" Qt6Widgets.lib Qt6Gui.lib Qt6Core.lib /LIBPATH:"<MSVC>/lib/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/ucrt/x64" /LIBPATH:"<SDK>/Lib/10.0.26100.0/um/x64" /SUBSYSTEM:CONSOLE
 ```
 
@@ -205,6 +208,16 @@ export PATH="<MSVC>/bin/Hostx64/x64;<SDK>/Bin/10.0.26100.0/x64;<QT>/bin:$PATH"
 cp "<QT>/bin/Qt6Core.dll" "<QT>/bin/Qt6Gui.dll" "<QT>/bin/Qt6Widgets.dll" .
 mkdir -p plugins/platforms && cp "<QT>/plugins/platforms/qwindows.dll" plugins/platforms/
 ```
-**Git Bash PATH 陷阱**：`export PATH="$QT/bin:$PATH"` 后运行 Windows exe 报
-`Qt6Core.dll cannot open` — DLL 加载走的是 Windows 进程的 PATH 而非 bash PATH，
-解决 = 把 dll 放到 exe 旁（同上拷贝），不要依赖 PATH。
+**⚠ Git Bash 的 PATH 陷阱（2026-09-21 实测修正归因）**：把 **Windows 风格路径**写进 Git Bash
+的 `PATH` 会被**切碎**——MSYS 用 `:` 作 PATH 分隔符，`D:` 里的冒号也被当成分隔符，于是
+`D:/Qt/.../bin` 变成 `D` 与 `/Qt/.../bin` 两个**无效项**（`echo "$PATH" | tr ':' '\n' | head -3`
+即可看到）。后果：运行 exe 时找不到 `Qt6Core.dll`，**退出码 127**。
+
+- **正确解法**：`PATH` 项一律用 **POSIX 路径** ——
+  `export PATH="/d/Qt/6.11.1/msvc2022_64/bin:$PATH"`。
+  实测：同一 exe 在 Windows 风格写法下退出码 127，改 POSIX 后立即正常输出；
+  对照（POSIX `PATH` 但不含 Qt bin）仍为 127 → 唯一变量就是 Qt bin 是否真正进入 `PATH`。
+- **旧结论「DLL 加载走的是 Windows 进程的 PATH 而非 bash PATH」不准确**：MSYS 启动 Windows
+  子进程时**会**把 bash `PATH` 转成 Windows `PATH` 传下去，bash `PATH` 是有效的；失效的
+  原因仅仅是**路径写法被切碎**。故不必绕道「拷 dll 到 exe 旁」。
+- 把 dll + 平台插件拷到 exe 旁仍是**部署**时的正当做法，但作为「`PATH` 写错」的解法属绕过。

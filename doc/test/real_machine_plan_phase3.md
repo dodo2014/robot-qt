@@ -295,7 +295,7 @@
 |---|---|---|
 | 11.1 ★ [A] | 把 `vision.confidenceThreshold` 改为 `1.01` → **重启** → Sim 模式启动 → 视觉页「单次检测」（SimAlgo 双目标）→ 记下结果表行数与日志 | 结果表 **0 行**；日志出现 `[SimAlgo] confidenceThreshold=1.010: filtered 2 of 2 detection(s)`——阈值**真的在过滤**（不再只是显示）。判据依据：Sim 目标是**硬填充完整圆**（`SimCamera.cpp` 的 `r2 <= radius²`，无抗锯齿）→ `coverage ≈ 1` → `confidence = clamp(coverage × 1.08, 0, 1) = 1.0`，故**只有 > 1.0 的阈值能滤掉目标**；≤ 1.0 的档位（含默认 0.85）不产生 `filtered` 日志（日志仅在 `results.size() != before` 时打印）。测完恢复 `0.85` `[TR-097]` |
 | 11.2 ★ [A] | 承 11.1：依次把 `vision.confidenceThreshold` 设为 `1.01` / `0.85` / `0.00`，**每次改完重启程序**再点一次「单次检测」 | `1.01` → 行数 0 + 日志 `filtered 2 of 2`；`0.85`（默认）→ 行数 2、**无** `filtered` 日志；`0.00` → 行数 2、**无** `filtered` 日志（`Detect` 的过滤分支要求 `thr > 0.0`，为 0 时整段跳过）。**三档行数自洽**。⚠ **必须重启才生效**——`SimAlgo::EffectiveThreshold()` 确实每次 `Detect` 都读 config，但读的是 `ConfigManager` 的**内存** `root_`（仅 `load()` 启动时从文件填充），**直接编辑磁盘文件不会刷新** `[TR-097]` |
-| 11.3 [A] | 把 `vision.depthZMin` 改成大于全部目标 Z 的值（Sim 双目标 `depthMm` = 55.0 / 105.0 mm，故取 `200`）→ **重启** → 单次检测；恢复 `6.0` 再重启复测 | 结果表清空（`Detect` 内 `d >= zMin && d <= zMax` 生效）；恢复后行数复原。⚠ **同样必须重启**（读内存 `root_`，非磁盘文件）`[TR-097]` |
+| 11.3 [A] | 把 `vision.depthZMin` 改成大于全部目标 Z 的值（Sim 双目标 `depthMm` = 55.0 / 105.0 mm，故取 `200`）→ **重启** → 单次检测；恢复 `6.0` 再重启复测 | 结果表清空（`Detect` 内 `d >= zMin && d <= zMax` 生效）；恢复后行数复原。⚠ **同样必须重启**（读内存 `root_`，非磁盘文件）。**日志核验**：超范围时出现 `[SimAlgo] depthZ[200.0,496.0]: filtered 2 of 2 detection(s)`（TR-103 新增的汇总日志，仅在 `zFiltered > 0` 时打印）；恢复 `6.0` 后该串**消失**——两目标均落在范围内 → `zFiltered = 0` → 不打日志 `[TR-097][TR-103]` |
 | 11.4 [A] | 在 `config/config.json` 中检索 | **不存在** `simulation.cameraDeviceId`；**不存在** `vision.frameWidth` / `frameHeight` / `frameFps`（三个幻影读点已删）；相机设备标识唯一键 = `communication.camera.sn` `[TR-097]` |
 | 11.5 [A] | 改 `communication.camera.sn` 为任意可辨识串（如 `TEST-SN-001`）→ 启动 → 查日志 | `[CameraManager] Camera opened (deviceId='TEST-SN-001')`——**deviceId 就是该键的值**（不再是硬编码 `CAM-SIM-001`，也不再读幻影键）；恢复原值 `[TR-097]` |
 | 11.6 [A] | 任意改动一个参数触发落盘 → 用 `python -m json.tool config/config.json` 校验；`ls config/` | `config.json` **始终是完整合法 JSON**（原子写：`QSaveFile` 写同目录临时文件后 `commit()`）；`config/` 中**不残留**临时文件 `[TR-097]` |
@@ -305,7 +305,14 @@
 | 11.10 [A] | 在同一方案里连续做「插入 / 删除 / 上移 / 下移」各若干次 | 其余动作的编号**一个都不变**（不重排、不回收）；列表条目显示的 `#N` 与 `process.json` 里的 `id` 一一对应 `[TR-098]` |
 | 11.11 [A] | 手工把某动作 `id` 改成不与任何编号冲突的值（如 `100`）→ 重开程序 | 加载后**保持 100**（显式且不冲突 → 保留）；`nextActionId` ≥ 101 `[TR-098]` |
 
-> **实测记录（阶段 11A，　　　　）**：
+> **实测记录（阶段 11A，2026-09-21；11.1~11.3 已通过，11.4~11.11 待执行）**：
+> - 11.1 ★ ✅ 结果表 **0 行**（`[VisionTestPage] 检测完成：未找到目标（9.4 ms）`）+ 日志 `13:59:22.705 [SimAlgo] confidenceThreshold=1.010: filtered 2 of 2 detection(s)`；启动快照 `13:58:49.448 [SimAlgo] config loaded: confidenceThreshold=1.010` —— 阈值**真的在过滤**，不再只是显示
+> - 11.2 ★ ✅ 三档自洽（每档均**重启后**测得，印证「手改文件必须重启」）：`1.01` → 0 行 + `filtered 2 of 2`（同 11.1）；`0.85` → `14:20:28.450 检测完成：发现 2 个目标（9.6 ms）`、**无** `filtered` 日志；`0.00` → `14:22:51.794 检测完成：发现 2 个目标（11.3 ms）`、**无** `filtered` 日志（启动快照 `14:22:39.415 config loaded: confidenceThreshold=0.000`）
+> - 11.3 ✅ 修复后（TR-103）复验：`depthZMin = 200` → 结果表 **0 行** + `15:02:29.959 [SimAlgo] depthZ[200.0,496.0]: filtered 2 of 2 detection(s)`；恢复 `6.0` → `15:07:07.794 检测完成：发现 2 个目标（13.1 ms）`，且 `depthZ[...]` 串**消失**（`zFiltered = 0` 不打日志）。**修复前**同一操作给出「2 行、X/Y/Z 全 0」的伪目标（根因与修法见 `TEST_RECORD.md` TR-103）
+> - ⚠ **11.2 边界观察**（不判失败）：**连续检测**下 `0.85` 档会偶发 `[SimAlgo] confidenceThreshold=0.850: filtered 1 of 2 detection(s)`（`14:21:15.756` 起，某帧只有 1 个目标达 0.85）→ 帧间波动，不影响「单次检测」判据；`depthZ` 侧同现象（`15:03:04.774 filtered 1 of 2`）
+> - ⚠ **日志行号已迁移**：`SimAlgo.cpp:119 / :151` → `:120 / :167`（TR-103 改动后的行号）→ 可据此确认跑的是修复后版本
+> - 证据：`log/creampuff_2026-09-21.log`（1720 行，`13:34`~`15:14`）
+> - ⚠ **当前 config 停在 `vision.depthZMin = 200.0`**（`15:07:23` 改回后未再改）→ 该状态下视觉检测恒返回 0 行。跑 11.4~11.11（不涉视觉）无碍，但 12.x 视觉引导用例前须改回 `6.0` **并重启**
 
 #### 11B · Sim 可做（P4 视觉页 + P1/P2 冒烟）
 

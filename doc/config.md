@@ -138,9 +138,9 @@ vision
 
 > **写入口与生效状态（2026-09-20，P1 核实 + P4 更新）**：
 > - `confidenceThreshold` — **P1 起真正生效**：`SimAlgo::Detect()` 按该值过滤掉 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。
-> - `depthZMin` / `depthZMax` — 由 `SimAlgo::Detect` **每次检测实时读**并做深度筛选 → 生效。
+> - `depthZMin` / `depthZMax` — 由 `SimAlgo::Detect` **每次检测实时读**并做深度筛选：深度有效但落在 `[zMin, zMax]` 之外的目标**丢弃**（不产生结果，语义与 `confidenceThreshold` 一致）；深度缺失（无深度图或深度值 ≤ 0）时仍报告 2D 位置、`z = 0` → 生效。**（TR-103 修复**：此前超范围只是把 `z` 置 0 而结果照常入表，结果表会出现 `x=y=z=0` 的伪目标）
 > - `templatePath` — **P4 新增**，写入口＝视觉检测页「模板配置」的「浏览…」（`VisionTestPage::OnBrowseTemplate`）。**⚠ 目前无读点**：`IPuffAlgorithm` 只有 `Detect/LocateBest/LoadConfig`，**没有模板参数**，故本键目前只做「入口 + 持久化」，由将来的算法实现消费（需求原文即写「可选填；留空则用算法内置默认值」）。**不要误以为它已在工作**。
-> - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。改后**无需重启**：`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()` 实时读。设备配置页的「视觉与工艺参数」标签页仍保留写入口。
+> - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。⚠ **手改本文件后必须重启程序**——三个键在检测时都是「实时读」（`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()`），但读的是 `ConfigManager` 的**内存** `root_`，而 `root_` 只在启动时由 `load()` 填充（`ConfigManager.cpp:49`）→ 不重启不会刷新。设备配置页的「视觉与工艺参数」标签页仍保留写入口，**经该页改则即时生效**（走 `set()` 更新内存 `root_`）。
 > - **`exposure` 键已随 P4 删除**（决策 4：本版固定自动曝光）。它此前唯一的写入口是视觉页的「曝光」输入框，该控件移除后**全库无任何读点**，属「看起来在工作、实际不工作」的死键。相机曝光由 SDK 自动曝光控制（`communication.camera.autoExposure`，见 `camera_integration_plan.md` §六）。注意与**动作级 `ActionData.exposure`**（挤出动作的参数，`doc/process.md`）区分——那是另一个东西。
 > - 上述键**均无全局参数与动作级参数的覆盖关系实现**，动作级覆盖规则的落地属 P5。
 
