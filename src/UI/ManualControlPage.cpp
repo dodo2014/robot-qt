@@ -522,7 +522,7 @@ void ManualControlPage::OnGlobalDisable()
 //    故强制 Stop()：仅置 cancel（SequenceWorker.cpp:296-301），Paused 退出路径不产生硬件命令，
 //    与随后下发的 HomeAxis 无竞争；interrupted 经 ProcessPage.cpp:934 自动复位工艺页单步 UI。
 //  · Fault：不动锁存（ClearFault 唯一入口在自动页，保留故障上下文），仅预告回安全位仍会被拦。
-//  · Running：拒绝。Stop() 不下发硬件停止（WaitForAxes 见 cancel 直接 return false），轴仍在跑；
+//  · Running：拒绝。Stop() 不下发硬件停止（到位轮询见 cancel 直接退出），轴仍在跑；
 //    回零仅靠 IsAxisBusy 时间估算软门禁（HardwareManager.cpp:587/:670-702）不可靠 → 与 MainWindow
 //    模式互锁同语义，直接拒绝。
 bool ManualControlPage::PrepareHomingSession(QString& hintPrefix, QString& hintColor)

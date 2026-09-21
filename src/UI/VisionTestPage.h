@@ -40,7 +40,7 @@ public:
     //
     // ⚠ 采集启停由「可用」改为「置灰」是 P3 决策 10 的修正：流是全局共享资源，
     // 自动运行期间点「停止采集」会 release 掉 AutoRun 的持有者，**打断正在执行的
-    // `ExecuteVision`**（拿不到帧）。启停权归持有者集合。
+    // 识别动作**（拿不到帧）。启停权归持有者集合。
     //
     // **签名不可变**：`MainWindow.cpp` 在模式切换时调用（`SetParamsLocked(bool)`）。
     void SetParamsLocked(bool locked);

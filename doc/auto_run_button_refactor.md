@@ -1,7 +1,7 @@
 # 自动运行页 5 按钮 + SequenceWorker 显式状态机重构
 
 > 范围：**架构指令 1/2**。本次**不做**模式互锁（那是下一步），**不做**安全位/初始位。
-> 前置文档：`doc/ui_interlock_plan.md`（下一步互锁用，本次需同步其 4 按钮矩阵与信号签名）
+> 前置文档：`doc/archive/ui_interlock_plan.md`（下一步互锁用，本次需同步其 4 按钮矩阵与信号签名）
 
 ## 一、需求
 
@@ -29,7 +29,7 @@
 
 - **底层"停止"已走 `MC_Stop` 减速斜坡**（`BoPaiCard.cpp:327/340`），**不是断脉冲** → 不丢步。用户观察到的"继续运动一点"= 减速距离（J1 30°/s、decel 跟随 maxAccel 50°/s² → 约 9°）。**不必也不能改成断脉冲**（开环会丢步）。
 - `HardwareManager::StopAxis`(`cpp:624-648`)：卡轴 MC_Stop + 舵机 `Stop()`(CMD24 停+锁位) + 清 busy + `AbortHoming`，**不断使能**。**`AbortHoming` 仅复位"正在回零中"的轴**（`cpp:721-731`）→ 运行中减速停**不会**把 `IsSystemHomed()` 打回 false，Resume 后 MoveAbs 不被回零互锁拒绝。**这是方案成立的前提，须写进注释**。
-- 全部挂起点收敛于 3 个等待函数 + 1 个循环头：`WaitForAxes`(`cpp:420`)、`Impl::WaitForCancelOrTime`(`cpp:55`)、`Impl::WaitForStep`(`cpp:72`)、`ExecuteMove` 点循环头(`cpp:339`)。`WaitForStep` 是现成的"可取消挂起门闩"模式，Pause 同构。
+- 全部挂起点收敛于 3 个等待函数 + 1 个循环头：`WaitForAxes`、`Impl::WaitForCancelOrTime`、`Impl::WaitForStep`、`ExecuteMove` 点循环头。`WaitForStep` 是现成的"可取消挂起门闩"模式，Pause 同构。（⚠ P6 后 `WaitForAxes` / `ExecuteMove` 已并入 `RunScheduler` + `PrepareRunnerSegment`；`WaitForCancelOrTime` / `WaitForStep` 仍在。）
 - `IsPaused()` 现语义 `stepMode && running`，**全项目无调用**（`cpp:241`）→ 可安全改为 `state==Paused`。
 - `stateChanged` 仅 **ProcessPage.cpp:858-880 一个消费者**（4 个中文字符串比较）；AutoRunPage 未接。MainWindow 不接任何 worker 信号。
 - 死代码：`SequenceWorker.h:88-89` 声明 `CancelSleep`/`WaitForStepGate` 无定义。
@@ -45,7 +45,7 @@
 bool StopAxes(const QVector<LogicalAxis>& axes);   // 逐个调既有 StopAxis（清 busy + AbortHoming）
 bool StopAllAxes();                                 // 对 AxisMap 已绑定轴逐个调
 ```
-> **不要**直接用 `motionCard_->StopAll()`：不覆盖舵机、不清 `axisBusyUntilMs_`、不发 `axisMoveFinished` → `WaitForAxes` 会误判"已到位"或空等 30s。
+> **不要**直接用 `motionCard_->StopAll()`：不覆盖舵机、不清 `axisBusyUntilMs_`、不发 `axisMoveFinished` → 到位轮询会误判"已到位"或空等 30s。
 
 ### S2 `SequenceWorker` 状态机骨架
 ```cpp
@@ -101,7 +101,7 @@ bool PauseGate(const QVector<LogicalAxis>& axes = {},
 `PauseGate` 内：`SetState(Paused, User)` → `InMainThread{ StopAxes(axes) }`（减速停+清 busy）→ `QEventLoop`+20ms 轮询等 `!paused || cancel` → 若 cancel 返回 false → `InMainThread{ reissue(); }`（重发**当前那条**绝对目标）→ `SetState(Running)`。
 - `Move/Extrude/Gripper`：把当前段的 `MoveAbs` 包成 reissue 传入。
 - `Delay`：`WaitForCancelOrTime` 改为同构（累计 `pauseAccumMs`，按剩余时间判），无 reissue。
-- `ExecuteMove` 点循环头 + `ExecuteActions` 循环头：加无参 `PauseGate()`（只挂起不停硬件），保证暂停一定生效。
+- `ExecuteMove` 点循环头 + `ExecuteActions` 循环头：加无参 `PauseGate()`（只挂起不停硬件），保证暂停一定生效。（⚠ P6 后落点为 `ExecuteOnce` 的轮边界、`RunScheduler` 的暂停分支、`WaitRetryDelay` 三处。）
 - `WaitForAxes` 恢复后 `t.restart()`——暂停时长不占 30s 超时预算。
 - **顺序约束**：cancel/paused 检查必须在 `allDone` 判定**之前**。
 
@@ -152,7 +152,7 @@ void SequenceWorker::StopImmediate()
 | `src/UI/ProcessPage.cpp` | `:858-880` 改 enum 消费者 |
 | `src/UI/AutoRunPage.h/.cpp` | 5 按钮 + 5 槽 + `UpdateControlsEnabled` + `OnWorkerStateChanged` + `SetHint` |
 | `src/UI/MainWindow.cpp` | **无需改动** |
-| `doc/ui_interlock_plan.md` | 同步 4→5 按钮矩阵与 `stateChanged` 签名（下一步实施前必读） |
+| `doc/archive/ui_interlock_plan.md` | 同步 4→5 按钮矩阵与 `stateChanged` 签名（下一步实施前必读） |
 | `TEST_RECORD.md` | 记账（追加前**重读取当前最大 TR 编号**，防并行会话撞号；TR-071 现存两条重复待修） |
 
 ## 六、风险与对策

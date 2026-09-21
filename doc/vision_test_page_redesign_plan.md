@@ -2,7 +2,7 @@
 
 > **需求来源**：用户 2026-09-17 提供的架构指令（由 Gemini 整理）第二份——「重构视觉检测专业调试页面」。
 > **本文性质**：**🟡 已实施（2026-09-20，台账 TR-100）**。§十 的 6 项未决项已由用户裁定「**全部按方案推荐**」并落地（见该节末列）；§九 的「编译 / Sim 冒烟」判据已满足，**真机三项仍待人工执行**。文中现状事实均带 `file:line`，是实施前的快照，可用源码复核。
-> **关联文档**：`doc/camera_integration_plan.md`（相机接入，本页依赖其 S2 设备枚举与 §2.1 持有者模型）、`doc/vision_guide_action_plan.md`（视觉引导动作，与本页共享 `PuffResult` 语义）、`doc/ui_interlock_plan.md`（TR-075 互锁，本页 §6.2 对其有一处修正）。
+> **关联文档**：`doc/camera_integration_plan.md`（相机接入，本页依赖其 S2 设备枚举与 §2.1 持有者模型）、`doc/vision_guide_action_plan.md`（视觉引导动作，与本页共享 `PuffResult` 语义）、`doc/archive/ui_interlock_plan.md`（TR-075 互锁，本页 §6.2 对其有一处修正）。
 > **补记说明**：本文是 2026-09-17 会话中**遗漏项的补齐**——该需求此前只被压缩进 `camera_integration_plan.md` 的 S5 一节（约 8 行），原始需求里的**控件规格基本丢失**。本文是它的完整落点。
 
 ## 一、需求整理（控件规格）
@@ -22,7 +22,7 @@
 
 - 左栏**固定 320 px 宽**，内容超出时垂直滚动（`QScrollArea`）。
 - 右侧 **2×2 四宫格**，`QGridLayout`，四格等分拉伸，随窗口自适应。
-- 画面区背景 `#0b0d0f`（与现有画面底色一致，`VisionTestPage.cpp:379`），细边框分隔。
+- 画面区背景 `#0b0d0f`（与现有画面底色一致，见 `VisionTestPage::SetupUI` 的画面区样式），细边框分隔。
 
 ### 1.2 左栏 · 「相机控制」组
 
@@ -115,7 +115,7 @@
 | `fpsTimer_` | `.cpp:135-137` | `OnFpsTick` `:702-706` | 每秒统计帧数 |
 | `frameReady` 订阅 | `.cpp:123` | `OnFrameReady` `:520-528` | 缓存帧 + 渲染 + 可选检测 |
 
-**对外契约只有一个**：`SetParamsLocked(bool)`（`.h:31`），由 `MainWindow.cpp:822` 在模式切换时调用。**重构必须保持该签名不变**。
+**对外契约只有一个**：`SetParamsLocked(bool)`（声明在 `VisionTestPage.h`），由 `MainWindow::ApplyModeState` 在模式切换时调用。**重构必须保持该签名不变**。
 
 ### 2.2 现存缺陷（重构时一并处理）
 
@@ -285,7 +285,7 @@ PreviewTile MakePreviewTile(const QString& title, bool withToggle = false, QChec
 
 ### 6.2 `SetParamsLocked` 控件清单（对 TR-075 的修正）
 
-现有实现（`.cpp:160-168`）锁定 9 个参数控件，注释（`:157-159`）声明「相机开关、采集、检测、视图切换、截图等操作类控件保持可用」。**该约定必须改**：自动运行期间若视觉页能点「停止采集」，会打断正在执行的 `ExecuteVision`（拿不到帧）。
+P4 前实现锁定 9 个参数控件，注释声明「相机开关、采集、检测、视图切换、截图等操作类控件保持可用」。**该约定必须改**：自动运行期间若视觉页能点「停止采集」，会打断正在执行的识别动作（拿不到帧）。**已按本表落地**：`VisionTestPage::SetParamsLocked` 的 `params` 列表（相机型号 / SN / 刷新设备、彩色流与深度流 6 件套、D2C 对齐、算法引擎 / 模板配置）统一置灰；**采集启停按钮不在此列表**——它们由 `UpdateButtons()` 按 `locked_` 统一算。
 
 | 控件 | 自动运行期间 | 变化 |
 | :--- | :--- | :--- |
@@ -301,7 +301,7 @@ PreviewTile MakePreviewTile(const QString& title, bool withToggle = false, QChec
 | 保存当前帧 | **可用** | 保留 |
 | 三个画面（纯显示） | 可用 | — |
 
-**签名不变**：`void SetParamsLocked(bool locked)`，`MainWindow.cpp:822` 无需改动。
+**签名不变**：`void SetParamsLocked(bool locked)`，`MainWindow::ApplyModeState` 的调用点无需改动。
 
 ### 6.3 按钮可用性状态机
 
@@ -345,7 +345,7 @@ HardwareManager::frameReady(CameraFrame)
 | `SetStatus()` | 现有全部状态文本（复用，一处改、全页生效） |
 | 检测完成 | `[检测] 目标 N 个，耗时 X.X ms` |
 | 帧率异常 | `[帧率] X.X fps`（低于阈值时） |
-| 相机状态边沿 | `[相机] 连接 / 断开 / 恢复`（来自 `cameraStateChanged`） |
+| 相机状态边沿 | `[相机] 断开` / `[相机] 正在连接/恢复` / `[相机] 已恢复出图` / `[相机] 帧率异常`（来自 `cameraStateChanged`；`Unknown` 态不记日志） |
 
 - 容器：`QPlainTextEdit`（只读、`setMaximumBlockCount(500)` 自带环形上限）。
 - 理由：本页日志用途是「调参时回看」，不需要全量系统日志；全量日志仍在 `log/creampuff_YYYY-MM-DD.log`，面板底部另给一个「打开日志目录」按钮（`QDesktopServices::openUrl`）即可。
@@ -374,7 +374,7 @@ HardwareManager::frameReady(CameraFrame)
 | `src/HAL/interfaces/ICamera.h` | 加非纯虚 `EnumerateDevices()`（`camera_integration_plan.md` S2） |
 | `src/HAL/core/HardwareManager.h/.cpp` | `AcquireCamera` / `ReleaseCamera` + 持有者集合（S6.2）；`EnumerateDevices` 透传 |
 | `src/HAL/camera/OrbbecCamera.h/.cpp` | 枚举 + profile 列表暴露（供 UI 填 combo，S2 / S3） |
-| `doc/ui_interlock_plan.md` | §5 视觉页只读条款按 §6.2 修正（TR-075 的约定变更） |
+| `doc/archive/ui_interlock_plan.md` | §5 视觉页只读条款按 §6.2 修正（TR-075 的约定变更） |
 | `doc/config.md` | `vision` 段同步（`camera_integration_plan.md` §六） |
 | `AGENTS.md` | UI Pages 节补视觉页新布局；`TEST_RECORD.md` 追加 **TR-100** |
 

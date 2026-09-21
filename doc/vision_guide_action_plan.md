@@ -6,7 +6,7 @@
 
 ## 一、需求
 
-现有 `ActionType::Vision`（中文名「识别」，`ProcessManager.cpp:34`）已能采帧 → 检测 → 手眼换算，但**结果算完即丢**（`SequenceWorker.cpp:874-908` 的 `robot` 是局部变量）。工艺上需要「识别 → 按识别结果移动」的闭环。
+现有 `ActionType::Vision`（中文名「识别」，见 `ProcessManager::actionTypeName()`）已能采帧 → 检测 → 手眼换算，但**结果算完即丢**（`SequenceWorker::StepRunner` 的 `case ActionType::Vision` 分支里 `robot` 是局部变量）。工艺上需要「识别 → 按识别结果移动」的闭环。
 
 用户裁定：
 
@@ -25,20 +25,20 @@
 
 | 事实 | 位置 |
 | :--- | :--- |
-| `ActionType` 枚举定义 | `src/Config/ProcessManager.h:6` |
-| `type` 在 `process.json` 里是**整数持久化** | `config/process.json`（现有 0/1/2/3/4） |
-| `Vision` 的中文名是「识别」 | `ProcessManager.cpp:34` |
-| `ExecuteVision` 已做手眼换算但结果丢弃 | `SequenceWorker.cpp:874-908` |
-| `CameraToRobot` 只返回 x/y/z，**r 由上层业务决定** | `CoordTransform.h:8-10` |
-| `PuffResult.yaw` 字段存在；`SimAlgo` 恒返回 0。**本方案不使用该字段** | `IPuffAlgorithm.h:13`、`SimAlgo.cpp:98` |
-| `MoveToPoint` 已含 R 归一化 / FK 校验 / IK 回退 / 到位等待 | `SequenceWorker.cpp:734-` |
-| **`Pose` 即夹爪尖端目标，TCP 已内化**（`tcpForward_` / `tcpDown_`） | `Kinematics.cpp:28-41,63,70`、`SequenceWorker.cpp:177-180` |
-| 动作编辑 UI 的三处 switch | `ProcessPage.cpp:711-741`（详情刷新）、`:1449-1497`（保存） |
-| 相机流启停入口只在视觉页 | `VisionTestPage.cpp:463/477/496/499/514` |
+| `ActionType` 枚举定义 | `ProcessManager.h` 的 `enum class ActionType` |
+| `type` 在 `process.json` 里是**整数持久化** | `config/process.json`（现有 0~5，含 `VisionGuide = 5`） |
+| `Vision` 的中文名是「识别」 | `ProcessManager::actionTypeName()` |
+| 识别动作的执行分支已做手眼换算但结果丢弃 | `SequenceWorker::StepRunner` 的 `case ActionType::Vision` |
+| `CameraToRobot` 只返回 x/y/z，**r 由上层业务决定** | `CoordTransform.h` 类注释「姿态(r)由上层业务决定」 |
+| `PuffResult.yaw` 字段存在；`SimAlgo` 恒返回 0。**本方案不使用该字段** | `IPuffAlgorithm.h`（`PuffResult.yaw`）、`SimAlgo.cpp`（`res.yaw = 0.0`） |
+| 移动动作的执行路径已含 R 归一化 / FK 校验 / IK 回退 / 到位等待 | `SequenceWorker::PrepareRunnerSegment` → `ResolveRunnerJoints` → `DispatchRunnerSegment` |
+| **`Pose` 即夹爪尖端目标，TCP 已内化**（`tcpForward_` / `tcpDown_`） | `Kinematics::SetTCP` / `Kinematics::Forward`、`SequenceWorker::ReloadFromConfig`（读 `tcpCalibration.*` 后调 `SetTCP`） |
+| 动作编辑 UI 的两处 `switch (node->type)` | `ProcessPage::RefreshNodeDetail`（详情刷新）、`ProcessPage::OnSaveAction`（保存） |
+| 相机流启停入口只在视觉页 | `VisionTestPage::OnStartStream`（`AcquireCamera("VisionPage")`） / `VisionTestPage::OnStopStream`（`ReleaseCamera("VisionPage")`） |
 
 ## 三、⚠ 枚举值陷阱（实施前必读）
 
-`enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper }`（`ProcessManager.h:6`），而 `type` 在 `process.json` 里是**整数持久化**的。
+`enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper }`（**加 `VisionGuide` 之前**的形态），而 `type` 在 `process.json` 里是**整数持久化**的。
 
 **禁止插在中间**——若写成 `{ Move, Vision, VisionGuide, Extrude, Delay, Gripper }`：
 
@@ -58,7 +58,7 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 
 > **✅ 已实施（2026-09-20，P2 / TR-098）**——本节的 4.2 编号机制与 4.3 的「编辑期校验」分工如下：**4.2 已全部落地**（见下方 4.2 表后的实施说明）；**4.3 的编辑期校验已随 P5 落地**（2026-09-20，TR-101——`sourceActionId` 字段本身也是 P5 才加的）。
 >
-> 落地要点：编号计数器落在 `SchemeData::nextActionId`（**单调递增、删除不回退**）；`ProcessManager::allocateActionId()` 分配、`normalizeActionIds()` 在加载时对缺失/非正/重复编号按「最大编号 + 1」依次补发（**幂等**）；`id` 与 `nextActionId` 随 `save()` 落盘。`ActionType::VisionGuide = 5` 已按 §三 追加在枚举末尾，`actionTypeName` 与类型下拉项同步。**`process.json` 的 `actions` → `nodes` 改名未做**（属第二步，理由见 `doc/action_tree_concurrency_plan.md` §7.3）。
+> 落地要点：编号计数器落在 `SchemeData::nextActionId`（**单调递增、删除不回退**）；`ProcessManager::allocateActionId()` 分配、`normalizeActionIds()` 在加载时对缺失/非正/重复编号按「最大编号 + 1」依次补发（**幂等**）；`id` 与 `nextActionId` 随 `save()` 落盘。`ActionType::VisionGuide = 5` 已按 §三 追加在枚举末尾，`actionTypeName` 与类型下拉项同步。**`process.json` 的 `actions` → `nodes` 改名已于 P6（2026-09-20，TR-102）落地**——写盘统一写 `nodes`，读取兼容旧键 `actions`，升级惰性（理由见 `doc/action_tree_concurrency_plan.md` §7.3）。
 
 ### 4.1 为什么需要
 
@@ -71,7 +71,7 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 | 新字段 | `ActionData` 加 `int id = 0;`（方案内唯一） |
 | 分配 | 每个 `SchemeData` 维护 `nextActionId`，新增动作时分配递增编号 |
 | **稳定性** | **插入 / 删除 / 上移 / 下移动作都不重排、不回收编号**——引用按 `id` 查找，重排会让引用静默错位 |
-| 旧数据迁移 | 加载时若 `id == 0`，按列表顺序分配 1..N，下次保存落盘 |
+| 旧数据迁移 | `normalizeActionIds()` 加载时**保留显式且不冲突的编号**，只对缺失 / 非正 / 重复的按「方案内最大编号 + 1」依次补发（**幂等**，不重排已有编号）；下次保存落盘 |
 | UI 显示 | 动作列表显示 `#N` 前缀（如 `#3 视觉识别`） |
 | 持久化 | `process.json` 的 action 对象加 `"id": N` |
 
@@ -82,7 +82,7 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 | 时机 | 规则 | 落地（2026-09-20，TR-101） |
 | :--- | :--- | :--- |
 | 编辑期 | `sourceActionId` 必须指向**存在且类型为 `Vision`** 的动作，否则提示并拒绝保存（`ProcessPage::OnSaveAction`） | ✅ `OnSaveAction` 的 `VisionGuide` 分支：编号须在**本方案内**存在且类型为 `Vision`，否则 `QMessageBox::warning` + `return`（**不落盘**）；引用下拉对**悬垂引用显式列出 `#N（已不存在）`**，不静默落到第一个合法项 |
-| 执行期（必须） | 查不到该编号的识别结果 → `impl_->lastError` + 返回 `false`，**不产生任何运动** | ✅ `ExecuteVisionGuide` 两条失败路径（`sourceActionId <= 0` / 结果表 `constFind` 未命中）均写 `lastError` 并 `return false`，**先于任何 `MoveToPoint`** |
+| 执行期（必须） | 查不到该编号的识别结果 → `impl_->lastError` + 返回 `false`，**不产生任何运动** | ✅ `PrepareRunnerSegment` 的 `case ActionType::VisionGuide` 两条失败路径（`sourceActionId <= 0` / 结果表 `constFind` 未命中）均写 `r.failReason`（由 `RunScheduler` 汇总进 `impl_->lastError`）并 `return false`，**先于任何下发** |
 
 ## 五、视觉引导动作定义
 
@@ -107,28 +107,28 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 
 两个点的 `r` 一律取 `guideR`（**轴 4 固定值**），**不是** `PuffResult.yaw`——yaw 是相机平面内的偏航角，不参与坐标构造（见 §七）。
 
-**顺序严格：先上方、后目标**——与 `doc/global_safe_position.md` 的「先抬 Z 再水平移动」同源约束。
+**顺序严格：先上方、后目标**——与 `doc/archive/global_safe_position.md` 的「先抬 Z 再水平移动」同源约束。
 
 ### 5.3 执行流程
 
 ```
-ExecuteVisionGuide(action):
+PrepareRunnerSegment(r) 的 case ActionType::VisionGuide：
   1. 按 action.sourceActionId 从会话视觉结果表取 Pose
-     └─ 取不到 → impl_->lastError = "视觉引导：未找到识别动作 #N 的结果" → return false
+     └─ 取不到 → r.failReason = "视觉引导：…" → return false（不产生任何运动）
   2. 构造上方点 pt1 = { x, y, z + offsetZ, r = guideR }
   3. 构造目标点 pt2 = { x, y,        z,        r = guideR }
-  4. MoveToPoint(pt1, speedScale)    // 复用现有实现
-  5. MoveToPoint(pt2, speedScale)
+  4. ResolveRunnerJoints(pt) → R 归一化 + FK 校验 + InverseSmart 回退 IK
+  5. DispatchRunnerSegment() → DispatchPointMove() 下发 → 调度器轮询到位
 ```
 
-**复用 `MoveToPoint`**（`SequenceWorker.cpp:734`）：零新运动代码，自动获得 IK 双解就近、软限位拦截、FK 校验、到位等待、暂停 / 停止响应。
+**复用移动动作的同一套执行路径**（`PrepareRunnerSegment` → `ResolveRunnerJoints` → `DispatchRunnerSegment`）：零新运动代码，自动获得 IK 双解就近、软限位拦截、FK 校验、到位等待、暂停 / 停止响应。
 
 ### 5.4 视觉结果表
 
 | 项 | 设计 |
 | :--- | :--- |
 | 存储 | `SequenceWorker::Impl` 新增 `QHash<int, Pose> visionResults_;`（key = 识别动作的 `id`） |
-| 写入 | `ExecuteVision` 末尾：`impl_->visionResults_[action.id] = robot;` |
+| 写入 | `StepRunner` 的 `case ActionType::Vision` 分支：`impl_->visionResults_.insert(action.id, robot);` + `emit visionResultReady` |
 | **清空** | **每次 `RunSequence` 开始必须清空**——防上次会话的残留结果被误用（与 TR-091「循环外壳在会话内」同类问题） |
 | 循环生产 | 每轮识别动作覆盖同 `id` 的结果，语义正确（每轮重新识别） |
 
@@ -140,7 +140,7 @@ ExecuteVisionGuide(action):
 | :--- | :--- |
 | `process.json` | 存的是**动作定义**（`templateName` / `threshold` / `exposure` / `visionType`），**不是运行结果**——视觉引导所需的坐标**不会**写进去 |
 | 会话内 | `QHash<int, Pose> visionResults_` 内存缓存，**会话结束即丢弃**（`RunSequence` 开始清空） |
-| **日志** | 坐标**已经落盘**——`ExecuteVision` 内有 `SPDLOG_INFO("[SequenceWorker] Vision target: cam(...) → robot(...)")`（`SequenceWorker.cpp:900-906`），可从 `log/creampuff_YYYY-MM-DD.log` 追溯 |
+| **日志** | 坐标**已经落盘**——`StepRunner` 的 `case ActionType::Vision` 分支内有 `SPDLOG_INFO("[SequenceWorker] Vision target: cam(…) → robot(…) [node #N yaw=… ignored]")`，可从 `log/creampuff_YYYY-MM-DD.log` 追溯 |
 | 存图 | `FrameSaver` 可存 RGB / Depth / 叠加图（`VisionTestPage` 手动触发），与坐标无关 |
 
 **若后续需要结构化持久化**（如按批次追溯识别结果做质量分析），建议**独立的运行记录文件**（CSV / JSON 追加），**不要混进 `process.json`**——后者是方案定义，被运行数据污染后难以人工维护与版本管理。
@@ -154,10 +154,10 @@ ExecuteVisionGuide(action):
 | 环节 | 实现 |
 | :--- | :--- |
 | 配置 | `config.tcpCalibration.toolOffsetX/Y/Z` |
-| 喂入 | `SequenceWorker.cpp:177-180` 读配置 → `impl_->kin.SetTCP(tox, toy, toz)` |
-| 内化 | `Kinematics::SetTCP`（`Kinematics.cpp:28-41`）：`tcpForward_ = offsetX`（沿小臂 L2 向前）、`tcpDown_ = -offsetZ`（竖直向下，恒正） |
-| 正解 | `pose.z = joints.z + z0_ - h1_ - tcpDown_`（夹爪尖端真实高度，`Kinematics.cpp:70`） |
-| 逆解 | `l2_eff = l2_ + tcpForward_`（等效小臂，`Kinematics.cpp:63`） |
+| 喂入 | `SequenceWorker::ReloadFromConfig` 读 `tcpCalibration.toolOffsetX/Y/Z` → `impl_->kin.SetTCP(tox, toy, toz)` |
+| 内化 | `Kinematics::SetTCP`：`tcpForward_ = offsetX`（沿小臂 L2 向前）、`tcpDown_ = -offsetZ`（竖直向下，恒正） |
+| 正解 | `Kinematics::Forward` 的 `pose.z = joints.z + z0_ - h1_ - tcpDown_`（夹爪尖端真实高度） |
+| 逆解 | `Kinematics::Forward` 的 `l2_eff = l2_ + tcpForward_`（等效小臂） |
 
 **因此**：视觉给出的目标点坐标**直接作为 `Pose` 输入** `Inverse` 即可，`Kinematics` 会自动按 TCP 补偿算出关节角——**不需要在视觉引导里再写一遍 TCP 变换**（旧 `ApplyTCPOffset` / `AddTCPOffset` 已删除，见 `AGENTS.md`）。
 
@@ -180,7 +180,7 @@ ExecuteVisionGuide(action):
 
 即：识别结果里的 `yaw` 字段照常从算法返回（`IPuffAlgorithm` 接口不动），但**视觉引导构造坐标时完全不引用它**，`pt1` / `pt2` 的 `r` 一律是轴 4 的固定值。
 
-**为什么建议默认 179.9° 而非 180°**：R 轴软限位为 `[0, 185]`（`config/config.json` 的 `axes.Axis_R`），而 R 物理停在 180° 附近时实测读数会在 `{179.9, 180, -179.9}` 之间跳动（`HardwareManager.h:108-113`）。`MoveToPoint` 内部会对 R 做 `NormalizeRotationAngle` 归一化（`SequenceWorker.cpp:743`），把 wrap 值拉回 `[limitMin, limitMax]` 中心 ±180° 窗口——R 域 `[0, 185]` 下窗口为 `[-87.5, 272.5]`，故 `-179.9` 会被归一化为 `180.1`。用 179.9 比 180 离回绕奇点稍远，读数更稳。方案中现有示教点用的是 `179.9` / `180.1`，`kinematics.safePos.r` 为 `179.5`。
+**为什么建议默认 179.9° 而非 180°**：R 轴软限位为 `[0, 185]`（`config/config.json` 的 `axes.Axis_R`），而 R 物理停在 180° 附近时实测读数会在 `{179.9, 180, -179.9}` 之间跳动（见 `HardwareManager::NormalizeRotationAngle` 声明处注释）。`ResolveRunnerJoints` 在 IK **之前**会对 R 做 `NormalizeRotationAngle` 归一化，把 wrap 值拉回 `[limitMin, limitMax]` 中心 ±180° 窗口——R 域 `[0, 185]` 下窗口为 `[-87.5, 272.5]`，故 `-179.9` 会被归一化为 `180.1`。用 179.9 比 180 离回绕奇点稍远，读数更稳。方案中现有示教点用的是 `179.9` / `180.1`，`kinematics.safePos.r` 为 `179.5`。
 
 ## 八、改动清单
 
@@ -188,8 +188,8 @@ ExecuteVisionGuide(action):
 | :--- | :--- | :--- |
 | `src/Config/ProcessManager.h` | `ActionType` **末尾**追加 `VisionGuide`；`ActionData` 加 `id` / `sourceActionId` / `offsetZ` / `guideR` | ✅ `ActionType` 与 `id` 随 P2（TR-098）；`sourceActionId` / `offsetZ` / `guideR` 随 P5（TR-101） |
 | `src/Config/ProcessManager.cpp` | `actionTypeName` 加 `VisionGuide → "视觉引导"`；`process.json` 读写加新字段；加载时做 `id` 迁移 | ✅ 命名与 `id` 迁移随 P2；三个新字段的读（`aj.value(...)` 带默认值）与写随 P5 |
-| `src/Logic/SequenceWorker.h/.cpp` | `ExecuteAction`（`:706-718`）加分支；`ExecuteVision` 写入结果表；新增 `ExecuteVisionGuide`；`RunSequence` 清空结果表 | ✅ `case ActionType::VisionGuide`；`ExecuteVision` 末尾 `visionResults_.insert(action.id, robot)` + `emit visionResultReady`；新增 `ExecuteVisionGuide`（零新运动代码，两段 `MoveToPoint`）；**两个会话入口**（`RunSequence` **与** `RunSingleAction`）都 `clear()` |
-| `src/UI/ProcessPage.cpp/.h` | 动作类型下拉加「视觉引导」；三处 switch 加分支；视觉引导编辑区（引用编号 + `offsetZ` + `guideR` + 速度 + **两组坐标只读预览**）；列表显示 `#N` | ✅ 类型下拉与列表 `#N` 随 P2；编辑区 + `RefreshGuideSourceCombo` + `UpdateGuidePreview`（四态）+ 编辑期校验随 P5 |
+| `src/Logic/SequenceWorker.h/.cpp` | `ExecuteAction` 加分支；识别分支写入结果表；新增视觉引导执行路径；`RunSequence` 清空结果表 | ✅ **不新增独立执行函数**——P6 后所有动作共用 `PrepareRunnerSegment` / `ResolveRunnerJoints` / `DispatchRunnerSegment`，视觉引导落在 `PrepareRunnerSegment` 的 `case ActionType::VisionGuide`；`StepRunner` 的 `case ActionType::Vision` 末尾 `visionResults_.insert(action.id, robot)` + `emit visionResultReady`；**两个会话入口**（`RunSequence` **与** `RunSingleAction`）都 `clear()` |
+| `src/UI/ProcessPage.cpp/.h` | 动作类型下拉加「视觉引导」；两处 `switch (node->type)` 加分支；视觉引导编辑区（引用编号 + `offsetZ` + `guideR` + 速度 + **两组坐标只读预览**）；列表显示 `#N` | ✅ 类型下拉与列表 `#N` 随 P2；编辑区 + `RefreshGuideSourceCombo` + `UpdateGuidePreview`（四态）+ 编辑期校验随 P5 |
 | `config/process.json` | 旧数据补 `id`（加载时自动迁移） | ✅ 随 P2（**惰性升级**：只加载不编辑不写盘）。**P5 不新增任何键**——三个新字段只在编辑保存后写入，**识别坐标永不入文件** |
 | `doc/process.md` | schema 同步 | ✅ 2026-09-20 同步（`ActionData` 三字段 + 新增「视觉引导动作（type=5）」章节） |
 
@@ -222,8 +222,8 @@ ExecuteVisionGuide(action):
 | :--- | :--- | :--- |
 | 编辑期校验 | 保存引用不存在编号的动作 → 提示并拒绝 | ✅ 未选择 / 悬垂引用 / 跨方案**三种都拒**（用例 12.8~12.10） |
 | 执行期校验 | 无识别结果 → 明确报错，**不产生运动** | ✅ 两条失败路径都**先于任何运动**返回（用例 12.11 / 12.12） |
-| 顺序 | 日志可验证「先上方、后目标」 | ✅ 日志 `VisionGuide #N ← Vision #M: … → up(…) then target(…)` + 两条 `IK → J(…)`（**Z 差 == `offsetZ`**）+ 第 2 段 `skip axis J1/J2/R (in position)`（用例 12.13） |
-| R 角 | 构造的路径点 `r` = `guideR` 固定值，**与 `PuffResult.yaw` 无关**（日志可验证） | ✅ 日志显式留证 `[action #M yaw=… ignored]`（用例 12.14） |
+| 顺序 | 日志可验证「先上方、后目标」 | ✅ 程序日志 `VisionGuide #N ← Vision #M: base(…) offsetZ=… r=…`（取基准坐标时只打一次）+ 两条 `IK → J(…)`（**Z 差 == `offsetZ`**）+ 第 2 段**逐轴** `skip axis J1 (in position)`（顺序 J2 → R → J1 → Z）；页面日志另有 `视觉引导：引用 #M → 目标上方 (…) → 目标 (…)`（用例 12.13） |
+| R 角 | 构造的路径点 `r` = `guideR` 固定值，**与 `PuffResult.yaw` 无关**（日志可验证） | ✅ 日志显式留证 `[node #M yaw=… ignored]`（用例 12.14） |
 | 循环生产 | 每轮重新识别、结果覆盖正确 | ✅ 结果表按 `id` 覆盖：`RunSequence` 入口清表一次，此后每轮识别动作覆盖同 `id`（用例 12.18） |
 | Sim 全链路 | `SimCamera` + `SimAlgo` 可跑通（`SimAlgo` 的 `yaw` 恒 0，不影响功能验证） | ✅ 代码已就位；**待 B 档用例实跑取证**（12.7~12.21） |
 | 编译 | Debug + Release 双编译 EXITCODE=0 + Sim 冒烟 `Initialize complete` | ✅ Debug `[47/47]` / Release `[15/15]` `EXITCODE=0`（零新警告）；Sim 冒烟 `BEFORE=10 → AFTER=11` |

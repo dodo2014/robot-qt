@@ -84,9 +84,9 @@
 | :--- | :--- |
 | 存什么 | **只存动作定义**——`sourceActionId` / `offsetZ` / `guideR`（+ 通用字段） |
 | **不存什么** | **识别坐标绝不写入 `process.json`**。坐标是运行结果，只走日志（`[SequenceWorker] Vision target: cam(…) → robot(…)`）+ 会话内存（`QHash<int, Pose> visionResults_`，**会话结束即丢弃**）。理由：`process.json` 是方案定义，被运行数据污染后难以人工维护与版本管理 |
-| 执行 | 按 `sourceActionId` 取识别结果 → 构造 `目标上方 (x, y, z + offsetZ, guideR)` 与 `目标 (x, y, z, guideR)` → 两段 `MoveToPoint`，**顺序严格：先上方、后目标** |
+| 执行 | 按 `sourceActionId` 取识别结果 → 构造 `目标上方 (x, y, z + offsetZ, guideR)` 与 `目标 (x, y, z, guideR)` → 两段移动动作（复用移动动作执行路径），**顺序严格：先上方、后目标** |
 | 取不到结果 | 报错且**不产生任何运动**（`sourceActionId <= 0`，或该编号本次会话没有结果） |
-| 校验 | **编辑期**：`ProcessPage::OnSaveAction` 拒绝保存（未选择 / 编号不存在 / 类型非 `Vision`）；**执行期**：`SequenceWorker::ExecuteVisionGuide` 写 `lastError` 并返回 `false` |
+| 校验 | **编辑期**：`ProcessPage::OnSaveAction` 拒绝保存（未选择 / 编号不存在 / 类型非 `Vision`）；**执行期**：`SequenceWorker::PrepareRunnerSegment` 的 `case ActionType::VisionGuide` 写 `failReason`（由 `RunScheduler` 汇总进 `Impl::lastError`）并返回 `false` |
 | 编号引用 | 按**稳定编号**引用而非「上一个识别动作」——插入 / 删除 / 上移 / 下移都不会让引用错位（见下文「动作编号机制」） |
 
 ---
@@ -158,7 +158,7 @@
 
 - 内存中 `PointData` 仍为扁平字段（`x,y,z,r,posture,hasJoints,j1~j4`），嵌套只影响 JSON 序列化格式。
 - **加载只读取 `coord` 下的 `x/y/z/r`**，不支持旧版扁平 `x/y/z/r` 格式。
-- ~~`joints` 目前为占位（保存恒为 0.0）~~ **已落地（TR-071，2026-09-04）**：示教读取落盘真实关节角 + `hasJoints=true`；执行 `MoveToPoint` 优先按 joints 直发（FK 一致性校验 ±0.5mm/0.5°，不匹配回退 IK——拦截旧版全 0 占位残留）；表格手改坐标保存 → 该点 joints **删字段**（非置 0，0 是合法关节角）。
+- ~~`joints` 目前为占位（保存恒为 0.0）~~ **已落地（TR-071，2026-09-04）**：示教读取落盘真实关节角 + `hasJoints=true`；执行 `ResolveRunnerJoints` 优先按 joints 直发（FK 一致性校验 ±0.5mm/0.5°，不匹配回退 IK——拦截旧版全 0 占位残留）；表格手改坐标保存 → 该点 joints **删字段**（非置 0，0 是合法关节角）。
 
 ---
 

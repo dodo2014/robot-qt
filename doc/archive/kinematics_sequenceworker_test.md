@@ -1,10 +1,17 @@
+> **归档档案（2026-09-21 移入 `doc/archive/`）**——运动学与引擎重构的**配套测试方案**（K / H / S / U 用例矩阵）。
+> **不要把它当权威源**：① `U01` 的按钮组已被 5 按钮重构取代（见 `doc/auto_run_button_refactor.md`）；② `S05` 的 Stop 语义已变更——现为「仅置 `cancel`，执行完当前动作才停」，自动页【停止】走 `StopImmediate()`。
+> **结论已沉淀处**：`TEST_RECORD.md`（TR-004 / 005 / 007 / 013~018）、`AGENTS.md`（Architecture / 运动学 / SequenceWorker 节）、`doc/config.md`（`kinematics.l1` / `l2`）、`src/Core/Kinematics.h`。
+> **保留理由**：追溯当时的用例矩阵与判据设计（哪些边界被纳入、为什么）。
+
+---
+
 # 「小脑」重构 + 「大脑」引擎 — 测试方案
 
-配套计划：`doc/kinematics_sequenceworker_plan.md`。
+配套计划：`doc/archive/kinematics_sequenceworker_plan.md`。
 依据：`doc/archive/gemini_qr.md`、`AGENTS.md` 防回归硬规约（测试台账 + 修改前验算）。
 前置：**用户确认计划后再执行本方案**。
 
-> ⚠ **历史文档注记（2026-09-07）**：S05 的 Stop 语义现为"仅置 cancel，执行完当前动作才停"（非减速停）；自动页【停止】已改走 `StopImmediate()`（减速停保持使能）。U01 的按钮组已被 5 按钮重构取代。新增用例请按 `doc/auto_run_button_refactor.md` 第七节与 `doc/global_safe_position.md` 第七节的手测清单执行（Pause/Resume/StopImmediate/ClearFault/RunSafePos/安全位走位）。
+> ⚠ **历史文档注记（2026-09-07）**：S05 的 Stop 语义现为"仅置 cancel，执行完当前动作才停"（非减速停）；自动页【停止】已改走 `StopImmediate()`（减速停保持使能）。U01 的按钮组已被 5 按钮重构取代。新增用例请按 `doc/auto_run_button_refactor.md` 第七节与 `doc/archive/global_safe_position.md` 第七节的手测清单执行（Pause/Resume/StopImmediate/ClearFault/RunSafePos/安全位走位）。
 
 ## 一、测试目标
 

@@ -1,3 +1,10 @@
+> **归档档案（2026-09-21 移入 `doc/archive/`）**——「小脑」运动学与 TCP 核心库重构 + 「大脑」引擎执行计划（TR-013~018）。
+> **不要把它当权威源**：① 正文的 **L1 = 174.35mm 已作废**（现行 **138.83mm**，见 `config/config.json` 的 `kinematics.l1`）；② 「外层 `ApplyTCPOffset`」已被取代——**TCP 现内化为等效小臂**（`l2_eff = L2 + tcpForward_`），旧 `ApplyTCPOffset` / `AddTCPOffset` 已删除。
+> **结论已沉淀处**：`AGENTS.md`（Architecture / 运动学 / SequenceWorker 节）、`doc/architecture.md`、`src/Core/Kinematics.h`、`TEST_RECORD.md`（TR-013~018）。
+> **保留理由**：追溯运动学重构的设计意图与 T 系列任务分解（含 `doc/archive/kinematics_sequenceworker_test.md` 的配套关系）。
+
+---
+
 # 「小脑」运动学与 TCP 核心库重构 + 「大脑」工艺流程执行引擎 — 执行计划
 
 状态：已确认（2026-08-19，与 doc/archive/gemini_qr.md 结论对齐）。
@@ -91,7 +98,7 @@
 
 ### 阶段 4 — 验证与文档
 
-**T11.** 按 `doc/kinematics_sequenceworker_test.md` 执行全量测试 + `TEST_RECORD.md` 记账。
+**T11.** 按 `doc/archive/kinematics_sequenceworker_test.md` 执行全量测试 + `TEST_RECORD.md` 记账。
 **T12.** 更新 `doc/config.md`、`AGENTS.md`、`doc/worklog/`；Debug + Release 双编译验证。
 
 ## 四、对现有功能的影响分析
@@ -128,5 +135,5 @@
 ## 七、参考
 
 - `doc/archive/gemini_qr.md`：正逆解/TCP/坐标系/Home Offset 对话**推导档案**（已归档；现行事实以 `AGENTS.md` 与源码为准）。
-- `doc/kinematics_sequenceworker_test.md`：测试方案（影响回归 + 新功能验证）。
+- `doc/archive/kinematics_sequenceworker_test.md`：测试方案（影响回归 + 新功能验证）。
 - `doc/开发文档.md`：页面功能需求（手动/自动互锁、示教、单步执行）。

@@ -301,7 +301,7 @@ void MainWindow::ShutdownWorker()
     workerShutdown_ = true;
 
     if (sequenceWorker_) {
-        sequenceWorker_->Stop();   // 置 cancel，打断 WaitForCancelOrTime/WaitForAxes
+        sequenceWorker_->Stop();   // 置 cancel，打断 WaitForCancelOrTime/到位轮询
     }
 
     workerThread_->quit();

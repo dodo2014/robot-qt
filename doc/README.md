@@ -9,7 +9,7 @@
 ## 怎么用
 
 1. **只打开状态为 🟢 / 🟡 / ⏳ 的文档**。⚠ / 📦 / ❌ 的文档仅在需要追溯历史时打开。
-2. **大文档不要整篇读**——`auto_run_loop_production.md`（45KB）、`ui_interlock_plan.md`（29KB）按标题定位到具体小节即可。
+2. **大文档不要整篇读**——`auto_run_loop_production.md`（49KB）、`vision_test_page_redesign_plan.md`（34KB）按标题定位到具体小节即可。
 3. 查「某项功能现在怎么实现」→ `architecture.md` + 源码；查「某项改动是否已验收」→ `TEST_RECORD.md`。
 
 ### 状态图例
@@ -22,6 +22,20 @@
 | ⚠ 部分失效 | 仍有有效内容，但部分段落已被后续演进取代（正文内多有注记） |
 | ❌ 过时 | 内容与现行事实冲突，**勿引用** |
 | 📦 归档 | 已移入 `doc/archive/`，仅供追溯推导过程 |
+
+## 按状态速览
+
+> 只想知道「现在该读哪几篇」时看这里；查职责、台账与备注看下面各表。
+
+| 状态 | 篇数 | 文档 |
+| :--- | :--- | :--- |
+| 🟢 现行 | 7 | 规范类：`architecture.md`、`config.md`、`process.md`、`compile_guide.md`、`doc_output_standards_guide.md`；已验收方案类：`auto_run_button_refactor.md`、`joint_drift_analysis.md` |
+| 🟡 已实施待真机 | 7 | 编排层：`implementation_roadmap.md`；方案类：`action_tree_concurrency_plan.md`、`camera_integration_plan.md`、`vision_test_page_redesign_plan.md`、`vision_guide_action_plan.md`、`auto_run_loop_production.md`、`config_ownership_plan.md` |
+| ⏳ 计划中 | 1 | `physical_buttons_plan.md` |
+| ⚠ 部分失效 | 2 | `ui_wiring_plan.md`、`开发文档.md` |
+| 📦 归档 | 7 | 全部位于 `doc/archive/`，见下方「归档内容」表 |
+
+**一句话现状（2026-09-21）**：`implementation_roadmap.md` 的 **P0~P6 七项已全部落地**（TR-095、TR-097~102）；**瓶颈已从「写代码」转到「真机验收」**——`doc/test/real_machine_plan_phase3.md` 阶段 11（P1~P4）/ 12（P5）/ 13（P6）共 **96 条用例待执行**（A 档离线 26 条 / B 档 Sim 51 条 / C 档真机 19 条）。
 
 ## 目录约定
 
@@ -49,19 +63,14 @@
 
 | 文档 | 职责 | 状态 | 台账 / 备注 |
 | :--- | :--- | :--- | :--- |
-| `implementation_roadmap.md` | **跨文档实施编排**：5 篇需求方案的先后顺序、可并行边界、不建议的顺序与反例 | 🟡 实施中（**P1 ✅ / P2 ✅ / P3 ✅ / P4 ✅ / P5 ✅ 2026-09-20**） | **编排层，不含需求细节**。定出 P0（J1 偏移阻塞项）→ P1（配置地基）→ P2（编号机制）→ P3~P5（相机链）→ P6（动作树）。**进度**：P0 ✅（TR-095）、**P1 ✅（TR-097）**、**P2 ✅（TR-098）**、**P3 ✅（TR-099）**、**P4 ✅（TR-100）**、**P5 ✅（TR-101）**；下一步 **P6**（动作树 + 分组并发，建议与 D8/D9 节拍回收同批）|
+| `implementation_roadmap.md` | **跨文档实施编排**：5 篇需求方案的先后顺序、可并行边界、不建议的顺序与反例 | 🟡 实施中（**P0~P6 全 ✅ 2026-09-20**） | **编排层，不含需求细节**。定出 P0（J1 偏移阻塞项）→ P1（配置地基）→ P2（编号机制）→ P3~P5（相机链）→ P6（动作树）。**进度**：P0 ✅（TR-095）、**P1 ✅（TR-097）**、**P2 ✅（TR-098）**、**P3 ✅（TR-099）**、**P4 ✅（TR-100）**、**P5 ✅（TR-101）**、**P6 ✅（TR-102）**；**下一步待用户裁定**（候选 D8/D9 节拍回收）。**瓶颈已不在编排而在真机验收**——阶段 11/12/13 共 96 条用例待执行 |
 | `joint_drift_analysis.md` | **J1 关节累积偏移问题分析**（TR-095 的补充与收口）：`lAxisPrfPos` 寄存器语义、真机日志实测、卡通道映射与换算核对、对外部模型诊断的评审、D1~D11 处置清单 | 🟢 已收口 | **权威记录在 `TEST_RECORD.md` TR-095**。2026-09-18 真机收口：J1 `maxAccel` 200→80 °/s² + `maxSpeed` 30→25 °/s，**247 轮无可见漂移**（提交 `4c95d14`）。**保留项**：定量读数（现有判定为目测级）、`maxAccel` 上限边界（与 P6 节拍优化同批做）。原始外部模型对话已归档至 `doc/archive/关节偏移问题-gemini.md` |
 | `auto_run_button_refactor.md` | 自动运行页 5 按钮 + `WorkerState` 显式状态机重构 | 🟢 已实施 | TR-073。**按钮组与接线定义以本文为准** |
-| `ui_interlock_plan.md` | UI 权限与状态机互锁：模式门禁、导航白名单、视觉页只读、急停锁存 | 🟢 已实施 | TR-075。§5.3/5.4/5.5 为评审过程存档 |
-| `global_safe_position.md` | 全局安全位：回零后自动 + 手动按钮 + 示教安全位 | 🟢 已实施 | TR-074 / 079 / 080 / 083 / 088 |
-| `kinematics_sequenceworker_plan.md` | 「小脑」运动学与 TCP 核心库重构 + 「大脑」引擎执行计划 | 🟢 已实施 | TR-013 ~ TR-018。文首有 2026-09-14 历史注记 |
-| `kinematics_sequenceworker_test.md` | 上述重构的配套测试方案 | 🟢 已实施 | 配套 `kinematics_sequenceworker_plan.md` |
-| `refactor_plan.md` | HAL 目录重组 + HardwareManager 拆分 | 🟢 已实施 | 现行 `src/HAL/` 六子目录结构即其结果 |
 | `auto_run_loop_production.md` | 循环生产（单轮 / 指定次数 / 无限循环 + 回安全位）需求方案 | 🟡 已实施待真机 | TR-091。用例 8.18–8.26、10.21–10.26 需真机执行 |
 | `camera_integration_plan.md` | 3D 相机（Orbbec Gemini 336）HAL 接入方案 | 🟡 S0–S4 已实施，真机部分验证 | **实施顺序 = P3**（见 `implementation_roadmap.md`）。**✅ S0（配置键统一 / 删 `PickCycleController` 死代码）/ S1（`USE_ORBBEC` + SDK 白名单拷贝）/ S2（设备枚举）/ S3（打通取流 + RGB 归一化 + 软对齐）/ S4（分级恢复 + 链路状态边沿广播）/ §2.1 持有者集合 + 决策 10 互锁 已落地（TR-099，2026-09-20）**；**真机已验**：枚举 `CP9KB530005S`、1280×720@30.2fps、RGB888 + 深度 Y16、**Release 60 s 长稳 1801 帧 / 30.0 fps / 空帧 0 / 退出码 0**。**S5 视觉页重构（=P4）与 S6 的检测结果通道 / 渲染节流未做**。**⚠ 待人工补：10 min 长稳 + 拔插线恢复** |
 | `vision_test_page_redesign_plan.md` | 视觉检测页（`VisionTestPage`）重构：左 320 px 滚动控制栏 + 右侧 2×2 四宫格 | 🟡 已实施，真机待验 | **实施顺序 = P4**。**✅ 2026-09-20 已落地（TR-100）**：左 320 px `QScrollArea` 控制栏 + 右 2×2 四宫格三格同刷 / 结果表 11 列（加「耗时ms」）/ 6 个流参数 combo 由 SDK profile 枚举填充 / 6 项未决项 V4–V9 经用户裁定「**全部按推荐**」落地 / `FrameSaver` 队列与通知加固 / `ResolveLogDir` 迁入 `ConfigPaths::logDir()`。**⚠ 真机三项待人工**：真实 SN 枚举、D2C 软对齐、插拔后恢复。含需求控件规格整理、旧功能→新布局**逐项映射对账表**（防功能丢失）、12 项须修正（V1–V12）、互锁修正（§6.2，对 TR-075 有一处变更）、6 项未决项 **V4–V9 已裁定并落地**。配套 `camera_integration_plan.md` |
-| `vision_guide_action_plan.md` | 「视觉引导」动作类型 + 动作编号机制（识别结果 → 基座坐标 → 两段移动） | 🟡 已实施待真机 | **实施顺序 = P5**。**✅ 2026-09-20 全文落地（TR-101）**：§四「动作编号机制」随 P2（TR-098）；§三 枚举陷阱、§四.3 校验（编辑期 + 执行期）、§五 动作定义（`sourceActionId` / `offsetZ` / `guideR`）、§八 改动清单随 P5。要点：**零新运动代码**（两段全复用 `MoveToPoint`）、`r` 一律取 `guideR` **与 `PuffResult.yaw` 无关**、识别坐标**不入 `process.json`**、悬垂引用**显式列 `#N（已不存在）`**。**⚠ 真机验收待人工**（抓取落点 / 重复定位精度，**须先标定手眼矩阵**）。**编号机制与 `action_tree_concurrency_plan.md` 共享，已在 P2 一次定稿**（规则以 `action_tree` §7.2 为准，勿另立一套）。配套 `camera_integration_plan.md` |
-| `action_tree_concurrency_plan.md` | 动作列表由一维列表改为**二级树**（动作 / 分组），分组内子动作**并发执行**以压缩节拍 | 🟢 三步全部已实施待真机 | **实施顺序 = P2（第一步 编号机制 ✅ 2026-09-20，TR-098）+ P6（第二、三步 ✅ 2026-09-20，TR-102）**。§二 的 5 项补充定义**已于 2026-09-18 裁定**。含对 Gemini 方案的评审（3 处事实错误 + 4 处会导致崩溃的遗漏）、**结论为不采纳其多线程路线**（改单线程协作式调度）、资源互斥校验、三步实施顺序。**第一步落地**：`ActionData::id` + `SchemeData::nextActionId` 计数器（删除不回退）、加载自动升级、`VisionGuide = 5`、UI 显示 `#N`；**`actions` → `nodes` 改名与 `nodeType` 已于 P6（TR-102）落地**（读取兼容旧键 `actions`，升级惰性；非法嵌套在加载时扁平化） |
+| `vision_guide_action_plan.md` | 「视觉引导」动作类型 + 动作编号机制（识别结果 → 基座坐标 → 两段移动） | 🟡 已实施待真机 | **实施顺序 = P5**。**✅ 2026-09-20 全文落地（TR-101）**：§四「动作编号机制」随 P2（TR-098）；§三 枚举陷阱、§四.3 校验（编辑期 + 执行期）、§五 动作定义（`sourceActionId` / `offsetZ` / `guideR`）、§八 改动清单随 P5。要点：**零新运动代码**（两段全复用移动动作执行路径）、`r` 一律取 `guideR` **与 `PuffResult.yaw` 无关**、识别坐标**不入 `process.json`**、悬垂引用**显式列 `#N（已不存在）`**。**⚠ 真机验收待人工**（抓取落点 / 重复定位精度，**须先标定手眼矩阵**）。**编号机制与 `action_tree_concurrency_plan.md` 共享，已在 P2 一次定稿**（规则以 `action_tree` §7.2 为准，勿另立一套）。配套 `camera_integration_plan.md` |
+| `action_tree_concurrency_plan.md` | 动作列表由一维列表改为**二级树**（动作 / 分组），分组内子动作**并发执行**以压缩节拍 | 🟡 三步全部已实施待真机 | **实施顺序 = P2（第一步 编号机制 ✅ 2026-09-20，TR-098）+ P6（第二、三步 ✅ 2026-09-20，TR-102）**。§二 的 5 项补充定义**已于 2026-09-18 裁定**。含对 Gemini 方案的评审（3 处事实错误 + 4 处会导致崩溃的遗漏）、**结论为不采纳其多线程路线**（改单线程协作式调度）、资源互斥校验、三步实施顺序。**第一步落地**：`ActionData::id` + `SchemeData::nextActionId` 计数器（删除不回退）、加载自动升级、`VisionGuide = 5`、UI 显示 `#N`；**`actions` → `nodes` 改名与 `nodeType` 已于 P6（TR-102）落地**（读取兼容旧键 `actions`，升级惰性；非法嵌套在加载时扁平化） |
 | `config_ownership_plan.md` | 配置数据归属与分文件方案：**结论为「现在不分」**，含写入口全清单、读点生效状态、7 项须修正（C1–C7）、触发条件与按生命周期的分法 | 🟡 已实施待真机 | **实施顺序 = P1（最先）**——C1/C2/C5 是相机链路的前置。**2026-09-20 实施完成（TR-097）**：C1–C7 + §七 原子写全部落地，Debug + Release 双编译 `EXITCODE=0` + Sim 冒烟通过。核心发现：`SimAlgo::LoadConfig` 曾是空实现（算法配置链路无闭环，现改为真解析并按阈值过滤）、相机设备标识两个键互不相通（现收敛为单一键 `communication.camera.sn`）、配置查找路径三套实现（现收敛为 `ConfigPaths`）。**两条独立缺陷已修**：`ConfigManager::save()` 与 **`ProcessManager::save()`** 非原子写（§七，优先级高于分文件）。**待真机**：枚举相机；**待观测**：`confidenceThreshold` 过滤动作 |
 | `physical_buttons_plan.md` | 物理蘑菇头按钮接入（初始化 / 启动 / 停止 / 复位 / 急停） | ⏳ 计划中 | 待现场核对手册端子号与极性后实施 |
 | `ui_wiring_plan.md` | 阶段 2 轮 B UI 接线（T7–T10） | ⚠ 部分失效 | T8 按钮映射已被 5 按钮重构取代；**T7 / T9 / T10 及 D 修复清单仍有效** |
@@ -71,7 +80,7 @@
 
 | 位置 | 职责 | 状态 | 备注 |
 | :--- | :--- | :--- | :--- |
-| `doc/test/` | 真机联调计划与测试用例（5 篇） | 🟢 现行 | 阶段 2 / 阶段 3 计划、卡轴手动测试、回零调试报告、8 阶段手动测试流程。**`real_machine_plan_phase3.md` 是当前唯一在用的真机用例文档**，按「批次」累加：阶段 8/9/10（TR-073/074/075）、第四批循环生产（TR-091）、第五批 J1 漂移复测（TR-095）、**第六批 = 阶段 11「P1~P4 验收」（TR-097~100，11.1~11.36：A 档离线 11 条 / B 档 Sim 17 条 / C 档真机 8 条）**、**第七批 = 阶段 12「P5 视觉引导验收」（TR-101，12.1~12.26：A 档离线 6 条 / B 档 Sim 15 条 / C 档真机 5 条）** |
+| `doc/test/` | 真机联调计划与测试用例（5 篇） | 🟢 现行 | 阶段 2 / 阶段 3 计划、卡轴手动测试、回零调试报告、8 阶段手动测试流程。**`real_machine_plan_phase3.md` 是当前唯一在用的真机用例文档**，按「批次」累加：阶段 8/9/10（TR-073/074/075）、第四批循环生产（TR-091）、第五批 J1 漂移复测（TR-095）、**第六批 = 阶段 11「P1~P4 验收」（TR-097~100，11.1~11.36：A 档离线 11 条 / B 档 Sim 16 条 / C 档真机 9 条）**、**第七批 = 阶段 12「P5 视觉引导验收」（TR-101，12.1~12.26：A 档离线 6 条 / B 档 Sim 15 条 / C 档真机 5 条）**、**第八批 = 阶段 13「P6 动作树与分组并发验收」（TR-102，13.1~13.34：A 档离线 9 条 / B 档 Sim 20 条 / C 档真机 5 条）** |
 | `doc/worklog/` | 每日工作日志（21 篇，2026-08-13 起） | 🟢 现行 | 真机数据、问题与结论、次日计划 |
 | `doc/archive/` | 已归档原始档案 | 📦 归档 | 见下方「归档规则」 |
 | `doc/robot-pictures/` | 机械臂实物照片（Z 轴限位、h1 标定、夹爪位置） | 🟢 现行 | 标定与限位核对的图像参考 |
@@ -80,8 +89,13 @@
 
 | 文档 | 内容 | 归档理由 |
 | :--- | :--- | :--- |
-| `archive/gemini_qr.md` | 运动学建模早期的多轮 AI 对话**原始档案**（2800+ 行，含提问原文、推导过程、Python 验算脚本、图片引用） | 结论已沉淀进 `AGENTS.md`、`architecture.md`、`kinematics_sequenceworker_plan.md` §一 与源码注释。**保留价值仅在于追溯「为什么这么建模」**。⚠ 内含已被推翻的 L1 = 174.35mm，**勿引用其参数值** |
+| `archive/gemini_qr.md` | 运动学建模早期的多轮 AI 对话**原始档案**（2800+ 行，含提问原文、推导过程、Python 验算脚本、图片引用） | 结论已沉淀进 `AGENTS.md`、`architecture.md`、`archive/kinematics_sequenceworker_plan.md` §一 与源码注释。**保留价值仅在于追溯「为什么这么建模」**。⚠ 内含已被推翻的 L1 = 174.35mm，**勿引用其参数值** |
 | `archive/关节偏移问题-gemini.md` | J1 关节累积偏移问题的**外部模型（Gemini）原始问答档案** | 结论已沉淀进 `joint_drift_analysis.md`（含源码核实、真机日志实测、逐条评审 E1–E4 / M1–M4、诊断顺序 D1–D8）。**保留价值仅在于追溯「当时得到了哪些建议、哪些被否决」**。⚠ 内含已被推翻的推理：「UI 数值不变 ⇒ 软件无罪」**无效**、「绝对定位 ⇒ 不会累积误差」**说反了** |
+| `archive/ui_interlock_plan.md` | UI 权限与状态机互锁**方案**（含 §5.3 / §5.4 / §5.5 评审过程存档） | 结论已沉淀进 `AGENTS.md`（TR-075 条目）与 `TEST_RECORD.md` TR-075。⚠ **§5.5「标签高亮留在 `toggled` lambda、无需补偿」已被推翻**——实施定稿改为「高亮迁入 `ApplyModeState`，拒绝回弹经 `QSignalBlocker` 屏蔽 `toggled`」；§5 视觉页只读条款按 `vision_test_page_redesign_plan.md` §6.2 有一处修正。保留价值在于追溯实施与原方案的 7 处差异 |
+| `archive/global_safe_position.md` | 全局安全位**方案**（回零后自动 + 手动按钮 + 示教安全位） | 结论已沉淀进 `AGENTS.md`（TR-074 条目）与 `TEST_RECORD.md` TR-074 / 079 / 080 / 083 / 088。保留价值在于追溯「自动回安全位仅**上升沿**触发」与「`safePos.enabled` 实为**总开关**」两条语义的推导过程 |
+| `archive/kinematics_sequenceworker_plan.md` | 「小脑」运动学与 TCP 核心库重构 + 「大脑」引擎执行计划（T 系列任务分解） | 结论已沉淀进 `AGENTS.md`、`architecture.md` 与源码注释；现行 `src/Core/` 与 `SequenceWorker` 即其结果。⚠ 文首有 2026-09-14 历史注记（L1 = 174.35mm 已作废，现行 138.83mm） |
+| `archive/kinematics_sequenceworker_test.md` | 上述重构的配套测试方案（H 组） | 结论已沉淀进 `TEST_RECORD.md` TR-013 ~ TR-018。⚠ S05 的 Stop 语义与 U01 的按钮组已被后续演进取代（文内有 2026-09-07 注记）；现行按钮手测清单见 `auto_run_button_refactor.md` 第七节 |
+| `archive/refactor_plan.md` | HAL 目录重组 + `HardwareManager` 拆分的**重构方案** | 结论已沉淀进 `AGENTS.md` Architecture 节与 `architecture.md`；现行 `src/HAL/` 六子目录结构即其结果，无独立追溯需求 |
 
 ### 非 Markdown 资产
 

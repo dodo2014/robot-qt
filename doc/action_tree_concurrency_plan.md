@@ -70,7 +70,7 @@
 
 ### 4.3 `InMainThread` 的阻塞往返会被放大 N 倍
 
-`WaitForAxes`（`SequenceWorker.cpp:812-835`）是 `QThread::msleep(20)` 轮询，**每个轴每 20 ms 一次**：
+到位轮询（P6 前为 `WaitForAxes`；P6 后为 `RunScheduler` 的 20 ms tick）是 `QThread::msleep(20)` 轮询，**每个轴每 20 ms 一次**：
 
 ```cpp
 for (auto a : axes) {
@@ -97,7 +97,7 @@ for (auto a : axes) {
 
 **并发分组省的是「等待时间」，不是「计算时间」。而等待不需要线程——只需要「不阻塞地下发」。**
 
-现状 `ExecuteMove` 的结构是**逐点交替**：`DispatchPointMove`（非阻塞下发）+ `WaitForAxes`（阻塞等待）。顺序执行之所以慢，是因为下发与等待交替：
+**P6 前的现状**：`ExecuteMove` 的结构是**逐点交替**：`DispatchPointMove`（非阻塞下发）+ `WaitForAxes`（阻塞等待）。顺序执行之所以慢，是因为下发与等待交替：
 
 ```
 下发 Move(Z) → 等 Z 到位 → 下发 Gripper → 等 Gripper 到位        总时长 = Z + G
@@ -113,7 +113,7 @@ for (auto a : axes) {
 
 ### 5.2 协作式调度的模型
 
-把 5 个动作函数（`ExecuteMove` / `ExecuteVision` / `ExecuteExtrude` / `ExecuteDelay` / `ExecuteGripper`）由「阻塞式函数」改为**可步进的状态机**：
+把 5 个动作函数（P6 前的 `ExecuteMove` / `ExecuteVision` / `ExecuteExtrude` / `ExecuteDelay` / `ExecuteGripper`）由「阻塞式函数」改为**可步进的状态机**：
 
 ```
 每个子动作暴露：Step() -> Progress   // 推进一次（可下发、可检查、可等待）
@@ -247,11 +247,11 @@ Gemini 建议「必须给每个节点生成全局唯一的 ID（比如时间戳�
 | # | 项 | 现状 | 改动 |
 | :--- | :--- | :--- | :--- |
 | 1 | 执行入口 | `ExecuteActions`（循环外壳）→ `ExecuteOnce`（单轮）→ `ExecuteAction`（逐动作） | 在 `ExecuteOnce` 与 `ExecuteAction` 之间插入 `ExecuteNode`：按 `nodeType` 分派到 `ExecuteAction`（动作）或 `ExecuteGroup`（分组）。**循环外壳位置不变**（TR-091 约定：循环外壳在会话内） |
-| 2 | 5 个动作函数 | `ExecuteMove` / `ExecuteVision` / `ExecuteExtrude` / `ExecuteDelay` / `ExecuteGripper`，**阻塞式** | → 改为可步进状态机（`Step()` / `IsDone()`），供调度器推进（§5.2） |
+| 2 | 5 个动作函数 | P6 前的 `ExecuteMove` / `ExecuteVision` / `ExecuteExtrude` / `ExecuteDelay` / `ExecuteGripper`，**阻塞式** | → 改为可步进状态机（`Step()` / `IsDone()`），供调度器推进（§5.2） |
 | 3 | 分组调度 | 不存在 | 新增单线程调度器：持 N 个子状态机，全部完成即汇合 |
 | 4 | 失败上报 | 子树写 `Impl::lastError`，会话级 2 处 `emit`（D17） | **保持单线程即可不改**；但分组需定义「哪个子动作的失败原因上报」（建议：首个失败者，其余记日志） |
 | 5 | 单步 | `WaitForStep()`（`:138-152`）挂在每个动作边界 | 分组的「一步」= 整个分组；**组内一律不调用 `WaitForStep`**（否则 N 个子状态机争抢同一个 `stepGo` 原子量，放行顺序不确定） |
-| 6 | 暂停 | `PauseGate`（`:837-`）在 `WaitForAxes` 内触发 | 组内任一子状态机触发暂停 → **整组减速停** → 汇合后统一挂起 |
+| 6 | 暂停 | P6 前：`PauseGate`（`:837-`）在 `WaitForAxes` 内触发 | 组内任一子状态机触发暂停 → **整组减速停** → 汇合后统一挂起 |
 | 7 | 信号 | `actionStarted(int index, name)` / `actionFinished(int index, name)` | 索引语义由「扁平行号」改为「节点标识」；分组需新增「分组开始/结束」信号，供 UI 展示折叠进度 |
 
 ## 十、实施顺序建议（三步，每步可独立验收）

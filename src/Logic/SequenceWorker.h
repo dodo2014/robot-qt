@@ -145,7 +145,7 @@ signals:
     void interrupted(const QString& reason);
     void errorOccurred(const QString& message);
     void logMessage(const QString& message);
-    // 识别结果（P5）：ExecuteVision 末尾发出，携带**该识别动作的编号**与基座坐标（mm）。
+    // 识别结果（P5）：识别分支末尾发出，携带**该识别动作的编号**与基座坐标（mm）。
     // 用途只有一个——`ProcessPage` 的视觉引导编辑区据此**只读预览**两组路径点（§5.5 决策 1）。
     // 坐标**不进 `process.json`**（决策 5）：这里是内存广播，会话结束即失效。
     // 跨线程 Queued 传递，参数只用 POD，无需注册元类型。

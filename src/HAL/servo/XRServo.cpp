@@ -81,7 +81,7 @@ public:
 
     // 把 ref 归一化到 target 附近 ±180°：cmd 10 (QUERY_ANGLE) 为 ±180 有符号回绕表示，
     // 物理 180.1° 会返回 -179.9——目标 179.9 与查询 -179.9 表示差 360°，直接算 dAngle=359.8°
-    // → interval 7.2s → WaitForAxes 干等（动作不连贯，真机 2026-08-31）。行程计算前必须对齐。
+    // → interval 7.2s → 到位等待干等（动作不连贯，真机 2026-08-31）。行程计算前必须对齐。
     static double AlignNear(double ref, double target)
     {
         while (ref - target > 180.0)  ref -= 360.0;

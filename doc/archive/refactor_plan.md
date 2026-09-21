@@ -1,3 +1,10 @@
+> **归档档案（2026-09-21 移入 `doc/archive/`）**——HAL 目录重组 + `HardwareManager` 拆分的**实施计划**（31 文件 → 6 子目录）。
+> **不要把它当权威源**：无被推翻的结论；其目标形态已完全落地，现行结构以源码为准。
+> **结论已沉淀处**：`AGENTS.md`（Architecture 节）、`doc/architecture.md`（目录职责 / 分层依赖 / 门面设计原则）、`src/HAL/` 现行六子目录结构。
+> **保留理由**：追溯「为什么这样拆、以及哪些刻意**不拆**」的决策依据（如 `PollTick` / `JogTick` / `CheckAxisBusy` 与运动门面保持聚合）。
+
+---
+
 # HAL 目录重组 + HardwareManager 拆分 — 执行计划
 
 状态：已确认，由同一 agent 按 A → B → 目录重组 → 文档 顺序执行。

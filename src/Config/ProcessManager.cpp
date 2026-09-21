@@ -298,7 +298,7 @@ QStringList ProcessManager::resourceKeysOf(ActionType t)
     switch (t) {
     case ActionType::Move:
     case ActionType::VisionGuide:
-        // ⚠ 视觉引导内部就是两段 `MoveToPoint`（P5）——与「移动」占**同一组轴资源**，
+        // ⚠ 视觉引导内部就是两段移动动作（P5）——与「移动」占**同一组轴资源**，
         // 同组内必须互斥。否则两个绝对目标会互相打架（§6.1）。
         return { QStringLiteral("Axis_J1"), QStringLiteral("Axis_J2"),
                  QStringLiteral("Axis_Z"),  QStringLiteral("Axis_R") };

@@ -637,7 +637,7 @@ void ProcessPage::SetupUI()
     vgf->addRow(makeLabel(QStringLiteral("目标上方偏移")), m_guideOffsetZSpin);
 
     // guideR：轴 4(R) 的固定目标角。默认 179.9（离 ±180 回绕奇点稍远，读数更稳，§七）。
-    // 上限取 R 轴软限位上限附近；实际下发前 MoveToPoint 会做 NormalizeRotationAngle 归一化。
+    // 上限取 R 轴软限位上限附近；实际下发前 ResolveRunnerJoints 会做 NormalizeRotationAngle 归一化。
     m_guideRSpin = new QDoubleSpinBox();
     m_guideRSpin->setRange(-180.0, 185.0);
     m_guideRSpin->setDecimals(1);
@@ -918,7 +918,7 @@ void ProcessPage::RefreshNodeDetail(int nodeId)
     if (stackIdx >= 0 && stackIdx < m_detailStack->count())
         m_detailStack->setCurrentIndex(stackIdx);
 
-    // 视觉引导也走两段 MoveToPoint，速度百分比同样生效 → 一并显示（P5）
+    // 视觉引导也走两段移动动作，速度百分比同样生效 → 一并显示（P5）
     bool hasSpeedPercent = (node->type == ActionType::Move ||
                             node->type == ActionType::Extrude ||
                             node->type == ActionType::Gripper ||

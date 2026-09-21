@@ -1,7 +1,7 @@
 # 真机联调计划（阶段 2：大脑+小脑全链路）— 2026-08-25 起
 
 状态：**待执行**（代码部分 T1-T12 已全部完成并编译通过，下周开始真机联调）。
-配套：`doc/kinematics_sequenceworker_plan.md`（执行计划，代码已完成）、`doc/kinematics_sequenceworker_test.md`（测试方案 H 组）、`doc/test/card_axis_test.md`（卡轴手动测试）、`doc/test/homing_debug_report.md`（回零调试）。
+配套：`doc/archive/kinematics_sequenceworker_plan.md`（执行计划，代码已完成）、`doc/archive/kinematics_sequenceworker_test.md`（测试方案 H 组）、`doc/test/card_axis_test.md`（卡轴手动测试）、`doc/test/homing_debug_report.md`（回零调试）。
 
 ## 一、目标
 
@@ -148,7 +148,7 @@
 | 7.3 | 切回 SimCard/SimServo 回归 | 手动页点动/Go/急停/软限位 + AutoRunPage 方案 + 坐标面板，确认无回归 |
 | 7.4 | Debug + Release 双编译 | EXITCODE=0 |
 
-## 四、验收标准（对应 kinematics_sequenceworker_plan.md §六）
+## 四、验收标准（对应 doc/archive/kinematics_sequenceworker_plan.md §六）
 
 1. Home Offset 真机生效：J1 回零显示 -102°、J2 回零显示 -28°；手动 Go 以逻辑角度下发、回读一致。
 2. Z 标定完成：每圈脉冲实测复核（误差<2%），`calibrationPending=false`，软限位修正。

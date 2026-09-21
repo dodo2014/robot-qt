@@ -42,7 +42,7 @@ auto InMainThread(F&& f) -> decltype(f())
 //   · "目标 = 当前位置"本无运动意义，跳过无副作用；
 //   · 关键收益：回安全位点1 只剩 Z 轴下发 → "抬 Z 阶段零水平运动"由代码保证，
 //     不再依赖"舵机读回值与指令值一致"这一假设（减速停后 J2/R 读回可能有微差 δ）；
-//   · 被跳过的轴不写 busy 时间戳 → IsAxisBusy 立即 false，WaitForAxes 不受影响。
+//   · 被跳过的轴不写 busy 时间戳 → IsAxisBusy 立即 false，到位轮询不受影响。
 // 软限位硬拦截不旁路：跳过前先过 IsWithinSoftLimits（与 MoveAbs 同源），
 // 越界时**不跳过**，落到 MoveAbs 走完整的 WARN + 拒绝路径。
 // **必须在主线程调用**（内部直接调 HardwareManager，与 PollTick 串行）。
@@ -117,7 +117,7 @@ public:
     QString lastError;
 
     // 会话视觉结果表（P5，doc/vision_guide_action_plan.md §5.4）：key = **识别动作的 id**。
-    // · 写入：ExecuteVision 末尾（只取 results.front()，与既有"最佳目标"语义一致）；
+    // · 写入：识别分支末尾（StepRunner 的 case ActionType::Vision；只取 results.front()，与既有"最佳目标"语义一致）；
     // · 清空：**每次会话开始**（RunSequence / RunSingleAction）——防上次会话的残留结果
     //   被本次误用（与 TR-091「循环外壳在会话内」同类问题）；
     // · 循环生产：每轮识别覆盖同 id 的结果，语义正确（每轮重新识别）；

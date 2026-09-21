@@ -325,7 +325,7 @@ CameraLinkState HardwareManager::GetCameraLinkState() const
 //
 // 流是**全局共享资源**，不是某个页面的私有物。「谁启动谁停止」会让视觉页与
 // 自动运行互相踩：自动运行结束停流 → 视觉页黑屏；视觉页点「停止采集」→
-// 打断正在执行的 ExecuteVision。故改为持有者集合：**流运行 ⟺ 集合非空**。
+// 打断正在执行的识别动作。故改为持有者集合：**流运行 ⟺ 集合非空**。
 // ---------------------------------------------------------------------------
 namespace {
 std::string HoldersToString(const std::set<std::string>& s)

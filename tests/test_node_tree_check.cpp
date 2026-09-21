@@ -124,7 +124,7 @@ void TestResourcesAndValidation()
 {
     std::printf("-- 资源表与组内校验（§6.2 / §6.4 / §Q5）\n");
 
-    // Move 与 VisionGuide 占**同一组轴资源**（视觉引导内部就是两段 MoveToPoint）
+    // Move 与 VisionGuide 占**同一组轴资源**（视觉引导内部就是两段移动动作）
     checkEq(ProcessManager::resourceKeysOf(ActionType::Move).size(), 4, "Move 占 4 项轴资源");
     checkEq(ProcessManager::resourceKeysOf(ActionType::VisionGuide).size(), 4,
             "VisionGuide 占 4 项轴资源");

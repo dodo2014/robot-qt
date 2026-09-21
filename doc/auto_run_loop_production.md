@@ -4,7 +4,7 @@
 > 实施落点：`src/Logic/SequenceWorker.h/.cpp`（S1/S2/S2b/S2c）、`src/UI/AutoRunPage.h/.cpp`（S3/S4）、`src/main.cpp`（S8）；`MainWindow` / `ProcessPage` / `ManualControlPage` / `HardwareManager` **零改动**（S5 已确认）。**实施偏差一处**：`Impl` 成员命名为 `loopCfg` 而非本文档 §4.1 写的 `loop`（`Impl` 内已有局部 `QEventLoop loop`，同名触发 C4458），以 TR-091 为准。
 > 修订：**2026-09-14 定稿**（对齐 09-09/09-10 落地现状 + 用户裁决）——① §一 行号全线校正、补 TR-083/084/088/090 四条新事实；② §七 代码片段符号修正（原文引用了两个不存在的函数）+ `errorOccurred` 单点化定稿（D17 方案 A）；③ 台账编号由 TR-080 改为 **TR-091** 起；④ 用例编号口径统一（见 §十）；⑤ 新增 **§4.4「严格先抬 Z」保证链**（D19）；⑥ 用户裁决：不做常驻提示条（D13）、循环期间一键回零不可达（D14）、术语统一「回安全位」（D15）、日志保留 7 天（D16）、**循环控件先按一行实现、布局待定**（D18，**TR-072 方案已废弃**）。
 > 来源：真机验收阶段 8 用例 **8.4** —— 用户问「自动运行是单次运行？不是循环运行？」，核实为只跑单轮；用户裁决**需要连续循环生产**。
-> 关联：`doc/test/real_machine_plan_phase3.md`（阶段 8/9/10）、`doc/auto_run_button_refactor.md`（TR-073）、`doc/global_safe_position.md`（TR-074）、`doc/ui_interlock_plan.md`（TR-075）、`doc/architecture.md`（§5 关键不变量：观察者指针一律 `QPointer`，TR-084）
+> 关联：`doc/test/real_machine_plan_phase3.md`（阶段 8/9/10）、`doc/auto_run_button_refactor.md`（TR-073）、`doc/archive/global_safe_position.md`（TR-074）、`doc/archive/ui_interlock_plan.md`（TR-075）、`doc/architecture.md`（§5 关键不变量：观察者指针一律 `QPointer`，TR-084）
 
 ---
 
@@ -180,7 +180,7 @@ bool SequenceWorker::ReturnToSafePosInline()
     ActionData act;
     if (!BuildSafePosActionFrom(act, impl_->safeJ1, impl_->safeJ2, impl_->safeZ, impl_->safeR))
         return false;                    // 未启用/未捕获 → 判为故障（不静默跳过）
-    return ExecuteMove(act);             // 白得：cancel 检查、PauseGate、reissue 续走、逐点日志
+    return ExecuteAction(act, -1);        // 白得：cancel 检查、暂停、reissue 续走、逐点日志
 }
 ```
 
@@ -194,8 +194,8 @@ bool SequenceWorker::ReturnToSafePosInline()
 
 | 环节 | 事实 | 位置 |
 |---|---|---|
-| 点串行 | `ExecuteMove` 对 `action.points` **逐点循环**，每个点执行完（`MoveToPoint` 返回）才进下一个点 | `SequenceWorker.cpp:506-518` |
-| 点内等待 | `MoveToPoint` 在**下发后阻塞等待全部参与轴到位**（超时 30s）才返回 | `:594`（`WaitForAxes`，`:604-627`） |
+| 点串行 | `PrepareRunnerSegment` 对 `action.points` **逐点推进**，每个点执行完（`RunScheduler` 轮询到参与轴到位）才进下一个点 | `SequenceWorker` 的 `RunnerState.segIdx` |
+| 点内等待 | `RunScheduler` 在**下发后轮询到全部参与轴到位**（超时 30s）才推进下一段 | `SequenceWorker` 的 `RunScheduler`（20 ms tick 轮询 `IsAxisBusy`） |
 | 抬升量 | 点1 = `{J1/J2/R = 当前值, Z = safeZ}`；点2 = 安全位 `{sj1, sj2, sz, sr}` → **水平位移只可能发生在 Z = sz 这一高度上** | `:262-282` |
 
 ⇒ 点2 的水平 `MoveAbs` 下发**必然晚于点1 的全部参与轴判为到位**；且安全位动作的 Z 值在两点的 `j3/z` 字段上一致（点1 已抬到 `sz`），水平段不会从低位起扫。
@@ -208,10 +208,10 @@ bool SequenceWorker::ReturnToSafePosInline()
 
 残余风险：点1 会把 J1/J2/R **重新下发为读回的当前值**。卡轴（J1/Z）读回的是指令脉冲位置 → 差值恒为 0；但 **J2/R 是舵机，读回的是上报角度**，减速停后可能与指令位置有微差 δ → 点1 会伴随 δ 量级的水平微动，而此时 Z 正在抬升——正是要防的场景（低位水平位移）。
 
-**加固（纳入实施，见 S2c）**：`MoveToPoint` 在下发前，对**目标与读回当前值之差在 ε 内的轴跳过下发**（建议 ε = 0.01mm / 0.01°）。于是：
+**加固（纳入实施，见 S2c）**：`DispatchPointMove` 在下发前，对**目标与读回当前值之差在 ε 内的轴跳过下发**（ε = 0.01mm / 0.01°）。于是：
 
 - 点1 的实际下发**只剩 Z 轴** → "抬 Z 阶段零水平运动"由代码保证，与读回值无关（不再依赖 δ≈0 的假设）；
-- 被跳过的轴不写 busy 时间戳 → `IsAxisBusy` 立即返回 false，`WaitForAxes` 不受影响；
+- 被跳过的轴不写 busy 时间戳 → `IsAxisBusy` 立即返回 false，到位轮询不受影响；
 - ε 与既有 `hasJoints` 的 ±0.5 一致性校验量级无关，不影响其它动作的正常下发；对"目标=当前位置"的零位移指令本就无运动意义，跳过无副作用；
 - 实施时该分支写 `SPDLOG_INFO`（形如 `skip axis X (in position)`），**不写 UI 日志**避免噪声——真机 8.20 即用该日志核验"点1 只下发 Z"。
 
@@ -390,7 +390,7 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 |---|---|---|
 | 8.18 | **零回归核心**：不碰循环控件，直接启动 | 与 8.17 完全一致：「✅ 完成」出现**一次**；无 `=== 循环` 日志；`m_cycleLabel` 显示「单轮」 |
 | 8.19 | 循环=指定次数 N=3 启动 | 日志 `=== 循环 1/3 开始 ===`…`=== 循环 3/3 完成 ===`；标签依次 `循环 1/3`→`2/3`→`3/3`；**「✅ 完成」只出现一次** |
-| 8.20 | ★已示教安全位 → N=2 → 观察第 1 轮结束瞬间 | 日志「循环间隔：回安全位…」+「移动 → 点 1 (抬Z)」；**点1 日志出现 `skip axis J1/J2/R (in position)`（S2c 加固生效）→ 点1 实际只下发 Z**；**第 1 段只有 Z 动、J1/J2/R 零位移**，第 2 段才动 J1/J2/R；速度≈50%；**工艺流程页列表选中行不跳到第 0/1 行**。**同一核验同步在手动页「回安全位」（TR-074 9.6）执行**——两条路径共用构造与执行链（§4.4） |
+| 8.20 | ★已示教安全位 → N=2 → 观察第 1 轮结束瞬间 | 日志「循环间隔：回安全位…」+「移动 → 点 1 (抬Z)」；**点1 日志出现逐轴 `skip axis J1 (in position)`（顺序 J2 → R → J1 → Z，S2c 加固生效）→ 点1 实际只下发 Z**；**第 1 段只有 Z 动、J1/J2/R 零位移**，第 2 段才动 J1/J2/R；速度≈50%；**工艺流程页列表选中行不跳到第 0/1 行**。**同一核验同步在手动页「回安全位」（TR-074 9.6）执行**——两条路径共用构造与执行链（§4.4） |
 | 8.21 | ★循环运行中（水平段）点「■ 停止」 | 状态「⏹ 停止中…」→「⏸ 中断」，日志「中断: 用户停止」；**不再进入下一轮**；使能保持 |
 | 8.22 | ★循环中记下标签值 X → 点「⏸ 暂停」→「▶ 启动/继续」 | 从暂停处原地续走（J1 单调趋近、无反向回摆）；**标签仍为 X**（计数不丢） |
 | 8.23 | ⚠前置（不可达点，同 8.7）循环 N=3 启动 | 第 1 轮即 IK 失败 → 「⛔ 错误」；**不进入第 2 轮**；清报警后可重启（计数复位为 1） |
@@ -426,7 +426,7 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 | S1 ✅ | `LoopConfig`、`cycleChanged` 信号、`RunSequence` 默认参数、Impl 成员、私有方法**声明**（不实现） | `src/Logic/SequenceWorker.h` | 默认参数 → 既有 3 个调用点零改动，编译必过 —— **已完成**（`ProcessPage.cpp:1078` 单参调用零改动编译通过） |
 | S2 ✅ | `ExecuteActions`→`ExecuteOnce`；新增循环外壳；抽 `BuildSafePosActionFrom`；`ReturnToSafePosInline`；`RunSequence` 存 loop + 捕获 safePos；`RunSingleAction`/`ClearFault` 清 loop | `src/Logic/SequenceWorker.cpp` | **单轮零回归冒烟**：Sim 跑一遍 →「✅ 完成」一次、无循环日志（等价 8.18）—— **已完成**（Sim 冒烟 `Initialize complete` 通过；8.18 的 UI 侧核验待真机） |
 | S2b ✅ | **`errorOccurred` 单点化**（D17 方案 A）：`Impl::lastError`（+ 每动作前清空）+ `ExecuteAction` 子树 8 处 emit 改写为赋值 + 2 处统一 emit 点（`ExecuteOnce` 失败分支 / `StartSingleExecution` 兜底） | `src/Logic/SequenceWorker.cpp` | 任一动作失败 → UI 显示**具体原因**（不再被 `action.name` 覆盖）；`retryCount=0` 下行为与今天一致（等价 8.7/8.23）—— **已完成**（全文件 `emit errorOccurred` 现仅 7 处：2 处门禁 + 2 处会话级出口 + 循环间隔安全位失败 + 注释 2 处） |
-| S2c ✅ | **「严格先抬 Z」加固**（D19）：下发前对"目标与读回当前值之差 ≤ ε（0.01mm/0.01°）"的轴跳过下发 + `SPDLOG_INFO` 记录；`reissue` 同步按同规则跳过 | `src/Logic/SequenceWorker.cpp` | 回安全位/循环间隔的**点1 只下发 Z**（日志 `skip axis J1/J2/R (in position)`）；普通移动行为零变化（等价 8.1/8.2/8.20）—— **已完成**（实现为匿名 namespace 函数 `DispatchPointMove()`，4 轴一次 `InMainThread` 内联下发；跳过前仍过 `IsWithinSoftLimits`，不旁路软限位硬拦截） |
+| S2c ✅ | **「严格先抬 Z」加固**（D19）：下发前对"目标与读回当前值之差 ≤ ε（0.01mm/0.01°）"的轴跳过下发 + `SPDLOG_INFO` 记录；`reissue` 同步按同规则跳过 | `src/Logic/SequenceWorker.cpp` | 回安全位/循环间隔的**点1 只下发 Z**（日志**逐轴** `skip axis J1 (in position)`）；普通移动行为零变化（等价 8.1/8.2/8.20）—— **已完成**（实现为匿名 namespace 函数 `DispatchPointMove()`，4 轴一次 `InMainThread` 内联下发；跳过前仍过 `IsWithinSoftLimits`，不旁路软限位硬拦截） |
 | S3 ✅ | 循环控件行 + `m_cycleLabel` + `OnCycleChanged` + 启动组装 LoopConfig + 两项门禁（未启用安全位拒绝 / 无限循环二次确认）+ `UpdateControlsEnabled` 内按 `!busy` 置灰（同方案下拉，与 `gate` 无关） | `src/UI/AutoRunPage.h/.cpp` | Sim：单轮=现状；N=3 计数与终态正确；运行中控件置灰 —— **已完成**（控件一行排布：`循环:` + 模式下拉 100×32 + 次数框 78×32 + 「回安全位」复选框 + 进度标签右对齐；`MainWindow` 最小尺寸 1200×700 下右侧面板约 462px，本行最小需求约 400px） |
 | S4 ✅ | 持久化（`production.loop.*` 读写，不 emit paramsChanged） | `src/UI/AutoRunPage.cpp` | 重启后控件保持上次选择；config.json 自动出现 `production` 节点 —— **已完成**（初始化用 `QSignalBlocker` 屏蔽三控件，避免旧 config 首次启动被回写平白生成 `production` 节点） |
 | S5 ✅ | 确认 `MainWindow` 零改动；跑 10.2/10.6/10.13 子集 | — | 无回归 —— **已完成**：`MainWindow`/`ProcessPage`/`ManualControlPage`/`HardwareManager` 确实零改动（10.2/10.6/10.13 子集待真机） |
@@ -464,6 +464,6 @@ bool SequenceWorker::ExecuteActionWithRetry(const ActionData& act, int idx)
 | **D16** | 日志保留 | **7 天**（2026-09-14 用户裁决；按日期分文件已存在，需补清理实现，见 §九 / S8） |
 | **D17** | 重试期间 `errorOccurred` 抑制 | **方案 A：`errorOccurred` 单点化**（2026-09-14 用户拍板）——`ExecuteAction` 子树 8 处 emit 改为写 `Impl::lastError`，emit 收敛到 2 处会话级出口；`retryCount=0` 行为零变化，重试期间不误报（见 §七 / **S2b**） |
 | **D18** | 循环行布局 | **先按一行实现，最终布局待定**（2026-09-14 用户裁决）——循环控件同一行排布；**TR-072 原方案已废弃**（用户已手动改过坐标面板，本文档不再引用）；硬约束 = 10 寸触控屏 + **窗口缩到最小尺寸时界面不错乱**（见 §二） |
-| **D19** | 回安全位「严格先抬 Z 到位再水平移动」 | **结构上已保证**（点粒度串行 + `WaitForAxes`，见 §4.4）；**新增加固 = `MoveToPoint` 对 ε 内在位轴跳过下发** → 点1 只下发 Z（消除舵机读回微差导致的低位水平微动）；残余为到位时间估算窗口（全项目共用，+200ms 余量）。真机核验见 8.20 |
+| **D19** | 回安全位「严格先抬 Z 到位再水平移动」 | **结构上已保证**（点粒度串行 + 到位轮询，见 §4.4）；**新增加固 = `DispatchPointMove` 对 ε 内在位轴跳过下发** → 点1 只下发 Z（消除舵机读回微差导致的低位水平微动）；残余为到位时间估算窗口（全项目共用，+200ms 余量）。真机核验见 8.20 |
 
 **待确认（无阻塞）**：真机验证时循环间隔回安全位的两段走位是否与 9.6 完全一致（同一代码路径，预期一致）。~~`log/creampuff.log` 轮转策略~~ → **已结案：按日期分文件 + 保留 7 天（D16）**。
