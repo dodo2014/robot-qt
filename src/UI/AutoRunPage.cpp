@@ -604,9 +604,10 @@ void AutoRunPage::OnEmergencyTriggered()
     m_logTextEdit->append(QStringLiteral("[%1] 急停触发").arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
 }
 
-void AutoRunPage::OnFrameReady(const CameraFrame& frame)
+void AutoRunPage::OnFrameReady(const CameraFramePtr& frame)
 {
-    QImage rgbImg = FrameConverter::ColorToQImage(frame);
+    if (!frame) return;
+    QImage rgbImg = FrameConverter::ColorToQImage(*frame);
     if (rgbImg.isNull()) return;
 
     QPixmap rgbPm = QPixmap::fromImage(rgbImg);

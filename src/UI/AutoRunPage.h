@@ -48,7 +48,7 @@ private slots:
     void OnWorkerStateChanged(SequenceWorker::WorkerState state,
                               SequenceWorker::PauseReason reason);
 
-    void OnFrameReady(const CameraFrame& frame);
+    void OnFrameReady(const CameraFramePtr& frame);
     void OnLogMessage(const QString& msg);
     void OnStateUpdated(const QVector<MotorStatus>& axes);
     void OnServoStateUpdated(const QVector<ServoTelemetry>& servos);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,18 @@ struct CameraFrame
     std::vector<float>   depthData;   // 深度图 (mm)
     std::vector<float>   pointCloud;  // 可选: XYZ 点云
 };
+
+// 帧在信号链上以**共享只读指针**传递（P2，2026-09-22）。
+//
+// 一帧 = `colorData`(1920×1080×3) + `depthData`(1920×1080 float) ≈ **14.5 MB**。
+// 值语义下这笔账要付两次：① 采集线程 `emit` → UI 线程是跨线程 queued connection，
+// Qt 会把实参**深拷贝**进事件队列；② 订阅者缓存（`VisionTestPage::latestFrame_`）
+// 再深拷贝一次 ⇒ 15 fps 下约 **435 MB/s** 的 UI 线程内存搬运，是视觉页卡顿的一大来源。
+//
+// 改共享指针后，跨线程传递只拷一个 `shared_ptr`（引用计数原子 +1），订阅者缓存也只是
+// 持有同一份；帧数据本身只在采集线程构造一次。**指针是 `const` 的**——订阅者不得改写，
+// 避免多订阅者互相踩（`AutoRunPage` 与 `VisionTestPage` 同时订阅）。
+using CameraFramePtr = std::shared_ptr<const CameraFrame>;
 
 // 相机设备信息（P3 / S2 设备枚举用）。
 // `id` 是**设备选择用的唯一键**，对 Orbbec 即序列号（SN）——与

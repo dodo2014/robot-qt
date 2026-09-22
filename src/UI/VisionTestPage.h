@@ -49,7 +49,7 @@ private slots:
     void OnRefreshDevices();
     void OnStartStream();
     void OnStopStream();
-    void OnFrameReady(const CameraFrame& frame);
+    void OnFrameReady(const CameraFramePtr& frame);
     void OnRenderTick();
     void OnSingleDetect();
     void OnToggleContinuous();
@@ -70,12 +70,26 @@ private:
 
     void UpdateCameraState();
     void UpdateButtons();
-    void RenderTiles();
+    // 三格位图重绘（**昂贵路径**：两路 `ColorToQImage` 拷贝 + 深度伪彩逐像素 + 三次
+    // `fromImage` / `scaled`）。`force=false` 时按「帧时间戳 + 三格目标尺寸」去重——
+    // 相机 15 fps、渲染定时器 30 Hz，不去重则同一帧被重复转换缩放；停流后
+    // `hasFrame_` 恒为真（保留末帧），去重能让负载真正归零。
+    // `force=true` 用于「画面没变但必须重画」的场合（切叠加框开关、单次检测出框）。
+    void RenderTiles(bool force = false);
+    // 三格信息条文本（FPS / 时间戳 / 分辨率）——廉价，每拍都刷，与位图去重解耦。
+    void UpdateTileInfos();
     QImage BuildRgbImage();
     QImage BuildDepthImage();
-    QImage BuildOverlayImage();
+    // Overlay = 同一张彩图 + 识别框。`base` 传入调用方已转好的彩图可省掉一次
+    // `ColorToQImage`（6.2 MB 拷贝 + `QImage::copy()`）；传空则由本函数自行转换。
+    QImage BuildOverlayImage(const QImage& base = QImage());
 
-    void RunDetection(const CameraFrame& frame, bool allowAutoSave);
+    // 检测调度（P1，2026-09-22）。`ScheduleDetection` 在主线程做两件事：取参数快照、
+    // 把帧投给检测线程；结果回到主线程后由 `ApplyDetectionResult` 落表 / 画框 / 记日志。
+    // ⚠ 参数快照必须在主线程取——`IPuffAlgorithm::SnapshotParams()` 读 `ConfigManager`，
+    // 而项目硬约束是「worker 线程绝不读 ConfigManager」（`json` 读写非线程安全）。
+    void ScheduleDetection(const CameraFramePtr& frame, bool allowAutoSave);
+    void ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave);
     void ShowResults(const QVector<PuffResult>& results, double elapsedMs);
     // 三路存图入队（异步，走 FrameSaver 线程）。抽成函数是因为「单次检测自动存图」
     // 与「保存当前帧」两处都要按同一组开关各存一路。
@@ -139,9 +153,25 @@ private:
     FrameSaver* frameSaver_  = nullptr;
     QThread*    saverThread_ = nullptr;
 
-    CameraFrame         latestFrame_;
+    // ---- 检测工作线程（P1，2026-09-22）----
+    // 把「对整幅 1920×1080 逐像素扫描」的检测挪出 UI 线程（原先每帧一个 10 ms 级
+    // 不可中断块，是视觉页拖窗 / 切页卡顿的直接原因）。
+    // `detectCtx_` 只是**线程归属载体**：走 `QMetaObject::invokeMethod` 的 functor
+    // 重载，不需要 `Q_OBJECT`，因此不必新增源文件（新增文件会触发 CMake reconfigure）。
+    QThread*       detectThread_ = nullptr;
+    QObject*       detectCtx_    = nullptr;
+    // 在途检测标记，同时充当**背压闸门**：检测比帧率慢时只保留最新一帧，不排队堆积。
+    bool           detectBusy_   = false;
+    CameraFramePtr pendingFrame_;          // 忙时暂存的最新一帧（共享指针，不拷帧数据）
+    bool           pendingAutoSave_ = false;
+
+    // 最新帧（P2：共享只读指针——缓存动作只是持有同一份，不再深拷贝 14.5 MB/帧）
+    CameraFramePtr      latestFrame_;
     QVector<PuffResult> lastResults_;
     double              lastDetectMs_ = 0.0;
+    // 上一拍**真正画过**的帧时间戳（-1 = 从未画过）。`RenderTiles` 去重依据，
+    // 与三格目标尺寸共同构成「这一拍有没有必要重算位图」的判据。
+    int64_t             lastRenderedTs_ = -1;
     bool                hasFrame_     = false;
     bool                streaming_    = false;
     bool                showOverlay_  = true;

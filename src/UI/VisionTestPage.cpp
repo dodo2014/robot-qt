@@ -274,6 +274,18 @@ VisionTestPage::VisionTestPage(QWidget* parent)
     connect(renderTimer_, &QTimer::timeout, this, &VisionTestPage::OnRenderTick);
     renderTimer_->start(33);
 
+    // 检测工作线程（P1，2026-09-22）：`SimAlgo::Detect` 要对整幅 1920×1080 逐像素扫描
+    // （实测 9.4~13.1 ms/次），原先由 `OnFrameReady` 在 UI 线程**同步**跑——每帧一个
+    // 10 ms 级不可中断块，拖窗 / 切页 / 切左侧菜单全被顶住（阶段 11B 用例 11.14 偏差的
+    // 直接原因）。挪到独立线程后 UI 线程只剩「投递帧 + 收结果」。
+    // `detectCtx_` 仅作线程归属载体：走 `QMetaObject::invokeMethod` 的 functor 重载，
+    // 不需要 `Q_OBJECT`，因此无需新增源文件（新增文件会触发 CMake reconfigure）。
+    detectThread_ = new QThread(this);
+    detectCtx_    = new QObject();
+    detectCtx_->moveToThread(detectThread_);
+    connect(detectThread_, &QThread::finished, detectCtx_, &QObject::deleteLater);
+    detectThread_->start();
+
     RefreshStreamParamsFromConfig();
     ReloadStreamProfiles();
     UpdateCameraState();
@@ -282,6 +294,13 @@ VisionTestPage::VisionTestPage(QWidget* parent)
 
 VisionTestPage::~VisionTestPage()
 {
+    // 检测线程先停：`quit()` 会等当前这一拍检测跑完（10 ms 级），`wait` 之后
+    // 不可能再有 worker 侧回调访问本对象。回 UI 线程的结果事件以 `this` 为 context，
+    // 页面析构时会被 Qt 自动撤销，不会悬垂。
+    if (detectThread_) {
+        detectThread_->quit();
+        detectThread_->wait(2000);
+    }
     if (saverThread_) {
         QMetaObject::invokeMethod(frameSaver_, "Stop", Qt::BlockingQueuedConnection);
         saverThread_->quit();
@@ -938,77 +957,111 @@ void VisionTestPage::OnCameraStateChanged(CameraLinkState state)
 // 帧流与渲染
 // ---------------------------------------------------------------------------
 
-void VisionTestPage::OnFrameReady(const CameraFrame& frame)
+void VisionTestPage::OnFrameReady(const CameraFramePtr& frame)
 {
+    if (!frame) return;
     // §7.2 / D3：只缓存 + 计数，**不在这里渲染**。三格同时刷新会把「每帧同步刷」
     // 的开销 ×3，渲染统一由 renderTimer_（33 ms）驱动。
+    // P2：`frame` 是共享只读指针 → 这里只是持有同一份，不再深拷贝整帧（≈14.5 MB）。
     latestFrame_ = frame;
     hasFrame_    = true;
     frameCount_++;
 
     if (continuous_)
-        RunDetection(frame, /*allowAutoSave=*/false);
+        ScheduleDetection(frame, /*allowAutoSave=*/false);
 }
 
 void VisionTestPage::OnRenderTick()
 {
-    RenderTiles();
-    UpdateButtons();   // 33 ms 一次，保证「无画面→有画面」时检测按钮及时解禁
+    UpdateTileInfos();   // 廉价：3 个 setText（FPS 每拍都在变，不该被位图去重挡住）
+    RenderTiles();       // 昂贵路径：按帧时间戳 + 目标尺寸去重
+    UpdateButtons();     // 33 ms 一次，保证「无画面→有画面」时检测按钮及时解禁
 }
 
-void VisionTestPage::RenderTiles()
+void VisionTestPage::UpdateTileInfos()
+{
+    if (!hasFrame_) return;
+    const QString info = QStringLiteral("FPS %1 | %2 | %3x%4")
+                             .arg(QString::number(fps_, 'f', 1))
+                             .arg(CameraTimeText(latestFrame_->timestamp))
+                             .arg(latestFrame_->width)
+                             .arg(latestFrame_->height);
+    if (rgbInfoLabel_)     rgbInfoLabel_->setText(info);
+    if (depthInfoLabel_)   depthInfoLabel_->setText(info);
+    if (overlayInfoLabel_) overlayInfoLabel_->setText(info);
+}
+
+void VisionTestPage::RenderTiles(bool force)
 {
     if (!hasFrame_) return;   // 无帧时保留占位文本
 
-    const QString info = QStringLiteral("FPS %1 | %2 | %3x%4")
-                             .arg(QString::number(fps_, 'f', 1))
-                             .arg(CameraTimeText(latestFrame_.timestamp))
-                             .arg(latestFrame_.width)
-                             .arg(latestFrame_.height);
-
-    auto put = [&info](QLabel* view, QLabel* infoLabel, const QImage& img) {
-        if (view && !img.isNull()) {
-            int w = view->width();
-            int h = view->height();
-            if (w <= 10) w = 320;
-            if (h <= 10) h = 200;
-            const QSize target(w, h);
-
-            // 缩放策略（§7.2）：`SmoothTransformation` 在 1280×720 → 460×280 下开销明显。
-            // 折中——**目标尺寸变化时**才用 Smooth 重算（窗口缩放 / 首次布局），
-            // 尺寸没变时只是新帧进来、像素数一致，用 Fast 观感差异可忽略。
-            const bool sizeChanged = view->property("lastScaledSize").toSize() != target;
-            view->setProperty("lastScaledSize", target);
-
-            view->setPixmap(QPixmap::fromImage(img).scaled(
-                target, Qt::KeepAspectRatio,
-                sizeChanged ? Qt::SmoothTransformation : Qt::FastTransformation));
-        }
-        if (infoLabel) infoLabel->setText(info);
+    // 目标尺寸口径与下方 put() 一致（尚未布局时回落 320×200）。
+    auto tileSize = [](QLabel* view) {
+        if (!view) return QSize(0, 0);
+        int w = view->width();
+        int h = view->height();
+        if (w <= 10) w = 320;
+        if (h <= 10) h = 200;
+        return QSize(w, h);
     };
 
-    put(rgbViewLabel_,     rgbInfoLabel_,     BuildRgbImage());
-    put(depthViewLabel_,   depthInfoLabel_,   BuildDepthImage());
-    put(overlayViewLabel_, overlayInfoLabel_, BuildOverlayImage());
+    // 去重（P0，2026-09-22）：帧时间戳与三格目标尺寸都没变 → 上一拍画的还是同一张图。
+    // 收益两条：① 相机 15 fps 对 30 Hz 渲染定时器，重复帧不再重算（省掉约一半位图开销）；
+    // ② 停流后 `hasFrame_` 仍为真（用于保留末帧），但时间戳不再前进 → 负载归零，
+    // 不再像修复前那样以 30 Hz 空转重绘静止帧直到程序退出。
+    const bool sameSizes = rgbViewLabel_ && depthViewLabel_ && overlayViewLabel_ &&
+                           rgbViewLabel_->property("lastScaledSize").toSize()     == tileSize(rgbViewLabel_) &&
+                           depthViewLabel_->property("lastScaledSize").toSize()   == tileSize(depthViewLabel_) &&
+                           overlayViewLabel_->property("lastScaledSize").toSize() == tileSize(overlayViewLabel_);
+    if (!force && sameSizes && latestFrame_->timestamp == lastRenderedTs_)
+        return;
+    lastRenderedTs_ = latestFrame_->timestamp;
+
+    auto put = [&tileSize](QLabel* view, const QImage& img) {
+        if (!view || img.isNull()) return;
+        const QSize target = tileSize(view);
+
+        // 缩放策略（§7.2）：`SmoothTransformation` 在 1280×720 → 460×280 下开销明显。
+        // 折中——**目标尺寸变化时**才用 Smooth 重算（窗口缩放 / 首次布局），
+        // 尺寸没变时只是新帧进来、像素数一致，用 Fast 观感差异可忽略。
+        const bool sizeChanged = view->property("lastScaledSize").toSize() != target;
+        view->setProperty("lastScaledSize", target);
+
+        view->setPixmap(QPixmap::fromImage(img).scaled(
+            target, Qt::KeepAspectRatio,
+            sizeChanged ? Qt::SmoothTransformation : Qt::FastTransformation));
+    };
+
+    // P2（2026-09-22）：彩图只转一次——RGB 格与 Overlay 格共用同一份 QImage。
+    // 原先 `BuildOverlayImage` 内部又调一次 `ColorToQImage`，等于每轮多付一次
+    // 6.2 MB 的 `QImage::copy()`；Overlay 与 RGB 本就是同一张底图，只差识别框。
+    const QImage rgb = BuildRgbImage();
+    put(rgbViewLabel_,     rgb);
+    put(depthViewLabel_,   BuildDepthImage());
+    put(overlayViewLabel_, BuildOverlayImage(rgb));
 }
 
 QImage VisionTestPage::BuildRgbImage()
 {
     if (!hasFrame_) return {};
-    return FrameConverter::ColorToQImage(latestFrame_);
+    return FrameConverter::ColorToQImage(*latestFrame_);
 }
 
 QImage VisionTestPage::BuildDepthImage()
 {
     if (!hasFrame_) return {};
-    return FrameConverter::DepthToQImage(latestFrame_, 0.0f, 500.0f);
+    return FrameConverter::DepthToQImage(*latestFrame_, 0.0f, 500.0f);
 }
 
-QImage VisionTestPage::BuildOverlayImage()
+QImage VisionTestPage::BuildOverlayImage(const QImage& base)
 {
     if (!hasFrame_) return {};
-    QImage img = FrameConverter::ColorToQImage(latestFrame_);
-    if (img.isNull()) return img;
+    // `base` 为空表示调用方没现成彩图（如存图路径），自己转一次。
+    const QImage src = base.isNull() ? FrameConverter::ColorToQImage(*latestFrame_) : base;
+    if (src.isNull()) return src;
+    // QImage 隐式共享：这里只是浅拷贝，`DrawOverlays` 的 QPainter 写入时会 detach，
+    // 不会污染调用方（RGB 格）那一份。
+    QImage img = src;
     if (showOverlay_) {
         // 阈值在这里只决定**画哪些框**；检测阶段的过滤已在 `SimAlgo::Detect` 内按
         // `EffectiveThreshold()` 完成（P1 / C1）。
@@ -1029,27 +1082,63 @@ void VisionTestPage::OnSingleDetect()
         SetStatus(QStringLiteral("无画面可检测，请先开始采集或加载图片"));
         return;
     }
-    RunDetection(latestFrame_, /*allowAutoSave=*/true);
+    SetStatus(QStringLiteral("检测中…"));
+    ScheduleDetection(latestFrame_, /*allowAutoSave=*/true);
 }
 
-void VisionTestPage::RunDetection(const CameraFrame& frame, bool allowAutoSave)
+void VisionTestPage::ScheduleDetection(const CameraFramePtr& frame, bool allowAutoSave)
 {
+    if (!frame || !detectCtx_) return;
+
+    // 背压（P1）：检测比帧率慢时**只保留最新一帧**，不排队堆积——否则队列越积越长、
+    // 结果越拖越旧、内存也跟着涨。单次检测若撞上在途请求，同样按「最新优先」覆盖。
+    if (detectBusy_) {
+        pendingFrame_    = frame;
+        pendingAutoSave_ = allowAutoSave;
+        return;
+    }
+
     auto* algo = HardwareManager::instance().algorithm();
     if (!algo) {
         SetStatus(QStringLiteral("算法未注册，无法检测"));
         return;
     }
 
-    const int prevCount = lastResults_.size();
+    // ⚠ 参数快照必须在**主线程**取：`SnapshotParams()` 读 `ConfigManager`（`json` 读写非
+    // 线程安全），工作线程绝不读 ConfigManager 是本项目的既有硬约束
+    // （见 `SequenceWorker.cpp:106` 的同名约定）。
+    const AlgorithmParams params = algo->SnapshotParams();
 
-    QElapsedTimer timer;
-    timer.start();
-    auto results = ToQVector(algo->Detect(frame));
-    lastDetectMs_ = static_cast<double>(timer.nsecsElapsed()) / 1.0e6;
+    detectBusy_ = true;
+    QMetaObject::invokeMethod(detectCtx_, [this, frame, params, algo, allowAutoSave]() {
+        QElapsedTimer timer;
+        timer.start();
+        const auto raw = algo->Detect(*frame, params);
+        const double ms = static_cast<double>(timer.nsecsElapsed()) / 1.0e6;
+        const QVector<PuffResult> results = ToQVector(raw);
+
+        // 结果回 UI 线程。以 `this` 为 context：页面析构时该事件被 Qt 自动撤销，不会悬垂。
+        QMetaObject::invokeMethod(this, [this, results, ms, allowAutoSave]() {
+            ApplyDetectionResult(results, ms, allowAutoSave);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+}
+
+void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave)
+{
+    detectBusy_ = false;
+
+    const int prevCount = lastResults_.size();
+    lastDetectMs_ = elapsedMs;
 
     ShowResults(results, lastDetectMs_);
     lastResults_ = results;
-    RenderTiles();
+    // 叠加框需要重绘，但**只在单次检测时强制刷一次**（P0，2026-09-22）：
+    // 单次检测的帧已经画过，`RenderTiles()` 的去重会跳过 → 必须 force；
+    // 连续检测下每帧时间戳都是新的，33 ms 定时器那一拍自然会带上刚更新的
+    // `lastResults_` 重绘，这里再调一次纯属重复（修复前每帧渲染 2~3 次）。
+    if (!continuous_)
+        RenderTiles(/*force=*/true);
 
     // 耗时进日志（§7.3）。连续检测下**只在目标数变化时记**——否则 30 fps × 每秒 30 行
     // 会把 500 行的环形缓冲在十几秒内冲干净，反而看不到关键事件。
@@ -1074,18 +1163,43 @@ void VisionTestPage::RunDetection(const CameraFrame& frame, bool allowAutoSave)
         SetStatus(QStringLiteral("检测完成：发现 %1 个目标（%2 ms）")
                       .arg(results.size())
                       .arg(QString::number(lastDetectMs_, 'f', 1)));
+
+    // 忙时暂存的最新一帧（连续检测的背压落点；或单次检测撞上在途请求）→ 立刻补跑。
+    // 只补一帧、且只补最新的那一帧，故队列深度恒为 0 或 1。
+    if (pendingFrame_) {
+        const CameraFramePtr next = pendingFrame_;
+        const bool nextAutoSave   = pendingAutoSave_;
+        pendingFrame_.reset();
+        pendingAutoSave_ = false;
+        ScheduleDetection(next, nextAutoSave);
+    }
 }
 
 void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elapsedMs)
 {
-    resultTable_->setRowCount(results.size());
+    const int n = results.size();
+    if (resultTable_->rowCount() != n)
+        resultTable_->setRowCount(n);
+
+    // 增量更新（P1，2026-09-22）：本函数在**连续检测下每帧都跑**，原先每帧
+    // `new` 11 × N 个 `QTableWidgetItem`（2 目标 = 22 个堆分配/帧 @ 15 fps）纯属浪费，
+    // 且每 `setItem` 都触发一次表格重绘。改为：复用已有 item，仅在文本真的变了才
+    // `setText`；批量更新期间关掉表格刷新，最后一次性恢复。
     const QString msText = QString::number(elapsedMs, 'f', 1);
-    for (int i = 0; i < results.size(); ++i) {
+    const bool wasUpdatesEnabled = resultTable_->updatesEnabled();
+    resultTable_->setUpdatesEnabled(false);
+
+    for (int i = 0; i < n; ++i) {
         const auto& r = results[i];
         auto set = [&](int col, const QString& text) {
-            auto* item = new QTableWidgetItem(text);
-            item->setTextAlignment(Qt::AlignCenter);
-            resultTable_->setItem(i, col, item);
+            QTableWidgetItem* item = resultTable_->item(i, col);
+            if (!item) {
+                item = new QTableWidgetItem;
+                item->setTextAlignment(Qt::AlignCenter);
+                resultTable_->setItem(i, col, item);
+            }
+            if (item->text() != text)
+                item->setText(text);
         };
         set(0, QString::number(i + 1));
         set(1, QString::number(r.confidence * 100.0, 'f', 1) + QStringLiteral("%"));
@@ -1099,11 +1213,19 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elap
         set(9, QString::number(r.height));
         set(10, msText);   // 第 11 列：本次检测的整体耗时（V3）
     }
+
+    resultTable_->setUpdatesEnabled(wasUpdatesEnabled);
 }
 
 void VisionTestPage::OnToggleContinuous()
 {
     continuous_ = continuousBtn_->isChecked();
+    if (!continuous_) {
+        // 关掉连续检测 → 丢弃暂存帧，避免「已经关了又冒出一帧结果」。
+        // 在途那一拍不打断（10 ms 级，让它跑完即可）。
+        pendingFrame_.reset();
+        pendingAutoSave_ = false;
+    }
     SPDLOG_INFO("[VisionTest] 连续检测 {} clicked", continuous_ ? "开" : "关");
     SetStatus(continuous_ ? QStringLiteral("连续检测已开启（期间不自动存图）")
                           : QStringLiteral("连续检测已关闭"));
@@ -1113,7 +1235,9 @@ void VisionTestPage::OnOverlayToggle()
 {
     showOverlay_ = overlayToggleCheck_->isChecked();
     SPDLOG_INFO("[VisionTest] 叠加框 {} clicked", showOverlay_ ? "开" : "关");
-    RenderTiles();
+    // 画面内容没变（帧时间戳不变），但叠加框的有无变了 → 必须强制重绘，
+    // 否则会被 `RenderTiles` 的去重挡掉，表现为「勾选框点了没反应」。
+    RenderTiles(/*force=*/true);
 }
 
 void VisionTestPage::OnBrowseTemplate()
@@ -1206,11 +1330,12 @@ void VisionTestPage::OnLoadImage()
                     img.scanLine(y),
                     static_cast<size_t>(f.width) * 3);
 
-    latestFrame_ = f;
+    // P2：离线图同样以共享只读指针缓存，与在线帧走同一条渲染/检测路径。
+    latestFrame_ = std::make_shared<CameraFrame>(std::move(f));
     hasFrame_    = true;
     lastResults_.clear();
-    SetStatus(QStringLiteral("已加载图片 %1x%2，正在检测…").arg(f.width).arg(f.height));
-    RunDetection(latestFrame_, /*allowAutoSave=*/true);
+    SetStatus(QStringLiteral("已加载图片 %1x%2，正在检测…").arg(latestFrame_->width).arg(latestFrame_->height));
+    ScheduleDetection(latestFrame_, /*allowAutoSave=*/true);
 }
 
 // ---------------------------------------------------------------------------

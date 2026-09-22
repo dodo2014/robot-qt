@@ -9,6 +9,8 @@
 namespace {
 int g_cameraMetaRegistered = []() {
     qRegisterMetaType<CameraFrame>("CameraFrame");
+    // 跨线程 queued connection 需要注册实参类型（P2：帧改共享只读指针）。
+    qRegisterMetaType<CameraFramePtr>("CameraFramePtr");
     return 0;
 }();
 }
@@ -56,7 +58,10 @@ void CameraCaptureWorker::Stop()
 void CameraCaptureWorker::CaptureTick()
 {
     if (!camera_) return;
-    CameraFrame frame = camera_->CaptureFrame();
-    if (frame.width > 0 && frame.height > 0 && !frame.colorData.empty())
+    // P2：帧数据在采集线程构造**一次**，之后以共享只读指针传递。
+    // 原先 `CameraFrame frame = camera_->CaptureFrame(); emit frameReady(frame);` 在跨线程
+    // queued connection 上会让 Qt 把整个帧（≈14.5 MB）深拷贝进事件队列。
+    auto frame = std::make_shared<CameraFrame>(camera_->CaptureFrame());
+    if (frame->width > 0 && frame->height > 0 && !frame->colorData.empty())
         emit frameReady(frame);
 }

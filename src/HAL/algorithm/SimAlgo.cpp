@@ -18,8 +18,23 @@ std::string SimAlgo::Name() const
     return "SimAlgo";
 }
 
-std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
+AlgorithmParams SimAlgo::SnapshotParams() const
 {
+    // ⚠ 主线程专用：这里读 `ConfigManager`（`json` 读写非线程安全）。语义与原实现一致
+    // ——config.json 实时值优先，键缺失时 `getValue` 回落 `LoadConfig` 解析出的兜底值。
+    AlgorithmParams p;
+    p.confidenceThreshold = EffectiveThreshold();
+    p.depthZMin = ConfigManager::instance().getValue<double>("vision.depthZMin", 0.0);
+    p.depthZMax = ConfigManager::instance().getValue<double>("vision.depthZMax", 500.0);
+    return p;
+}
+
+std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame, const AlgorithmParams& params)
+{
+    // 串行化（P1）：视觉页的检测线程与 `SequenceWorker` 的视觉识别动作可能同时在跑，
+    // 二者共用一个算法实例；`lastError_` 是唯一被写入的成员，并发写 `std::string` 是 UB。
+    std::lock_guard<std::mutex> lock(mutex_);
+
     std::vector<PuffResult> results;
     lastError_.clear();
 
@@ -28,9 +43,10 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
         return results;
     }
 
-    auto& cfg = ConfigManager::instance();
-    double zMin = cfg.getValue<double>("vision.depthZMin", 0.0);
-    double zMax = cfg.getValue<double>("vision.depthZMax", 500.0);
+    // P1：参数由调用方在**主线程**快照后传入——本函数不再读 `ConfigManager`，
+    // 因此可以在工作线程安全调用（worker 线程绝不读 ConfigManager）。
+    const double zMin = params.depthZMin;
+    const double zMax = params.depthZMax;
 
     const int w = frame.width;
     const int h = frame.height;
@@ -124,7 +140,7 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
     // 这才是「置信度阈值」应有的行为 —— 原实现只在视觉页绘制叠加框时用它
     // （`VisionTestPage.cpp` 的 `DrawOverlays`），算法侧完全不用，配置形同虚设。
     // 副作用是部分遮挡的目标不再被报出，属预期语义（该目标本就不该被抓取）。
-    const double thr = EffectiveThreshold();
+    const double thr = params.confidenceThreshold;
     if (thr > 0.0) {
         const auto before = results.size();
         results.erase(std::remove_if(results.begin(), results.end(),
@@ -139,11 +155,11 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame)
     return results;
 }
 
-PuffResult SimAlgo::LocateBest(const CameraFrame& frame)
+PuffResult SimAlgo::LocateBest(const CameraFrame& frame, const AlgorithmParams& params)
 {
     PuffResult best;
     double bestConf = 0.0;
-    for (const auto& r : Detect(frame)) {
+    for (const auto& r : Detect(frame, params)) {
         if (r.confidence > bestConf) {
             bestConf = r.confidence;
             best = r;
@@ -184,5 +200,6 @@ double SimAlgo::EffectiveThreshold() const
 
 std::string SimAlgo::GetLastError() const
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     return lastError_;
 }

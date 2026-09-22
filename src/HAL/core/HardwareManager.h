@@ -191,8 +191,8 @@ signals:
     void estopCleared();
     // 回零互锁状态变化（全轴回零成功 → true；构造/重初始化 → false），UI 据此启用/禁用绝对运动入口
     void homeStateChanged(bool homed);
-    // 相机采集线程产出的最新帧（值类型，跨线程自动深拷贝）
-    void frameReady(const CameraFrame& frame);
+    // 相机采集线程产出的最新帧（P2：共享只读指针，跨线程只拷指针不拷帧数据）
+    void frameReady(const CameraFramePtr& frame);
     // 相机链路状态边沿变化（P3 / §4.3）：`ICamera` 不是 QObject 不能发信号，
     // 由 PollTick 边沿检测后在此广播。**`Unknown`（SimCamera）不参与边沿检测**，
     // 故 Sim 模式下该信号永不发出。

@@ -33,7 +33,7 @@ public:
     bool IsStreaming() const;
 
 signals:
-    void frameReady(const CameraFrame& frame);
+    void frameReady(const CameraFramePtr& frame);
 
 private:
     ICamera*             camera_          = nullptr;

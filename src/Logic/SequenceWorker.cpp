@@ -983,7 +983,9 @@ bool SequenceWorker::StepRunner(RunnerState& r)
             CameraFrame frame = InMainThread([&] { return camera->CaptureFrame(); });
 
             emit logMessage(QStringLiteral("视觉：检测中 (阈值 %1)...").arg(action.threshold));
-            auto results = InMainThread([&] { return algo->Detect(frame); });
+            // P1：`Detect` 改为纯函数式（参数由调用方传入），这里两件事都在**主线程**做——
+            // `SnapshotParams()` 读 ConfigManager，只有主线程能读（见本文件 :106 的约定）。
+            auto results = InMainThread([&] { return algo->Detect(frame, algo->SnapshotParams()); });
 
             if (results.empty()) {
                 SPDLOG_WARN("[SequenceWorker] Vision: no target detected");
