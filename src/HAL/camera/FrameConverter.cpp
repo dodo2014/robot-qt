@@ -18,6 +18,20 @@ QImage ColorToQImage(const CameraFrame& frame)
                   QImage::Format_RGB888).copy();
 }
 
+QImage ColorToQImageView(const CameraFrame& frame)
+{
+    if (frame.colorData.empty() || frame.width <= 0 || frame.height <= 0)
+        return {};
+
+    // 与 `ColorToQImage` 同参，只去掉末尾的 `.copy()`——走 `const uchar*` 重载，
+    // 是**只读视图**而非拷贝（语义见头文件）。
+    const qsizetype bytesPerLine = static_cast<qsizetype>(frame.width) * 3;
+    return QImage(frame.colorData.data(),
+                  frame.width, frame.height,
+                  bytesPerLine,
+                  QImage::Format_RGB888);
+}
+
 namespace {
 
 struct ColorStop { float t; QRgb rgb; };
@@ -51,20 +65,35 @@ QRgb GradientColor(float t)
 
 }
 
-QImage DepthToQImage(const CameraFrame& frame, float depthMin, float depthMax)
+QImage DepthToQImage(const CameraFrame& frame, float depthMin, float depthMax, const QSize& targetSize)
 {
     if (frame.depthData.empty() || frame.width <= 0 || frame.height <= 0)
         return {};
 
-    QImage img(frame.width, frame.height, QImage::Format_RGB888);
-    float range = (depthMax > depthMin) ? (depthMax - depthMin) : 1.0f;
     const int w = frame.width;
     const int h = frame.height;
-    for (int y = 0; y < h; ++y) {
-        const float* row = frame.depthData.data() + static_cast<size_t>(y) * w;
-        uint8_t* out = img.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            float d = row[x];
+    const float range = (depthMax > depthMin) ? (depthMax - depthMin) : 1.0f;
+
+    // P3-2（2026-09-22）：`targetSize` 有效且确实比源小 → 直接按最近邻步长采样产出目标
+    // 尺寸，不生成 1920×1080 中间图。采样口径与「全分辨率 → `Qt::FastTransformation`
+    // 降采样」一致（都是最近邻），故视觉等价，但迭代次数从 2.07 M 降到约 0.13 M。
+    const bool decimate = targetSize.isValid() &&
+                          targetSize.width() > 0 && targetSize.height() > 0 &&
+                          (targetSize.width() < w || targetSize.height() < h);
+    const int outW = decimate ? targetSize.width()  : w;
+    const int outH = decimate ? targetSize.height() : h;
+
+    QImage img(outW, outH, QImage::Format_RGB888);
+    if (img.isNull())
+        return {};
+
+    for (int oy = 0; oy < outH; ++oy) {
+        const int sy = decimate ? static_cast<int>(static_cast<qint64>(oy) * h / outH) : oy;
+        const float* row = frame.depthData.data() + static_cast<size_t>(sy) * w;
+        uint8_t* out = img.scanLine(oy);
+        for (int ox = 0; ox < outW; ++ox) {
+            const int sx = decimate ? static_cast<int>(static_cast<qint64>(ox) * w / outW) : ox;
+            float d = row[sx];
             QRgb c;
             if (d <= 0.0f) {
                 c = qRgb(18, 20, 26);
@@ -72,9 +101,9 @@ QImage DepthToQImage(const CameraFrame& frame, float depthMin, float depthMax)
                 float t = std::clamp((d - depthMin) / range, 0.0f, 1.0f);
                 c = GradientColor(t);
             }
-            out[x * 3 + 0] = static_cast<uint8_t>(c >> 16 & 0xFF);
-            out[x * 3 + 1] = static_cast<uint8_t>(c >> 8 & 0xFF);
-            out[x * 3 + 2] = static_cast<uint8_t>(c & 0xFF);
+            out[ox * 3 + 0] = static_cast<uint8_t>(c >> 16 & 0xFF);
+            out[ox * 3 + 1] = static_cast<uint8_t>(c >> 8 & 0xFF);
+            out[ox * 3 + 2] = static_cast<uint8_t>(c & 0xFF);
         }
     }
     return img;

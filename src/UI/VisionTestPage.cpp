@@ -837,6 +837,10 @@ void VisionTestPage::showEvent(QShowEvent* event)
     // 每次显示时重新回填，否则切回本页看到的仍是旧值、且下拉框会把配置悄悄覆盖掉。
     RefreshStreamParamsFromConfig();
     ReloadStreamProfiles();
+    // P3-4（2026-09-22）：隐藏期间 `OnRenderTick` 整拍早退，三格会停在切走前那一帧 →
+    // 切回时补一次强制重绘。按钮态一并刷新（隐藏期间 `UpdateButtons` 也没跑）。
+    if (hasFrame_) RenderTiles(/*force=*/true);
+    UpdateButtons();
 }
 
 // ---------------------------------------------------------------------------
@@ -973,6 +977,11 @@ void VisionTestPage::OnFrameReady(const CameraFramePtr& frame)
 
 void VisionTestPage::OnRenderTick()
 {
+    // P3-4（2026-09-22）：本页不可见时整拍早退。
+    // `renderTimer_` 与帧信号都是启动即建立的，切到别的页之后本页仍会以 15 fps 做
+    // 「6.2 MB 拷贝 + 深度逐像素 + 3 次转位图」——与用户正在看的页面抢 UI 线程。
+    // 隐藏期间 `lastRenderedTs_` 不推进，故 `showEvent` 的补绘不会命中去重。
+    if (!isVisible()) return;
     UpdateTileInfos();   // 廉价：3 个 setText（FPS 每拍都在变，不该被位图去重挡住）
     RenderTiles();       // 昂贵路径：按帧时间戳 + 目标尺寸去重
     UpdateButtons();     // 33 ms 一次，保证「无画面→有画面」时检测按钮及时解禁
@@ -1017,28 +1026,48 @@ void VisionTestPage::RenderTiles(bool force)
         return;
     lastRenderedTs_ = latestFrame_->timestamp;
 
-    auto put = [&tileSize](QLabel* view, const QImage& img) {
-        if (!view || img.isNull()) return;
-        const QSize target = tileSize(view);
+    // P3-3（2026-09-22）：下面用的是**非拥有** QImage 视图，必须保证这一帧活到渲染结束。
+    // `OnFrameReady` 与本函数同在 UI 线程、不会交错，仍以局部变量显式固定住——
+    // 语义上不依赖「同线程」这个隐含前提。
+    const CameraFramePtr frame = latestFrame_;
+    const QSize srcSize(frame->width, frame->height);
 
-        // 缩放策略（§7.2）：`SmoothTransformation` 在 1280×720 → 460×280 下开销明显。
-        // 折中——**目标尺寸变化时**才用 Smooth 重算（窗口缩放 / 首次布局），
-        // 尺寸没变时只是新帧进来、像素数一致，用 Fast 观感差异可忽略。
+    // 「源尺寸按 KeepAspectRatio 适配到标签」后的实际绘制尺寸。
+    // `QSize::scaled` 是纯尺寸计算，不碰像素。
+    auto fitSize = [&srcSize](const QSize& box) {
+        if (srcSize.isEmpty() || box.isEmpty()) return box;
+        return srcSize.scaled(box, Qt::KeepAspectRatio);
+    };
+
+    // P3-1（2026-09-22）：**先缩放到目标尺寸、再转 QPixmap**。
+    // 改造前是 `QPixmap::fromImage(全分辨率图).scaled(...)`——先按 1920×1080 建位图
+    // （2.07 M 像素转换 + 8.3 MB 分配）再缩小，三格各来一遍；而三格显示面积合计只有
+    // 约 0.39 M 像素，利用率约 1/16。次序换过来后 `fromImage` 只处理缩放后的像素。
+    // 视觉无变化：`QImage::scaled` 与 `QPixmap::scaled` 的 `Fast` 路径同源。
+    // `Smooth` 仍只在目标尺寸变化时启用（窗口缩放 / 首次布局）。
+    auto put = [&tileSize](QLabel* view, const QImage& img, const QSize& fit) {
+        if (!view || img.isNull() || fit.isEmpty()) return;
+        const QSize target = tileSize(view);
         const bool sizeChanged = view->property("lastScaledSize").toSize() != target;
         view->setProperty("lastScaledSize", target);
 
-        view->setPixmap(QPixmap::fromImage(img).scaled(
-            target, Qt::KeepAspectRatio,
-            sizeChanged ? Qt::SmoothTransformation : Qt::FastTransformation));
+        const QImage out = (img.size() == fit)
+                               ? img   // 深度图已按目标尺寸产出（P3-2），无需再缩
+                               : img.scaled(fit, Qt::IgnoreAspectRatio,
+                                            sizeChanged ? Qt::SmoothTransformation
+                                                        : Qt::FastTransformation);
+        view->setPixmap(QPixmap::fromImage(out));
     };
 
-    // P2（2026-09-22）：彩图只转一次——RGB 格与 Overlay 格共用同一份 QImage。
-    // 原先 `BuildOverlayImage` 内部又调一次 `ColorToQImage`，等于每轮多付一次
-    // 6.2 MB 的 `QImage::copy()`；Overlay 与 RGB 本就是同一张底图，只差识别框。
-    const QImage rgb = BuildRgbImage();
-    put(rgbViewLabel_,     rgb);
-    put(depthViewLabel_,   BuildDepthImage());
-    put(overlayViewLabel_, BuildOverlayImage(rgb));
+    const QSize rgbFit = fitSize(tileSize(rgbViewLabel_));
+    const QSize depFit = fitSize(tileSize(depthViewLabel_));
+    const QSize ovlFit = fitSize(tileSize(overlayViewLabel_));
+
+    // P3-3：彩图只转一次、且**零拷贝**——RGB 格与 Overlay 格共用同一份只读视图。
+    const QImage rgb = FrameConverter::ColorToQImageView(*frame);
+    put(rgbViewLabel_,     rgb,                    rgbFit);
+    put(depthViewLabel_,   BuildDepthImage(depFit), depFit);
+    put(overlayViewLabel_, BuildOverlayImage(rgb),  ovlFit);
 }
 
 QImage VisionTestPage::BuildRgbImage()
@@ -1047,10 +1076,12 @@ QImage VisionTestPage::BuildRgbImage()
     return FrameConverter::ColorToQImage(*latestFrame_);
 }
 
-QImage VisionTestPage::BuildDepthImage()
+QImage VisionTestPage::BuildDepthImage(const QSize& target)
 {
     if (!hasFrame_) return {};
-    return FrameConverter::DepthToQImage(*latestFrame_, 0.0f, 500.0f);
+    // P3-2：`target` 非空 → 直接产出该尺寸（最近邻采样），不生成 1920×1080 中间图。
+    // 预览路径传显示尺寸；存图路径不传，保持全分辨率。
+    return FrameConverter::DepthToQImage(*latestFrame_, 0.0f, 500.0f, target);
 }
 
 QImage VisionTestPage::BuildOverlayImage(const QImage& base)
@@ -1059,16 +1090,17 @@ QImage VisionTestPage::BuildOverlayImage(const QImage& base)
     // `base` 为空表示调用方没现成彩图（如存图路径），自己转一次。
     const QImage src = base.isNull() ? FrameConverter::ColorToQImage(*latestFrame_) : base;
     if (src.isNull()) return src;
-    // QImage 隐式共享：这里只是浅拷贝，`DrawOverlays` 的 QPainter 写入时会 detach，
-    // 不会污染调用方（RGB 格）那一份。
-    QImage img = src;
-    if (showOverlay_) {
-        // 阈值在这里只决定**画哪些框**；检测阶段的过滤已在 `SimAlgo::Detect` 内按
-        // `EffectiveThreshold()` 完成（P1 / C1）。
-        const double thr = ConfigManager::instance().getValue<double>("vision.confidenceThreshold", 0.0);
+    // 阈值在这里只决定**画哪些框**；检测阶段的过滤已在 `SimAlgo::Detect` 内按
+    // `EffectiveThreshold()` 完成（P1 / C1）。
+    const double thr = ConfigManager::instance().getValue<double>("vision.confidenceThreshold", 0.0);
+    // P3（2026-09-22）：无结果可画时直接返回浅拷贝——`DrawOverlays` 里的 `QPainter`
+    // 会对图像 `detach()`，那是一次 6.2 MB 深拷贝，白付。
+    if (showOverlay_ && !lastResults_.isEmpty()) {
+        QImage img = src;   // QImage 隐式共享：此处只是浅拷贝
         FrameConverter::DrawOverlays(img, lastResults_, thr);
+        return img;
     }
-    return img;
+    return src;
 }
 
 // ---------------------------------------------------------------------------

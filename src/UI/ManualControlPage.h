@@ -66,6 +66,14 @@ private:
 
     QVector<QLabel*> posLabels_;
     QVector<QLabel*> statusDots_;
+    // 状态圆点的「上次已应用外观」缓存（P4，2026-09-22）。
+    // `RefreshStatusDot` 由 `OnStateUpdated` 对**每轴**调用，而 `stateUpdated` 是
+    // `PollTick` 每 50 ms **无条件**广播（不判变化）→ 6 轴 × 20 Hz = **120 次/秒**
+    // `setStyleSheet` + `setToolTip`，且与 `ManualControlPage` 是否可见无关。
+    // 外观完全由 (color, tip) 决定，故按此二元组去重即可，行为不变。
+    // ⚠ `statusDots_[i]` 的样式**只有 `RefreshStatusDot` 一个写点**——新增写点必须同步失效本缓存。
+    QVector<QString> dotStyleApplied_;
+    QVector<QString> dotTipApplied_;
     QVector<QDoubleSpinBox*> targetSpins_;
     QVector<QDoubleSpinBox*> speedSpins_;
     QVector<QPushButton*> goButtons_;

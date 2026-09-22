@@ -70,16 +70,24 @@ private:
 
     void UpdateCameraState();
     void UpdateButtons();
-    // 三格位图重绘（**昂贵路径**：两路 `ColorToQImage` 拷贝 + 深度伪彩逐像素 + 三次
-    // `fromImage` / `scaled`）。`force=false` 时按「帧时间戳 + 三格目标尺寸」去重——
+    // 三格位图重绘（**昂贵路径**）。`force=false` 时按「帧时间戳 + 三格目标尺寸」去重——
     // 相机 15 fps、渲染定时器 30 Hz，不去重则同一帧被重复转换缩放；停流后
     // `hasFrame_` 恒为真（保留末帧），去重能让负载真正归零。
-    // `force=true` 用于「画面没变但必须重画」的场合（切叠加框开关、单次检测出框）。
+    // `force=true` 用于「画面没变但必须重画」的场合（切叠加框开关、单次检测出框、切回本页）。
+    //
+    // P3（2026-09-22）：① 缩放提到 `QPixmap::fromImage` **之前**（转换量 2.07 M → 0.13 M 像素）；
+    // ② 彩图走 `ColorToQImageView` 零拷贝只读视图（省 6.2 MB `QImage::copy()`）；
+    // ③ 深度图直接产出显示尺寸。三格显示面积合计约 0.39 M 像素，改造前却做了约 8 遍
+    // 全分辨率（2.07 M）像素操作。
+    // ⚠ 本函数**不**自行判可见性——周期路径的门控在 `OnRenderTick`，`showEvent` 的补绘
+    // 与 `ApplyDetectionResult` 的强制重绘都要能进来。
     void RenderTiles(bool force = false);
     // 三格信息条文本（FPS / 时间戳 / 分辨率）——廉价，每拍都刷，与位图去重解耦。
     void UpdateTileInfos();
     QImage BuildRgbImage();
-    QImage BuildDepthImage();
+    // `target` 非空 → 直接产出该尺寸（最近邻采样，跳过全分辨率中间图，P3-2）；
+    // 留空 = 全分辨率，供存图路径使用。
+    QImage BuildDepthImage(const QSize& target = QSize());
     // Overlay = 同一张彩图 + 识别框。`base` 传入调用方已转好的彩图可省掉一次
     // `ColorToQImage`（6.2 MB 拷贝 + `QImage::copy()`）；传空则由本函数自行转换。
     QImage BuildOverlayImage(const QImage& base = QImage());

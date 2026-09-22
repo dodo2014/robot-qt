@@ -63,6 +63,9 @@ private:
     void SetupUI();
     void RefreshCoordPanel();
     void RefreshSchemeCombo();
+    // 相机两格的位图刷新（P3-4，2026-09-22）。抽成函数是因为两个入口共用同一套：
+    // ① 每帧（**仅本页可见时**）；② `showEvent` 切回本页时补绘。
+    void RenderCameraTiles();
     void showEvent(QShowEvent* event) override;
 
     // 循环生产控件（TR-091）：读 config 初始化 / 写回 config / 组装 LoopConfig
@@ -83,6 +86,12 @@ private:
     QTextEdit*  m_logTextEdit      = nullptr;
     QLabel*     m_cameraRgbLabel   = nullptr;
     QLabel*     m_cameraOverlayLabel = nullptr;
+    // P3-4（2026-09-22）：本页不可见时只缓存帧、**不产出位图**。
+    // `frameReady` 是构造期就建立的订阅（`MainWindow` 启动即 `new AutoRunPage()`），
+    // 页面切走之后 Qt 只会跳过「重绘」、不会跳过「转换」——改造前它仍以 15 fps 在 UI
+    // 线程上做 `ColorToQImage`（6.2 MB 拷贝）+ 全分辨率 `QPixmap::fromImage`，
+    // 与用户正在看的页面抢线程。切回本页时由 `showEvent` 用这份缓存补一帧。
+    CameraFramePtr m_lastFrame;
     // 2026-09-15：底部 m_hintLabel 已删除——提示改由 MainWindow 顶栏全局横幅承载
     // （SetHint 转发 requestGlobalHint），释放本页竖向空间。
 

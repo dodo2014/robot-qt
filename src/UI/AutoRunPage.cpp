@@ -405,6 +405,9 @@ void AutoRunPage::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     RefreshSchemeCombo();   // ProcessPage 增删改方案后，切回本页时下拉同步
+    // P3-4（2026-09-22）：隐藏期间 `OnFrameReady` 只缓存帧、不产位图 → 切回时补一帧。
+    // 放在 `RefreshSchemeCombo()` 之后：标签尺寸此时已由布局确定，`contentsRect()` 有效。
+    RenderCameraTiles();
 }
 
 void AutoRunPage::RefreshSchemeCombo()
@@ -607,13 +610,34 @@ void AutoRunPage::OnEmergencyTriggered()
 void AutoRunPage::OnFrameReady(const CameraFramePtr& frame)
 {
     if (!frame) return;
-    QImage rgbImg = FrameConverter::ColorToQImage(*frame);
-    if (rgbImg.isNull()) return;
+    // P3-4（2026-09-22）：只缓存帧；**本页不可见时不产出位图**。
+    // 这是构造期建立的订阅，页面切走后 Qt 只跳过「重绘」、不跳过「转换」——
+    // 改造前本页在后台以 15 fps 做 6.2 MB 拷贝 + 全分辨率转位图，纯浪费。
+    m_lastFrame = frame;
+    if (!isVisible()) return;
+    RenderCameraTiles();
+}
 
-    QPixmap rgbPm = QPixmap::fromImage(rgbImg);
+void AutoRunPage::RenderCameraTiles()
+{
+    if (!m_lastFrame || !m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+
+    // P3-1（2026-09-22）：**先缩放到标签尺寸、再转 QPixmap**。
+    // 两个标签都是 `setScaledContents(true)`，QLabel 每次重绘本来就会自己缩一次
+    // （`FastTransformation`），所以先把图缩好只是把同一件事提前做一次，
+    // 但省掉了「全分辨率 8.3 MB 位图」的分配与 2.07 M 像素的转换。
+    // P3-3：彩图走零拷贝只读视图，省掉 6.2 MB `QImage::copy()`——
+    // `m_lastFrame` 在本函数返回前一直有效，满足视图的生命周期要求。
+    const QSize target = m_cameraRgbLabel->contentsRect().size();
+    const QImage src = FrameConverter::ColorToQImageView(*m_lastFrame);
+    if (src.isNull()) return;
+    const QImage fitted = (target.isEmpty() || src.size() == target)
+                              ? src
+                              : src.scaled(target, Qt::KeepAspectRatio, Qt::FastTransformation);
+
+    // 无检测结果时两个标签共享同一 QPixmap（原行为保留）
+    const QPixmap rgbPm = QPixmap::fromImage(fitted);
     m_cameraRgbLabel->setPixmap(rgbPm);
-
-    // 无检测结果时不再整幅深拷贝 + 空跑 DrawOverlays，两个标签共享同一 QPixmap
     m_cameraOverlayLabel->setPixmap(rgbPm);
 }
 

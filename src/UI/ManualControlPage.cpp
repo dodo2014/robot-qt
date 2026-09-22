@@ -954,6 +954,20 @@ void ManualControlPage::RefreshStatusDot(int axis)
     else if (runningState_[axis]) { color = "#4fb3ff"; tip = QStringLiteral("运行中"); }
     else if (enabled)             { color = "#3bff7b"; tip = QStringLiteral("已使能"); }
     else                          { color = "#5a6a7a"; tip = QStringLiteral("未使能"); }
+
+    // P4（2026-09-22）：变化检测。本函数由 `OnStateUpdated` 对每轴调用，而
+    // `stateUpdated` 是 50 ms 轮询**无条件**广播 → 6 轴 × 20 Hz = 120 次/秒。
+    // 外观完全由 (color, tip) 决定，故两者都没变时直接返回，跳过 `setStyleSheet`
+    // （样式系统级操作，非普通属性写入）与 `setToolTip`。行为不变。
+    if (dotStyleApplied_.size() != statusDots_.size()) {
+        dotStyleApplied_.resize(statusDots_.size());
+        dotTipApplied_.resize(statusDots_.size());
+    }
+    if (dotStyleApplied_[axis] == color && dotTipApplied_[axis] == tip)
+        return;
+    dotStyleApplied_[axis] = color;
+    dotTipApplied_[axis]   = tip;
+
     statusDots_[axis]->setStyleSheet(QStringLiteral("background: %1; border-radius: 6px;").arg(color));
     statusDots_[axis]->setToolTip(tip);
 }
