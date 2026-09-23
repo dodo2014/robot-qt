@@ -65,6 +65,9 @@ export PATH="/d/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC
 ⚠ **MSVC 是中文版**：关键词是「**错误**」「**警告 C**」「**注意: 包含文件:**」，grep 英文
 `error` / `warning C` 会漏掉一部分（但 `warning C####` 这种带编号的仍是英文，故两者都带上）。
 
+⚠ **别用裸 `error` 做过滤**（2026-09-23 实测）：MSVC 的「注意: 包含文件:」行里**含 `error` 的头文件名**会把输出淹掉——`system_error`、`__msvc_system_error_abi.hpp`、`winerror.h` 每行都命中 `-i error`，Debug 全量构建时能刷出上百行噪音，把真正要找的 `[N/N] Linking` 挤出 `tail`。
+**改用带上下文的模式**：`grep -aE "error C[0-9]{4}|error LNK[0-9]{4}|error MSB[0-9]{4}|错误|警告 C|warning C[0-9]{4}|FAILED|Linking CXX exe|no work"`。
+
 ⚠ grep 必须加 `-a`，否则见到 windeployqt 的 GBK 字节会判定为二进制而停止输出。
 
 **既有警告基线（不算新增）**：`SimCamera.cpp:126/127 C4244`、`SimCard.cpp:156 C4100`、

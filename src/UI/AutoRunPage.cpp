@@ -20,6 +20,8 @@
 #include <QScrollBar>
 #include <QPixmap>
 #include <QImage>
+#include <QPainter>
+#include <QFontMetrics>
 #include <QDateTime>
 #include <QShowEvent>
 #include <QHideEvent>
@@ -457,6 +459,13 @@ void AutoRunPage::SetStreamPreviewEnabled(bool enabled)
         TeardownStreamPreview();
         SetHint(QStringLiteral("预览源已切换为「检测结果」"), QStringLiteral("#7aa2f7"));
     }
+    // 立刻反映切换结果（仅本页可见时，沿用 P3-4「不可见不产位图」）。
+    // 必要性（2026-09-23）：不重绘的话会停在**另一条路径**留下的画面或提示上——
+    // 若此时恰好没有帧（流未启 / 相机异常），那条旧提示会一直挂着，反而误导操作员。
+    if (isVisible()) {
+        if (m_streamPreviewOn) RenderCameraTiles();
+        else                   RenderDetectionTiles();
+    }
 }
 
 // 「视频流 + 可见性持有」独立函数对。**保留**（2026-09-23 用户明确要求），
@@ -487,7 +496,18 @@ void AutoRunPage::OnDetectionReady(const SequenceWorker::DetectionResult& result
 
 void AutoRunPage::RenderDetectionTiles()
 {
-    if (!m_lastDetection.frame || !m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+    if (!m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+
+    // ---- 空态：从未跑到过含「识别」动作的方案 ----
+    // 2026-09-23 实测暴露：旧版本页构造期订阅 `frameReady`，「打开就有实时画面」；
+    // 新版默认路径不订阅任何流，此时页面只剩两个光秃秃的标题，极易被当成「坏了」
+    // （用户第一反应正是如此）。故两格都补一句空态说明，**保留格位标题**以免丢失身份。
+    if (!m_lastDetection.frame) {
+        const QString hint = QStringLiteral("\n\n尚无检测结果\n（运行含「识别」动作的方案后显示）");
+        m_cameraRgbLabel->setText(QStringLiteral("RGB 相机画面 (3D)") + hint);
+        m_cameraOverlayLabel->setText(QStringLiteral("识别结果叠加图") + hint);
+        return;
+    }
 
     // 左格：该次检测所用的**原始帧**（无框）；右格：同帧 + 检测框。
     // 叠加图在**原帧分辨率**上画（`DrawOverlays` 用的是 `PuffResult` 的图像像素坐标），
@@ -495,17 +515,47 @@ void AutoRunPage::RenderDetectionTiles()
     const QSize target = m_cameraOverlayLabel->contentsRect().size();
     const QImage base = FrameConverter::ColorToQImage(*m_lastDetection.frame);
     if (base.isNull()) return;
-    // `QImage` 是隐式共享的：这里的赋值不拷贝像素，`DrawOverlays` 写时才分离（一次拷贝）。
-    // 比「为叠加图再调一次 ColorToQImage」少一次整帧解码/分配。
-    QImage overlay = base;
-    FrameConverter::DrawOverlays(overlay, m_lastDetection.results, m_lastDetection.threshold);
-
     const auto fit = [&target](const QImage& src) {
         return (target.isEmpty() || src.size() == target)
                    ? src
                    : src.scaled(target, Qt::KeepAspectRatio, Qt::FastTransformation);
     };
-    m_cameraRgbLabel->setPixmap(QPixmap::fromImage(fit(base)));
+    const QPixmap leftPm = QPixmap::fromImage(fit(base));
+    m_cameraRgbLabel->setPixmap(leftPm);
+
+    // ---- 右格：跑了但 0 检出 ----
+    // 与「没跑」（上面那条空态）在观感上必须可区分：否则两格像素完全相同，操作员
+    // 无法判断是「方案没跑到识别动作」还是「跑到了但没检出」（2026-09-23 真机实测）。
+    // ⚠ 此分支**刻意不走 `DrawOverlays`**：它内部无条件构造 `QPainter`，会对图像
+    // `detach()` 一次整帧深拷贝，而空 `results` 什么都不会画。标注改为画在**已缩放的
+    // `QPixmap`** 上——既省掉那次 detach，字也比「先画在全分辨率再缩小」更清楚。
+    // 与 `VisionTestPage::BuildOverlayImage` 的「无结果不画」判据对齐（`VisionTestPage.cpp:1111`）。
+    if (m_lastDetection.results.isEmpty()) {
+        QPixmap pm = leftPm;
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QFont f = p.font();
+        f.setPointSize(10);
+        f.setBold(true);
+        p.setFont(f);
+        const QString text = QStringLiteral("未检出目标（阈值 %1）")
+                                 .arg(QString::number(m_lastDetection.threshold, 'f', 2));
+        const QFontMetrics fm(f);
+        const QRect box(0, 0, fm.horizontalAdvance(text) + 18, fm.height() + 10);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 170));
+        p.drawRect(box);
+        p.setPen(QColor(255, 190, 60));
+        p.drawText(box, Qt::AlignCenter, text);
+        p.end();
+        m_cameraOverlayLabel->setPixmap(pm);
+        return;
+    }
+
+    // `QImage` 是隐式共享的：这里的赋值不拷贝像素，`DrawOverlays` 写时才分离（一次拷贝）。
+    // 比「为叠加图再调一次 ColorToQImage」少一次整帧解码/分配。
+    QImage overlay = base;
+    FrameConverter::DrawOverlays(overlay, m_lastDetection.results, m_lastDetection.threshold);
     m_cameraOverlayLabel->setPixmap(QPixmap::fromImage(fit(overlay)));
 }
 
@@ -719,7 +769,16 @@ void AutoRunPage::OnFrameReady(const CameraFramePtr& frame)
 
 void AutoRunPage::RenderCameraTiles()
 {
-    if (!m_lastFrame || !m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+    if (!m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+
+    // 视频流路径的空态：**与检测结果路径的空态刻意分开**——本路径与检测无关，
+    // 若沿用「尚无检测结果」会误导。2026-09-23 补（切换路径后旧提示会挂着）。
+    if (!m_lastFrame) {
+        const QString hint = QStringLiteral("\n\n正在等待画面…");
+        m_cameraRgbLabel->setText(QStringLiteral("RGB 相机画面 (3D)") + hint);
+        m_cameraOverlayLabel->setText(QStringLiteral("识别结果叠加图") + hint);
+        return;
+    }
 
     // P3-1（2026-09-22）：**先缩放到标签尺寸、再转 QPixmap**。
     // 两个标签都是 `setScaledContents(true)`，QLabel 每次重绘本来就会自己缩一次

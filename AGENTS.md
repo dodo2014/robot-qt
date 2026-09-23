@@ -345,7 +345,7 @@ HAL 多品牌硬件接入全部完成：
 ### UI 接线 T7–T10 + 评审修复 D1–D17（2026-08-20/21 完成，编译+冒烟通过）
 
 - **T7**：`MainWindow` 创建 `SequenceWorker`+QThread（worker 线程 `finished→deleteLater`）；退出走 `ShutdownWorker`（Stop(cancel) → quit → wait(20ms)+processEvents 循环 → terminate 兜底），防退出挂死。
-- **T8 AutoRunPage**（2026-08-20 原始接线，**按钮组已被 2026-09-07 5 按钮重构取代，现行见 `doc/auto_run_button_refactor.md`**）：方案下拉（选中方案传给 RunSequence）/按钮组（原：启动/复位=HomeAll/停止=Stop/初始化=Initialize/急停=EmergencyStop → 现：启动/继续、暂停、停止=StopImmediate、清报警=ClearFault、初始化=Initialize）/坐标面板 FK 实时刷新/日志框接 logMessage/双相机 QLabel 接 frameReady。
+- **T8 AutoRunPage**（2026-08-20 原始接线，**按钮组已被 2026-09-07 5 按钮重构取代，现行见 `doc/auto_run_button_refactor.md`**）：方案下拉（选中方案传给 RunSequence）/按钮组（原：启动/复位=HomeAll/停止=Stop/初始化=Initialize/急停=EmergencyStop → 现：启动/继续、暂停、停止=StopImmediate、清报警=ClearFault、初始化=Initialize）/坐标面板 FK 实时刷新/日志框接 logMessage/双相机 QLabel 接 frameReady（⚠ **改造前**——2026-09-23 起本页不再订阅 `frameReady`，改订阅 `SequenceWorker::detectionReady`，见 TR-112 与 `doc/architecture.md` 视觉链路段）。
 - **T9 ProcessPage**：「示教读取」= GetPosition→FK 填充点位表并 push 进 `action.points` + save（仅 Move 类型动作）。
 - **T10 ConfigPage**：运动学 L1/L2/Z0/h1 与 TCP 编辑完成即发 `paramsChanged` → `SequenceWorker::ReloadFromConfig()`（running 门禁：运行中跳过防数据竞争）。
 - **关键修复（D1–D17，评审发现全部修复，清单见 TEST_RECORD.md / doc/worklog/2026-08-21.md）**：D1 方案下拉时序（`ProcessManager::load()` 提前到 MainWindow SetupUI 前 + showEvent 刷新）；D2 失败后启动按钮恢复；D4 ShutdownWorker；D5/D6 坐标面板用 stateUpdated/servoStateUpdated 缓存关节位 + Kinematics 成员缓存（避免 50ms 读舵机串口）；D11 急停无条件先 HardwareManager::EmergencyStop；D16 抽 `src/UI/KinematicsHelper.h`（UI 层统一 FromConfig/ReadConfigParams，Core 不依赖 Config）。

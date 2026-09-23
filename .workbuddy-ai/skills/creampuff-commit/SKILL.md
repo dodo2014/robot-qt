@@ -23,7 +23,15 @@ git status --short
 
 令牌时间 + 30 min 必须晚于当前时间。过期即停。
 
+## 第 1.5 步：先修过时表述，再提交
+
+**⚠ 提交会把当时文档里的一切固化。** 若本轮（或近期）已有新证据**推翻**了 `TEST_RECORD.md` / `doc/` 里的某条结论，**必须先改再 `git add`**，否则过时表述随提交入库、后续开发会照抄。
+
+判据：本轮日志/实测是否与文档里的「必然 / 一定 / 不可能」类断言冲突。冲突就改，并在原文里**显式写出「原记 X 已被 Y 推翻」**（保留可追溯性），而不是静默替换。
+
 ## 第 2 步：暂存——显式列文件名，不用 `git add -A`
+
+文件清单从 `git status --short` 逐行抄，**不要凭印象**。
 
 ```bash
 git add <文件1> <文件2> ...
@@ -37,13 +45,15 @@ git diff --cached --stat
 
 暂存后 `git status --short` 里它们应仍是**未暂存的 ` M`**（第二列 M）。
 
+**⚠ 未跟踪的 `?? .workbuddy-ai/skills/<新skill>/` 也要一起加**：`.workbuddy-ai/skills/` 是**已跟踪**目录（`git ls-files .workbuddy-ai/` 可验），漏掉会让新 skill 一直以 `??` 挂在 `git status` 上。
+
 ## 第 3 步：改过 Markdown 表格 → 先扫列数
 
 ```bash
-python <md-table-check skill>/scripts/check_md_tables.py TEST_RECORD.md <其他改过的 md>
+python <md-table-check skill>/scripts/check_md_tables.py <本轮改过的所有 .md>
 ```
 
-末行「列数异常行数 = 0」才算干净。
+**判据 = 末行同时满足两条**：① 出现「已检查 N 个文件」且 **N > 0**（N = 0 说明路径没传对、工具空转）；② 「列数异常行数 = 0」。只看到「异常 0」而没看到 N > 0，**不算通过**。
 
 ## 第 4 步：提交消息走临时文件
 

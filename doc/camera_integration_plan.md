@@ -44,7 +44,7 @@
 | M5 | **切相机类型需重建实例** | `HardwareManager::Initialize` 只在启动时 `CameraFactory::Create` 一次（`HardwareManager.cpp:187-188`），而型号下拉是从工厂注册表动态取的（`VisionTestPage.cpp:111`）——接入后会出现 `SimCamera` / `OrbbecCamera` 两项，切换需明确路径 |
 | M6 | **`HardwareManager.cpp:182-185` 无条件给算法喂 json** | 该处无条件 `LoadConfig("{\"confidenceThreshold\":...}")`，与「算法配置可选」语义冲突（见 §二 决策 5），应改为「有配置才加载」 |
 | M7 | **UI 渲染需节流** | `OnFrameReady` 目前每帧都 `RenderLatest()`（`VisionTestPage.cpp:520-528`），大分辨率下 `QImage::copy` + `setPixmap` 是主瓶颈 |
-| M8 | **相机所有权与多页订阅** | `VisionTestPage` 与 `AutoRunPage` 都连 `HardwareManager::frameReady`（`VisionTestPage.cpp:123`、`AutoRunPage.cpp:43`），而 `VisionTestPage::OnStopStream` 停的是**全局流**（`:514`）。现靠 Sim 无副作用掩盖。**已裁定改「持有者集合」模型 → 见 §2.1** |
+| M8 | **相机所有权与多页订阅** | ⚠ **【改造前】**（`AutoRunPage` 一侧已于 2026-09-23 由决策 6 / TR-112 解除：本页改订阅 `SequenceWorker::detectionReady`，不再消费 `frameReady`）`VisionTestPage` 与 `AutoRunPage` 都连 `HardwareManager::frameReady`（`VisionTestPage.cpp:123`、`AutoRunPage.cpp:43`），而 `VisionTestPage::OnStopStream` 停的是**全局流**（`:514`）。现靠 Sim 无副作用掩盖。**已裁定改「持有者集合」模型 → 见 §2.1** |
 | M9 | **检测结果算出后无处消费** | 识别动作的执行分支（`SequenceWorker::StepRunner` 的 `case ActionType::Vision`）已做 `CameraToRobot` 手眼换算，但 `robot` 曾是局部变量、只打日志后丢弃——方案里没有任何动作能消费它。**已裁定新增「视觉引导」动作（P5 已落地）→ 见 `doc/vision_guide_action_plan.md`** |
 
 ## 二、已确认决策
@@ -65,7 +65,7 @@
 
 ### 2.1 相机流生命周期：持有者集合模型
 
-**背景**：`VisionTestPage` 与 `AutoRunPage` 都订阅 `HardwareManager::frameReady`，但**流的启停入口目前只在视觉页**（`VisionTestPage.cpp:463/477/496/499/514`）——`AutoRunPage` 完全没有流控制。若按「谁启动谁停止」实现，会出三类故障：
+**背景**（⚠ **改造前状态**；其中 `AutoRunPage` 一侧已于 2026-09-23 由决策 6 / TR-112 解除——本页改订阅 `SequenceWorker::detectionReady`）：`VisionTestPage` 与 `AutoRunPage` 都订阅 `HardwareManager::frameReady`，但**流的启停入口目前只在视觉页**（`VisionTestPage.cpp:463/477/496/499/514`）——`AutoRunPage` 完全没有流控制。若按「谁启动谁停止」实现，会出三类故障：
 
 | 场景 | 后果 |
 | :--- | :--- |
