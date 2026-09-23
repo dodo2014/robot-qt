@@ -233,7 +233,7 @@
 > 首帧 1280x720，colorData=2764800 字节（== w*h*3，RGB888 归一化正确），深度首值=1369.0 mm
 > ```
 > App 内也验过一遍（`simulation.cameraType=OrbbecCamera`）：`[OrbbecCamera] Opened SN='CP9KB530005S' color=1280x720@30 fmt=MJPG depth=848x480 align=SW`。
-> **Release 60 s 长稳**（`out/build/x64-Release/test_camera_check.exe --stream 60`）：`采集 60.0 s：有效帧 1801（30.0 fps），空帧 0`，12 项检查全 PASS、退出码 0 —— **帧率零衰减、无掉帧、无崩溃**。
+> **Release 60 s 长稳**（`out/build/x64-Release/test_camera_check.exe --stream 60`）：`采集 60.0 s：有效帧 1801（30.0 fps），空帧 0`，12 项检查全 PASS、退出码 0 —— **帧率零衰减、无掉帧、无崩溃**。⚠ **该 30.0 fps 对应 TR-099 当时的 `colorFps=30`**——`colorFps` 是**生效**的（2026-09-23 实测 15.0 **严格等于**配置 15），故**勿把 30 当成固定期望值**。
 > **实现期间踩到 3 处 SDK 2.9.3 与预期不符，已修**：① `OBCameraIntrinsic` **不含** `k1/k2/p1/p2`（畸变在单独的 `OBCameraDistortion`）；② `ob::Frame` **没有** `getWidth/getHeight`（只有 `ob::VideoFrame` 有，须 `as<ob::VideoFrame>()`）；③ `FormatConvertFilter` 的 YUYV 分支参考实现漏了，本实现已补（`FORMAT_YUYV_TO_RGB`）。
 
 ### S4 去抖与分级恢复
@@ -243,9 +243,10 @@
 - **验收**：运行中拔线 → 状态转 `Disconnected` + 自动停流；插回 → 自动恢复出图；反复插拔 10 次不崩溃、日志无刷屏。
 
 > **✅ 落地情况（2026-09-20，TR-099）**：代码已就位——`OrbbecCamera` 内实现 L1/L2/L3 分级恢复（5/20/40 次失败，3 s 冷却，L3 重建 `Context`）；`HardwareManager::PollCamera()` 以 **500 ms 降频**（50 ms tick × 10）做链路状态**边沿检测**并广播 `cameraStateChanged(CameraLinkState)`，**恢复动作一律不在 PollTick 里做**（L3 要 sleep 6 s，放 50 ms 轮询里会卡死 UI 线程）。
-> **⚠ 本项验收尚未完成**：拔插线必须**人工动手**（沙箱与自动化都无法模拟），请在 `test_camera_check --stream 700` 运行期间拔线再插回，观察日志中链路状态是否 `Disconnected → Connecting → Streaming` 且进程不退出。
+> **✅ 本项验收已完成（2026-09-23，用例 11.31 真机）**：`test_camera_check.exe --stream 700` 运行期间拔插 **11 轮**，**每轮都自动恢复、零漏配对**——**6 轮** `L2 恢复成功`、**5 轮** `L2 失败 → L3 恢复成功`；逐级 `L1 退避 → L2 软重启 → L3 全量重建` **全部留痕**（正是 TR-111 修法要达成的目标）；恢复耗时 L2 路径 7.0~7.1 s / L3 路径 15.4~15.9 s（最差 40.8 s）；**进程全程不退出、无崩溃**。日志 `out\build\x64-Debug\tmp_700.txt`（留存副本 `.workbuddy-ai/tmp_1131_debug_700.txt`）。⚠ **一处留证缺口**：该次运行被**提前终止**（日志仅覆盖 ~318 s、**无末尾汇总行**）⇒ 「退出码 0」**本次未实证**；详见 `doc/test/real_machine_plan_phase3.md` 11C 记录块。
+> （**原表述「⚠ 本项验收尚未完成：拔插线必须人工动手（沙箱与自动化都无法模拟）…」已被上述 11.31 实测推翻**。）
 > **⚠ 2026-09-23 修正（TR-111，用例 11.28 真机复测暴露）**：上述分级恢复有**三处实现缺陷**，当日已修——① **失败分支死锁（致命）**：L2/L3 恢复**失败**时只写 `linkState_ = Disconnected`，而 `DestroyPipeline()` 已把 `streaming_` 清零，`CaptureFrame()` 遂在守卫 `!opened_ || !streaming_ || !pipeline_` 处早退，**再也调不到 `HandleGrabFailure()`** → 无重试 / 无边沿 / 无日志（`CameraCaptureWorker` 仍 15 fps 空转）；② **失败静默**：L1 分支与 L2/L3 的失败分支全无日志，分级过程对用户不可见；③ **分级失效**：冷却闸门在档位判定**之前** `return`，而计数在 L1 之后的 3 s 冷却期内继续累加越过 40 → 直接命中 L3，**L2「pipeline 软重启」永不执行**。修法 = 新增**意图位** `wantStreaming_`（区分「恢复失败」与「用户主动停流」）+ 逐级升档 `lastAttemptLevel_`（每个冷却窗口最多升一档）+ `InterruptibleSleep()`（6 s sleep 可被停流中止）；详见 `TEST_RECORD.md` **TR-111**。**⚠ 因此本项真机验收顺延到 TR-111 修复后的复测**（判据改为：拔插后日志应逐级出现 `L1 退避 → L2 软重启 → L3 全量重建`，并自动恢复出图）。
-> **已有部分证据（但不构成验收）**：Release 配置连续取流 **60 s（1801 帧 / 30.0 fps / 空帧 0 / 退出码 0）** 未见帧率衰减或崩溃——这只覆盖「静置长稳」的一半，**完全没覆盖拔插线**；10 min 长稳也仍待跑。
+> **静置长稳亦已完成（2026-09-23，用例 11.32）**：`--stream 700` 跑满 **700.1 s**、有效帧 **10491**、**空帧全程 0**、**退出码 0**；工具新增的分钟级分段统计显示第 1 分钟 901 帧 vs 第 11 分钟 899 帧 ⇒ **无衰减**；外部 `tasklist` 每分钟采样 12 点（71.8 MB 启动 → 105 MB 首分钟后持平）⇒ **无内存持续增长**。（**原表述「这只覆盖静置长稳的一半…10 min 长稳也仍待跑」已被 11.31 + 11.32 推翻**。）
 
 ### S5 视觉检测页重构（可与 S2–S4 并行，SimCamera 即可验收）
 

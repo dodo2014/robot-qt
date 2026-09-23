@@ -137,6 +137,63 @@ cd /d/workspace/projects/CreamPuffRobot ; cp config/config.json /tmp/cfg_orig.js
 3. 拿 obj 与头文件 mtime 直接对：`ls -la --time-style=+%H:%M:%S <源> <obj>`。**任何 obj 早于
    它包含的头文件 = 构建不可信**，先 `-t clean` 重建再说，别去读代码。
 
+## 测试目标（`tests/`）必须**显式点名**构建
+
+`tests/CMakeLists.txt` 第一行就写明：「**不参与主程序依赖链，`ninja CreamPuffRobot` 不会编译它们**」。
+所以：
+
+- 日常的 `ninja -C <build> CreamPuffRobot`（包括本 skill 第 1 步）**永远不会**产出 `test_camera_check.exe` 等；
+- 而 `-t clean` **会**把已构建的 test exe 一并删掉 → **每次全清重建后它们就消失**，且不会被后续任何主程序构建恢复。
+
+**表现（2026-09-23 实际发生）**：阶段 11C 用例 11.29 报 `out\build\x64-Release\test_camera_check.exe` **不存在**，
+11.29~11.32 整批被卡住。根因就是当天做过多次 `-t clean`（TR-108/111/112/113），而这些目标从没被显式点名重建。
+
+**修法**（按配置各来一次，命令与第 1 步同款，只换目标名）：
+
+```bash
+ninja -C out/build/x64-Release test_camera_check test_kinematics_check test_node_tree_check
+ninja -C out/build/x64-Debug   test_camera_check test_kinematics_check test_node_tree_check
+```
+
+⚠ **产物落点不一致，别按统一路径找**（由各自 `RUNTIME_OUTPUT_DIRECTORY` 决定）：
+
+| 目标 | 落点 | 原因 |
+|---|---|---|
+| `test_camera_check.exe` | **构建根**（与 `CreamPuffRobot.exe` 同级） | 要用根目录的 Qt DLL + POST_BUILD 拷来的 `OrbbecSDK.dll` / `extensions/` |
+| `test_node_tree_check.exe` | **构建根** | 链接 `Config`、用到 `QString`，同样依赖根目录 Qt DLL |
+| `test_kinematics_check.exe` | **`tests/` 子目录** | 只链 `Core` + `spdlog`，不需要 Qt DLL |
+
+⚠ **`tests/` 子目录里可能有「旧版孤儿 exe」**：`RUNTIME_OUTPUT_DIRECTORY` 是 2026-09-20 才补上的，
+在那之前的产物留在 `tests/`。**判断「exe 在不在」只看构建根**，否则会被孤儿文件骗到（本次实测：
+`out/build/x64-Debug/tests/test_camera_check.exe` 存在，但它是 **2026-09-20 13:18** 的旧物，构建根里当时并没有）。
+同类的还有 `out/build/x64-Debug/test_sequenceworker.exe`（2026-08-20，该目标已不在 `CMakeLists` 里）。
+
+⚠ `test_camera_check` 受 `if(USE_ORBBEC)` 保护——`USE_ORBBEC=OFF` 时**目标根本不存在**（不是构建失败）。
+本机两个 build 的 `CMakeCache.txt` 均为 `USE_ORBBEC:BOOL=ON`。
+
+⚠ 构建 ≠ 运行。`test_node_tree_check` 会临时改写 `config/process.json`（RAII 恢复），**不得在真机调试中运行**。
+
+### 这些工具的**中文输出乱码** = 执行字符集 UTF-8 vs 控制台代码页 936（2026-09-23 修，TR-115）
+
+- **现象**：用户在 cmd.exe 里跑 `test_camera_check.exe`，中文全是乱码；但**重定向到文件再打开却正常**。
+- **机理（三层，缺一层就会误判）**：本仓 CMake 全局 `/utf-8`（`CMakeLists.txt:45`）⇒ MSVC 的**执行字符集**
+  也是 UTF-8 ⇒ `std::printf` 吐的是 **UTF-8 字节**；而本机 `GetACP()` = `GetConsoleOutputCP()` = **936**（GBK）
+  ⇒ 控制台按 GBK 解释这些字节 → 乱码。文件没有代码页概念，所以「重定向那条路」看不出问题。
+- **取证手法（可复用）**：① ctypes 取 `GetACP()` / `GetConsoleOutputCP()`（`reg query` 会被沙箱黑名单拦掉，别试）；
+  ② `grep -a` 在 exe 里搜某个中文字面量的 **UTF-8 字节序列**（如 `设备枚举` 的 `$'\xe8\xae\xbe...'`），命中即证「程序输出 UTF-8」。
+- **修法**：三个控制台工具各在 `main()` 首行加 `SetConsoleOutputCP(CP_UTF8);`（`#ifdef _WIN32` 包裹），
+  并以 `WIN32_LEAN_AND_MEAN` + `NOMINMAX` 包裹 `<windows.h>`（否则 `min`/`max` 宏会污染 `std::min`/`std::max`）。
+  ⚠ 副作用需知情：它改的是**该控制台窗口**的输出代码页、进程退出**不自动还原**（对本工程是期望行为）。
+- ⚠ **不要**改成「让用户先 `chcp 65001`」——脚本与现场都容易漏，且与「工具应当自解释」相悖。
+
+### 跑测试工具：重定向到文件再读，别在控制台里读
+
+⚠ **旧记忆「沙箱内跑不了 native exe 的管道/重定向」已被推翻**（2026-09-23 实测）：
+`./test_camera_check.exe --stream 60 > out.txt 2>&1` 正常产出 5298 字节且 `exit=0`，`--stream 700` 长跑同样可用。
+真正跑不了的是 `.bat`。做法：**重定向到 `.workbuddy-ai/tmp_*.txt`（已 gitignore）再用 Read 看**——
+既绕开上面的乱码问题，也避免 SDK 的 `PropertyServer` / `PresetHandler` 警告刷屏（可用 `grep -avE` 先滤掉）。
+⚠ 长跑（如 11.32 的 `--stream 700` ≈ 11.7 min）**超出 Bash 工具单次超时上限**，须 `run_in_background`。
+
 ## 其它
 
 - **`error C2144`（「X 的前面应有 `;`」）+ `error C2761`（「不允许重新声明成员」）成对出现，且行号落在

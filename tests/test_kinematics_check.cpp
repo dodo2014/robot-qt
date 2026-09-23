@@ -22,6 +22,16 @@
 #include <string>
 #include <utility>
 
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
 #include "Kinematics.h"
 
 namespace {
@@ -197,6 +207,11 @@ int RunIk(const Kinematics& kin, int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    // 控制台输出代码页置 UTF-8：本工程全局 /utf-8（CMakeLists.txt:45）→ 中文字面量按
+    // UTF-8 字节输出，而 cmd.exe 默认代码页是 GBK(936)，直接运行会中文乱码。
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     spdlog::set_level(spdlog::level::off);  // 静音 Kinematics 构造/IK 的内部日志，输出由本程序控制
 
     Kinematics kin;

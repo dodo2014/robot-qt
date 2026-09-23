@@ -18,6 +18,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
 #include "ConfigPaths.h"
 #include "ProcessManager.h"
 
@@ -363,6 +373,11 @@ void TestJsonRoundTrip(const QString& path)
 
 int main()
 {
+#ifdef _WIN32
+    // 控制台输出代码页置 UTF-8：本工程全局 /utf-8（CMakeLists.txt:45）→ 中文字面量按
+    // UTF-8 字节输出，而 cmd.exe 默认代码页是 GBK(936)，直接运行会中文乱码。
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     const ProcessJsonGuard guard;   // 无条件恢复 config/process.json
 
     TestResourcesAndValidation();

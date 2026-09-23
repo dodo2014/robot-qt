@@ -27,6 +27,16 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
+
 #include <spdlog/spdlog.h>
 
 #include "ConfigManager.h"
@@ -77,6 +87,12 @@ CameraStreamConfig ReadCfg()
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    // 控制台输出代码页置 UTF-8：本工程全局 /utf-8（CMakeLists.txt:45）→ 中文字面量按
+    // UTF-8 字节输出，而 cmd.exe 默认代码页是 GBK(936)，直接运行会中文乱码。
+    // 仅影响控制台渲染；重定向到文件时不受影响（文件本来就是 UTF-8）。
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     int  seconds = 0;
     std::string snOverride;
     for (int i = 1; i < argc; ++i) {
@@ -170,10 +186,25 @@ int main(int argc, char** argv)
     double firstDepthMm = 0.0;
     const auto t0 = std::chrono::steady_clock::now();
 
+    // 分钟级分段统计：11.32 的「帧率无衰减（前后各 1 min 对比）」靠它取证——
+    // 只打全程平均值无法判断衰减（本次实测补上，此前该子判据无法取证）。
+    long long nextSegAt   = 60;   // 下一个分段边界（秒）
+    int       lastSegFrames = 0;
+    int       lastSegBad    = 0;
+
     while (true) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                                  std::chrono::steady_clock::now() - t0).count();
         if (elapsed >= seconds) break;
+
+        while (elapsed >= nextSegAt) {
+            const int segF = frames - lastSegFrames;
+            std::printf("  [分段] 第 %lld 分钟：%d 帧（%.1f fps）、空帧 %d\n",
+                        nextSegAt / 60, segF, segF / 60.0, badFrames - lastSegBad);
+            lastSegFrames = frames;
+            lastSegBad    = badFrames;
+            nextSegAt += 60;
+        }
 
         CameraFrame f = cam.CaptureFrame();
         if (f.width <= 0 || f.height <= 0 || f.colorData.empty()) {
