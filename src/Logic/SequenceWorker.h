@@ -10,6 +10,7 @@
 
 #include "ProcessManager.h"
 #include "HAL/core/AxisMap.h"
+#include "HAL/interfaces/IPuffAlgorithm.h"   // PuffResult（检测结果通道，S6 决策 6）
 
 class Kinematics;
 class CoordTransform;
@@ -49,6 +50,24 @@ public:
     // 单步等待时 running 本就为 true（历史语义），故不设独立 StepPaused 状态。
     enum class PauseReason { None, User, Step };
     Q_ENUM(PauseReason)
+
+    // 检测结果载荷（P3 S6 决策 6，2026-09-23 落地）。
+    //
+    // **存在的理由**：`AutoRunPage` 原先订阅全局 `frameReady`（原始视频流）来刷预览，
+    // 但它只在「方案运行中」登记相机持有（`AcquireCamera("AutoRun")`）——**未运行时只消费不持有**，
+    // 于是视觉页点「停止采集」把流停掉后，自动运行页的画面会**定格**（用例 11.26 实测）。
+    // 改订阅本通道后，自动运行页只在「识别动作真的跑过」时拿到图，**不再拉原始流**，
+    // 该不对称从结构上消失（`doc/camera_integration_plan.md` 决策 6）。
+    //
+    // **载荷取「帧 + 结果」而非预渲染位图**：渲染责任留给消费者，从而保住 P3-4 的
+    // 「本页不可见时不产出位图」优化——若在 worker 线程预渲染，页面切走后仍会白做
+    // 6.2 MB 转换 + 全分辨率叠加绘制。
+    struct DetectionResult
+    {
+        CameraFramePtr      frame;       // 本次检测所用的帧（共享只读，消费者自行渲染）
+        QVector<PuffResult> results;     // 图像空间结果（框 / 置信度），可能为空
+        double              threshold = 0.0;   // 本次检测的置信度阈值（渲染叠加图用）
+    };
 
     explicit SequenceWorker(QObject* parent = nullptr);
     ~SequenceWorker() override;
@@ -150,6 +169,10 @@ signals:
     // 坐标**不进 `process.json`**（决策 5）：这里是内存广播，会话结束即失效。
     // 跨线程 Queued 传递，参数只用 POD，无需注册元类型。
     void visionResultReady(int actionId, double x, double y, double z);
+    // 检测结果通道（P3 S6 决策 6）：每次「识别」动作跑完即发一次，携带**该次用的帧 + 图像空间结果**。
+    // 消费方 = `AutoRunPage`（画「识别结果叠加图」）；**它不再订阅 `frameReady`**。
+    // 跨线程 Queued 传递，故需 `qRegisterMetaType`（见 `SequenceWorker.cpp` 文件级静态初始化）。
+    void detectionReady(const SequenceWorker::DetectionResult& result);
     // 状态迁移（带挂起原因快照）。Queued 连接下带参比"查询当前值"更准，不会错位。
     void stateChanged(SequenceWorker::WorkerState state, SequenceWorker::PauseReason reason);
 
@@ -262,3 +285,9 @@ private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// `detectionReady` 是跨线程 Queued 连接，实参需元类型注册——
+// `DetectionResult` 含 `QVector<PuffResult>`（非 Qt 内建），不注册会在运行时报
+// "Cannot queue arguments of type 'SequenceWorker::DetectionResult'"。
+// 注册动作在 `SequenceWorker.cpp` 的文件级静态初始化里（与 `CameraCaptureWorker.cpp` 同款做法）。
+Q_DECLARE_METATYPE(SequenceWorker::DetectionResult)

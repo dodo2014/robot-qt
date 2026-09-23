@@ -78,20 +78,52 @@ Get-Process -Name CreamPuffRobot -ErrorAction SilentlyContinue | Stop-Process -F
 
 Bash 下 `taskkill //IM` 会被 MSYS2 吃掉参数；`tasklist //FI` 过滤也失效（用 `tasklist | grep -ai creampuff` 才看得到）。
 
+### 先判「被占用的是哪个 build」再决定编谁（2026-09-23 补）
+
+`tasklist | grep -ai creampuff` 只能告诉你**有**进程，**分不出 Debug 还是 Release**。
+用「独占写打开」探测哪个 exe 被锁——**被锁的那个 build 编不了，另一个可以照编**：
+
+```bash
+cd /d/workspace/projects/CreamPuffRobot
+python -c "
+for p in [r'out/build/x64-Debug/CreamPuffRobot.exe', r'out/build/x64-Release/CreamPuffRobot.exe']:
+    try:
+        f = open(p, 'r+b'); f.close(); print(p, '-> NOT locked')
+    except Exception as e:
+        print(p, '-> LOCKED', type(e).__name__)"
+```
+
+Windows 下运行中的 exe 会拒绝 `r+b` 打开（`PermissionError`）。**不要用 `mv` 改名试探**
+（万一成功就把文件挪走了）。实测：用户开着的实例锁 Debug、Release 空闲 → 直接编 Release
+完成编译验证，Debug 留待用户关闭后补链。
+
+⚠ 不要为了编 Debug 就杀用户进程（他可能正在真机调试）。先编能编的那个，把另一个如实记为待补。
+
+⚠ `-t clean` 会连 exe 一起删。若之后编译**失败**，该 build 目录会**没有 exe**——别误判成
+「exe 不见了 = 环境坏了」，看 `[N/N] Linking` 那一行有没有出现即可。
+
 ## 第 3 步：Sim 冒烟
 
 **唯一判据 = 当日 `log/creampuff_<date>.log` 新增 `Initialize complete`**，不要靠脚本提示行。
 
 ```bash
-cd /d/workspace/projects/CreamPuffRobot ; LOG="log/creampuff_$(date +%Y-%m-%d).log" ; BEFORE=$(grep -ac 'Initialize complete' "$LOG") ; cp config/config.json config/config.json.sim_bak ; sed -i 's/"motionCardType": "Bopai"/"motionCardType": "SimCard"/; s/"servoType": "XRServo"/"servoType": "SimServo"/' config/config.json ; ./out/build/x64-Debug/CreamPuffRobot.exe > /tmp/smoke_out.txt 2>/tmp/smoke_err.txt & APP_PID=$! ; sleep 22 ; AFTER=$(grep -ac 'Initialize complete' "log/creampuff_$(date +%Y-%m-%d).log") ; echo "SMOKE BEFORE=$BEFORE AFTER=$AFTER" ; kill -9 $APP_PID 2>/dev/null ; sleep 1 ; cp config/config.json.sim_bak config/config.json ; rm -f config/config.json.sim_bak ; echo "SMOKE_DONE"
+cd /d/workspace/projects/CreamPuffRobot ; cp config/config.json /tmp/cfg_orig.json ; LOG="log/creampuff_$(date +%Y-%m-%d).log" ; BEFORE=$(grep -ac 'Initialize complete' "$LOG") ; sed -i 's/"motionCardType": "Bopai"/"motionCardType": "SimCard"/; s/"servoType": "XRServo"/"servoType": "SimServo"/; s/"cameraType": "OrbbecCamera"/"cameraType": "SimCamera"/' config/config.json ; ./out/build/x64-Debug/CreamPuffRobot.exe > /tmp/smoke_out.txt 2>/tmp/smoke_err.txt & APP_PID=$! ; sleep 22 ; AFTER=$(grep -ac 'Initialize complete' "log/creampuff_$(date +%Y-%m-%d).log") ; cp /tmp/cfg_orig.json config/config.json ; echo "SMOKE BEFORE=$BEFORE AFTER=$AFTER" ; kill -9 $APP_PID 2>/dev/null ; echo "SMOKE_DONE"
 ```
+
+⚠ **备份放 `/tmp`（仓库外），还原语句放在 `kill` 之前**（2026-09-23 改）。原脚本把备份写成 `config/config.json.sim_bak` 并把还原放在 `kill` 之后：一旦 shell 被 SIGTERM（见下条），还原就整条丢掉，config 会**永久留在 Sim**。新写法有两个好处——备份在仓库外不污染 `git status`；而 config 在**启动时就读进内存**（`ConfigManager::load()`），所以运行中还原**不影响**冒烟实例，却能在 shell 猝死时仍然保住还原。
+
+⚠ **改仓库根的 `config/config.json` 是对的，别被 POST_BUILD 的拷贝误导**：CMake 会把 `config.json` / `process.json` 拷进 `out/build/<cfg>/`，但 `ConfigPaths::resolve()`（`src/Config/ConfigPaths.cpp:40`）的**首选候选是编译期烧进去的 `<PROJECT_SOURCE_DIR>/config/<fileName>`**，exe 目录那份只是便携部署的兜底（候选 2/3）。同理日志目录规则 1「exe 在源码树内 → 工程根 `log/`」（`:126`）。
 
 ⚠ **`A && B && C & D` 会把 `&` 之前整条链放进子 shell，链内变量赋值全丢**（`BEFORE` 读成空）。
 必须用 `;` 分隔，且 `&` 只跟在 exe 命令后。
 ⚠ 末尾 `kill -9 $!` 有时会连带把自身 shell 打成 SIGTERM → 后续 `echo` 不落 stdout。
-**因此单独复核两件事**：`grep -ac 'Initialize complete'` 的计数、以及 `config/config.json`
-是否已还原成 `Bopai` / `XRServo`（`git diff -- config/` 里不该出现 `motionCardType` / `servoType`）。
+**因此单独复核三件事**：① `grep -ac 'Initialize complete'` 的计数；② `config/config.json` 是否已还原（判据 = `git diff --stat -- config/config.json` 与冒烟**前**的数值一致，而不是「必须出现 `Bopai`」——用户可能本来就切在 Sim）；③ 进程是否真退出（`tasklist | grep -ai creampuff`）。
+⚠ **`Initialize complete` 只在日志里判，不要看 `SMOKE` 那行**：`echo` 可能不落 stdout（见上）。
+⚠ **Bash 里 grep「中文模式」会静默失效**（2026-09-23 实测）：`grep -a -c '视觉' log/creampuff_<date>.log` 返回 **0**，而同期 ASCII 的 `Vision` 有 2501 条命中——**`0` 与「真的没有」不可区分**。本次差点把「日志里没有『视觉』」当成「视觉动作没跑过」的证据。**判据：查中文一律走 ripgrep（Grep 工具，UTF-8 正常）**；非要在 Bash 里查，先用一个**已知必然存在**的中文串（如 `导航切换到页面`）做对照，验证 grep 本身有效再下结论。
+⚠ **先看进程是否真没了**：`tasklist | grep -ai creampuff`（Bash）。**不要用 PowerShell `Get-Process`**——本沙箱 PowerShell 工具**不回 stdout**，「无匹配」与「没在跑」输出一模一样，会误判成「软件已关闭」（2026-09-23 踩过）。
 ⚠ 冒烟会真实删除 7 天前的 `log/creampuff_*.log`（S8 启动清理），属预期。
+⚠ **冒烟必须把三处都置 Sim**：`motionCardType` / `servoType` / **`cameraType`**。前两处原脚本已覆盖；`cameraType` 是 2026-09-23 补上的——当时用户把 config 切到了 `OrbbecCamera` 且软件正在运行，冒烟实例会去抢**真机相机**。
+⚠ **Debug exe 被占用时（LNK1168 / 用户正开着软件）可改用 Release exe 冒烟**：`./out/build/x64-Release/CreamPuffRobot.exe`，判据不变。但真机相机/运动卡被占用时，仍须等用户关闭软件——否则两个实例争硬件。
 
 ## 冒烟失败时的排查顺序
 
@@ -104,6 +136,10 @@ cd /d/workspace/projects/CreamPuffRobot ; LOG="log/creampuff_$(date +%Y-%m-%d).l
 
 ## 其它
 
+- **`error C2144`（「X 的前面应有 `;`」）+ `error C2761`（「不允许重新声明成员」）成对出现，且行号落在
+  一个函数签名上 → 十有八九是编辑残留的「无函数体重复声明」**，不是真的语法问题（2026-09-23 实测：
+  大段插入新函数时把 `void X::OnFrameReady(...)` 的**函数体丢了**，只剩签名，真定义在同文件另一处）。
+  判据 = `grep -n "<函数名>" <文件>`，若同一签名出现**两次**且其中一处后面紧跟另一个函数定义 → 删掉那一处。
 - 新增测试目标必须显式设 `RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"`，否则找不到 Qt DLL 启动即失败。
 - 新增/删除源文件会触发 CMake reconfigure，而 configure 里的 `vcpkg install` **在沙箱内必失败**
   （`vcpkg-tool` 读 `vswhere.exe` 的 stdout 管道被拦 → `Value was null`）。改 `CMakeLists.txt` 需用户侧实跑。

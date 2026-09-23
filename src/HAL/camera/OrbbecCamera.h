@@ -88,6 +88,10 @@ private:
     void HandleGrabFailure();
     void ResetFailureCounters();
     bool probeDevices();         // 真正做枚举+探活（IsDevicePresent 的降频实现）
+    // 可中断睡眠（TR-111）：`wantStreaming_` 变假（用户停流 / 关设备）时立即返回 false。
+    // L3 要睡 6 s，若不可中断，用户在重连过程中停流会让 `CameraManager` 析构的
+    // `cameraThread_->wait(2000)` 超时。
+    bool InterruptibleSleep(std::chrono::milliseconds total);
 
     // ---- 帧归一化：任意彩色格式 → RGB888（FrameConverter 只认 RGB888）----
     bool NormalizeColor(const std::shared_ptr<ob::Frame>& src, CameraFrame& out);
@@ -111,6 +115,11 @@ private:
 
     std::atomic<bool> opened_{false};
     std::atomic<bool> streaming_{false};
+    // 「期望在流」意图位（TR-111，2026-09-23）。与 `streaming_`（**当前**是否真在取帧）
+    // 必须分开：`DestroyPipeline()` 会把 `streaming_` 清零，但**恢复失败**与**用户主动停流**
+    // 这两种情形下 `streaming_` 都是 false，而只有后者才不该重连。
+    // `StartStream()` 置真；`StopStream()` / `Close()` 置假（主动停流）。
+    std::atomic<bool> wantStreaming_{false};
     std::atomic<CameraLinkState> linkState_{CameraLinkState::Disconnected};
 
     mutable std::mutex frameMutex_;
@@ -125,6 +134,10 @@ private:
     // 分级恢复状态（§4.2）
     int consecutiveFailures_ = 0;
     int openFailures_ = 0;
+    // 最近一次已发起的恢复档位（0 = 尚未发起，1/2/3 = L1/L2/L3）。
+    // 用途：**每个冷却窗口最多升级一档**（TR-111）——冷却期内计数会继续累加，
+    // 若直接按计数选档，L1 之后的 3 s 里计数已越过 L3 阈值，L2 永远不会执行。
+    int lastAttemptLevel_ = 0;
     std::chrono::steady_clock::time_point lastReconnectAt_{};
     bool alignWarned_ = false;   // 软对齐偶发失败只提示一次，避免刷屏
 

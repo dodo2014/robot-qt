@@ -22,9 +22,18 @@
 #include <QImage>
 #include <QDateTime>
 #include <QShowEvent>
+#include <QHideEvent>
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include "spdlog/spdlog.h"
+
+namespace {
+// 「视频流」预览路径的相机持有者名（S6 决策 6 的**保留能力**）。
+// 与 `"AutoRun"`（方案运行期的持有者，见 `OnStartOrResumeClicked`）**刻意分开**：
+// 两者生命周期不同 —— 预览持有跟「本页可见」走，运行持有跟「方案状态」走；
+// 若共用一个名字，运行结束时的 release 会把仍可见的预览持有一起释放掉。
+constexpr const char* kPreviewHolder = "AutoRunPreview";
+}  // namespace
 
 AutoRunPage::AutoRunPage(QWidget* parent)
     : QWidget(parent)
@@ -40,8 +49,12 @@ AutoRunPage::AutoRunPage(QWidget* parent)
             this, &AutoRunPage::OnStateUpdated);
     connect(&HardwareManager::instance(), &HardwareManager::servoStateUpdated,
             this, &AutoRunPage::OnServoStateUpdated);
-    connect(&HardwareManager::instance(), &HardwareManager::frameReady,
-            this, &AutoRunPage::OnFrameReady);
+    // ⚠ 2026-09-23（S6 决策 6）：本页**不再**在此订阅 `frameReady`。
+    // 原先这条订阅让本页在「未运行」时也持续消费相机流，却只在方案运行中登记持有
+    // （`AcquireCamera("AutoRun")` 在 `OnStartOrResumeClicked`）→ 视觉页一停流本页就定格
+    // （用例 11.26 实测）。现改由 `SequenceWorker::detectionReady` 驱动（见 SetSequenceWorker）。
+    // 「视频流 + 可见性持有」这条路径保留在 `SetupStreamPreview()` 里，需要时由
+    // `SetStreamPreviewEnabled(true)` 整体启用。
     connect(&HardwareManager::instance(), &HardwareManager::connectionChanged,
             this, [this]() {
         OnLogMessage(QStringLiteral("硬件连接状态变更：%1")
@@ -64,6 +77,9 @@ void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
     // 状态迁移 → 统一刷新按钮使能与状态标签（唯一出口，杜绝散点 setEnabled）
     connect(m_worker, &SequenceWorker::stateChanged,
             this, &AutoRunPage::OnWorkerStateChanged);
+    // 检测结果通道（S6 决策 6）：本页画面改由它驱动，与视觉页解耦。
+    connect(m_worker, &SequenceWorker::detectionReady,
+            this, &AutoRunPage::OnDetectionReady);
 }
 
 void AutoRunPage::SetAutoModeActive(bool active)
@@ -405,9 +421,92 @@ void AutoRunPage::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     RefreshSchemeCombo();   // ProcessPage 增删改方案后，切回本页时下拉同步
-    // P3-4（2026-09-22）：隐藏期间 `OnFrameReady` 只缓存帧、不产位图 → 切回时补一帧。
-    // 放在 `RefreshSchemeCombo()` 之后：标签尺寸此时已由布局确定，`contentsRect()` 有效。
-    RenderCameraTiles();
+    // 补绘放在 `RefreshSchemeCombo()` 之后：标签尺寸此时已由布局确定，`contentsRect()` 有效。
+    if (m_streamPreviewOn) {
+        // 视频流路径：可见即登记持有（消费 ⟺ 持有），并用缓存的帧补绘（P3-4 的做法）。
+        HardwareManager::instance().AcquireCamera(kPreviewHolder);
+        RenderCameraTiles();
+    } else {
+        // 默认路径（S6 决策 6）：用缓存的**上一轮检测结果**补绘 —— 未运行时就停在上一轮的图上。
+        RenderDetectionTiles();
+    }
+}
+
+void AutoRunPage::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    // 视频流路径：本页不可见就不再需要流，**立刻释放**（与 showEvent 的 acquire 成对）。
+    // 默认路径不持有任何东西，无需处理。
+    if (m_streamPreviewOn)
+        HardwareManager::instance().ReleaseCamera(kPreviewHolder);
+}
+
+// ---------------------------------------------------------------------------
+// 预览源：「检测结果」（默认，S6 决策 6）/ 「原始视频流 + 可见性持有」（保留能力）
+// ---------------------------------------------------------------------------
+
+void AutoRunPage::SetStreamPreviewEnabled(bool enabled)
+{
+    if (m_streamPreviewOn == enabled) return;
+    m_streamPreviewOn = enabled;
+    if (enabled) {
+        SetupStreamPreview();
+        SetHint(QStringLiteral("预览源已切换为「实时视频流」（本页可见期间占用相机）"),
+                QStringLiteral("#7aa2f7"));
+    } else {
+        TeardownStreamPreview();
+        SetHint(QStringLiteral("预览源已切换为「检测结果」"), QStringLiteral("#7aa2f7"));
+    }
+}
+
+// 「视频流 + 可见性持有」独立函数对。**保留**（2026-09-23 用户明确要求），
+// 因为「实时画面」在真机排障时仍有价值；但默认不启用——默认路径是检测结果。
+void AutoRunPage::SetupStreamPreview()
+{
+    connect(&HardwareManager::instance(), &HardwareManager::frameReady,
+            this, &AutoRunPage::OnFrameReady);
+    if (isVisible())
+        HardwareManager::instance().AcquireCamera(kPreviewHolder);
+}
+
+void AutoRunPage::TeardownStreamPreview()
+{
+    disconnect(&HardwareManager::instance(), &HardwareManager::frameReady,
+               this, &AutoRunPage::OnFrameReady);
+    HardwareManager::instance().ReleaseCamera(kPreviewHolder);
+    m_lastFrame.reset();
+}
+
+void AutoRunPage::OnDetectionReady(const SequenceWorker::DetectionResult& result)
+{
+    // 与视频流路径同款策略（P3-4）：不可见时**只缓存、不产位图**，切回本页由 showEvent 补绘。
+    m_lastDetection = result;
+    if (!isVisible()) return;
+    RenderDetectionTiles();
+}
+
+void AutoRunPage::RenderDetectionTiles()
+{
+    if (!m_lastDetection.frame || !m_cameraRgbLabel || !m_cameraOverlayLabel) return;
+
+    // 左格：该次检测所用的**原始帧**（无框）；右格：同帧 + 检测框。
+    // 叠加图在**原帧分辨率**上画（`DrawOverlays` 用的是 `PuffResult` 的图像像素坐标），
+    // 再整体缩放到标签尺寸 —— 与视觉页四宫格同一套做法。
+    const QSize target = m_cameraOverlayLabel->contentsRect().size();
+    const QImage base = FrameConverter::ColorToQImage(*m_lastDetection.frame);
+    if (base.isNull()) return;
+    // `QImage` 是隐式共享的：这里的赋值不拷贝像素，`DrawOverlays` 写时才分离（一次拷贝）。
+    // 比「为叠加图再调一次 ColorToQImage」少一次整帧解码/分配。
+    QImage overlay = base;
+    FrameConverter::DrawOverlays(overlay, m_lastDetection.results, m_lastDetection.threshold);
+
+    const auto fit = [&target](const QImage& src) {
+        return (target.isEmpty() || src.size() == target)
+                   ? src
+                   : src.scaled(target, Qt::KeepAspectRatio, Qt::FastTransformation);
+    };
+    m_cameraRgbLabel->setPixmap(QPixmap::fromImage(fit(base)));
+    m_cameraOverlayLabel->setPixmap(QPixmap::fromImage(fit(overlay)));
 }
 
 void AutoRunPage::RefreshSchemeCombo()

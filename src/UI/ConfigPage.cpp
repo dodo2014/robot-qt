@@ -571,6 +571,32 @@ QWidget* ConfigPage::CreateTab3Vision()
         layout->addWidget(row);
     }
 
+    // Row 3: 自动运行页预览源（S6 决策 6 的「视频流预览」保留能力，TR-113）
+    {
+        auto* row = new QWidget();
+        auto* rl = new QHBoxLayout(row);
+        rl->setContentsMargins(0, 0, 0, 0);
+        rl->setSpacing(18);
+
+        auto* chk = new QCheckBox(QStringLiteral("自动运行页预览源用「实时视频流」"));
+        chk->setStyleSheet("color: #b8cce3; font-size: 13px; background: transparent; border: none;");
+        // 先 setChecked 再 connect：避免构造期回填触发一次写盘 + 信号（与 safePos 开关同款做法）。
+        chk->setChecked(ConfigManager::instance().getValue<bool>("ui.autoRunStreamPreview", false));
+        chk->setToolTip(QStringLiteral(
+            "不勾（默认）：自动运行页显示「检测结果叠加图」（左格该次检测的原图 / 右格带检测框），"
+            "由「识别」动作驱动、与视觉检测页解耦——视觉页停流不会让本页定格。\n"
+            "勾选：改回「原始实时视频流」，本页**可见期间**占用相机（消费 ⟺ 持有），隐藏即释放；"
+            "现场排障要看实时画面时用。此时本页会以持有者名 \"AutoRunPreview\" 参与相机流持有者集合。\n"
+            "⚠ 切换立即生效，无需重启。"));
+        QObject::connect(chk, &QCheckBox::toggled, [this](bool on) {
+            ConfigManager::instance().set("ui.autoRunStreamPreview", on);
+            emit autoRunPreviewSourceChanged(on);
+        });
+        rl->addWidget(chk);
+        rl->addStretch();
+        layout->addWidget(row);
+    }
+
     layout->addStretch();
     return tab;
 }

@@ -500,6 +500,15 @@ void MainWindow::SetupUI()
     connect(autoRunPage_, &AutoRunPage::requestGlobalHint,
             this, &MainWindow::UpdateGlobalHint);
 
+    // 自动运行页预览源（S6 决策 6 的「视频流预览」保留能力，TR-113）：由配置页「视觉与工艺参数」
+    // 页签的开关驱动，取值持久化在 `ui.autoRunStreamPreview`。必须在 autoRunPage_ / configPage_
+    // 都构造之后接线；构造期本页尚未可见，`SetStreamPreviewEnabled(true)` 只建立订阅不登记持有，
+    // 首次 `showEvent` 才 acquire。默认 false → 该调用命中「值未变」早退，不会产生提示噪音。
+    autoRunPage_->SetStreamPreviewEnabled(
+        ConfigManager::instance().getValue<bool>("ui.autoRunStreamPreview", false));
+    connect(configPage_, &ConfigPage::autoRunPreviewSourceChanged,
+            autoRunPage_, &AutoRunPage::SetStreamPreviewEnabled);
+
     bodyLayout->addWidget(stack_, 1);
 
     containerLayout->addWidget(bodyWidget, 1);

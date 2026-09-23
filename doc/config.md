@@ -14,6 +14,7 @@
 | `vision` | object | 视觉与工艺参数 |
 | `tcpCalibration` | object | TCP与标定 |
 | `axes` | object | 电控与映射 |
+| `ui` | object | 视觉与工艺参数（`autoRunStreamPreview` 开关） |
 | `version` | string | 配置版本号（当前 `"1.0.0"`） |
 | `$schema` | string | 描述字段（非配置项） |
 
@@ -143,6 +144,20 @@ vision
 > - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。⚠ **手改本文件后必须重启程序**——三个键在检测时都是「实时读」（`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()`），但读的是 `ConfigManager` 的**内存** `root_`，而 `root_` 只在启动时由 `load()` 填充（`ConfigManager.cpp:49`）→ 不重启不会刷新。设备配置页的「视觉与工艺参数」标签页仍保留写入口，**经该页改则即时生效**（走 `set()` 更新内存 `root_`）。
 > - **`exposure` 键已随 P4 删除**（决策 4：本版固定自动曝光）。它此前唯一的写入口是视觉页的「曝光」输入框，该控件移除后**全库无任何读点**，属「看起来在工作、实际不工作」的死键。相机曝光由 SDK 自动曝光控制（`communication.camera.autoExposure`，见 `camera_integration_plan.md` §六）。注意与**动作级 `ActionData.exposure`**（挤出动作的参数，`doc/process.md`）区分——那是另一个东西。
 > - 上述键**均无全局参数与动作级参数的覆盖关系实现**，动作级覆盖规则的落地属 P5。
+
+---
+
+## ui — 界面偏好
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `autoRunStreamPreview` | bool | `false` | **自动运行页预览源**（S6 决策 6 的「视频流预览」保留能力，TR-113）。`false` = 显示「**检测结果叠加图**」（左格该次检测的原图 / 右格带检测框），由 `SequenceWorker::detectionReady` 驱动、**不订阅原始帧流** → 与视觉检测页解耦，视觉页停流不会让本页定格。`true` = 显示「**原始实时视频流**」，本页**可见期间**以持有者名 `"AutoRunPreview"` 占用相机（消费 ⟺ 持有），隐藏即释放 |
+
+> **写入口与生效状态（TR-113，2026-09-23）**：
+> - 写入口 = 设备配置页「**视觉与工艺参数**」页签的勾选框「自动运行页预览源用「实时视频流」」（`ConfigPage::CreateTab3Vision`）→ 经 `set()` 更新内存 `root_` 并 `scheduleSave()` 落盘，同时 emit `autoRunPreviewSourceChanged`；`MainWindow` 已把它接到 `AutoRunPage::SetStreamPreviewEnabled` → **切换立即生效、无需重启**。
+> - **手改本文件则需重启**（同 `vision.*` 的成因：`getValue` 读内存 `root_`，`root_` 只在启动时由 `load()` 填充）。启动时 `MainWindow` 按本键应用一次。
+> - 该开关只改**自动运行页的画面来源**，不改相机流的启停逻辑（流仍由持有者集合驱动，流运行 ⟺ 集合非空）。两条预览路径的持有者名**刻意不同**：方案运行期 = `"AutoRun"`，预览路径 = `"AutoRunPreview"`。
+> - 与 `vision.*` 三个键的区别：那三个是**算法参数**（影响检测结果本身），本键只影响**画面怎么显示**，不进检测链路。
 
 ---
 

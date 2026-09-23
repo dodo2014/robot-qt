@@ -95,9 +95,20 @@ void FrameSaver::ProcessQueue()
             queue_.pop_front();
         }
 
+        // ⚠ 2026-09-22 用例 11.23 实测发现（TR-109）：原判据写成
+        //   `if (!subdir.isEmpty() && !base.mkpath(subdir)) base.setPath(...)`
+        // —— `!base.mkpath(...)` **恒为 false**。Qt 6 文档原文：
+        //   「Returns true on success or if dirPath already existed; otherwise returns false.」
+        // 于是 `setPath` 永不执行、`base` 一直停在 `outputDir_` 根目录：子目录被建出来却
+        // 全空，文件全落在 `saves/` 根下（磁盘实证：rgb/ depth/ overlay/ 三目录 0 文件，
+        // 9 张 PNG 全在根目录）。**建目录与切目录是两件事，切目录必须无条件执行。**
         QDir base(outputDir_);
-        if (!job.subdir.isEmpty() && !base.mkpath(job.subdir))
+        if (!job.subdir.isEmpty()) {
+            if (!base.mkpath(job.subdir))
+                SPDLOG_WARN("[FrameSaver] 子目录创建失败: {}（仍按该路径写入，失败会报 saveError）",
+                            job.subdir.toStdString());
             base.setPath(outputDir_ + QLatin1Char('/') + job.subdir);
+        }
 
         const QString name = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
         QString path = base.filePath(name + QStringLiteral(".png"));

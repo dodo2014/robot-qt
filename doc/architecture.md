@@ -127,7 +127,7 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
                        放 PollTick 里会卡死 UI 线程）；实际分级恢复在 OrbbecCamera 的取帧失败路径内
 ```
 
-视觉链路：CameraCaptureWorker(采集线程) `frameReady` → UI 渲染（FrameConverter 叠加）+ FrameSaver(存储线程) 落盘；SimAlgo 检测 → CoordTransform::CameraToRobot → InverseSmart。**相机流的启停由持有者集合驱动**（`HardwareManager::AcquireCamera/ReleaseCamera`，持有者 `{"VisionPage", "AutoRun"}`）——页面与自动流程只声明「我要用相机」，不自己启停流。
+视觉链路：CameraCaptureWorker(采集线程) `frameReady` → UI 渲染（FrameConverter 叠加）+ FrameSaver(存储线程) 落盘；SimAlgo 检测 → CoordTransform::CameraToRobot → InverseSmart。**相机流的启停由持有者集合驱动**（`HardwareManager::AcquireCamera/ReleaseCamera`，持有者 `{"VisionPage", "AutoRun", "AutoRunPreview"}`）——页面与自动流程只声明「我要用相机」，不自己启停流。⚠ `"AutoRun"` = 自动运行页**方案运行期**持有（启动 acquire / Idle·Fault 释放）；`"AutoRunPreview"` = 同页的**视频流预览**路径持有（S6 决策 6 的保留能力，由 `SetStreamPreviewEnabled(true)` 启用，默认关闭，见 `AutoRunPage.h`）；两者生命周期不同，刻意分开。⚠ 自动运行页**默认不消费 `frameReady`**——它改订阅 `SequenceWorker::detectionReady`（S6 决策 6，TR-112）。
 
 ## 4. HardwareManager 门面设计原则（不可再拆的核心）
 

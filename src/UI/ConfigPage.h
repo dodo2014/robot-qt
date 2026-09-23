@@ -20,6 +20,10 @@ public:
 
 signals:
     void paramsChanged();
+    // 自动运行页预览源切换（S6 决策 6 的「视频流预览」保留能力，TR-113）。
+    // true = 原始视频流 + 可见性持有；false = 检测结果叠加图（默认）。
+    // 与 `paramsChanged` **刻意分开**：后者会触发 Kinematics 重建，与本开关无关。
+    void autoRunPreviewSourceChanged(bool streamPreview);
 
 private slots:
     void OnTabClicked(int index);

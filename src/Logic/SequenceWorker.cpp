@@ -19,6 +19,16 @@
 #include "HAL/core/AxisMap.h"
 #include "spdlog/spdlog.h"
 
+// 跨线程 Queued 传递 `detectionReady` 的实参注册（P3 S6 决策 6）。
+// 文件级静态初始化 → 在 `AutoRunPage::SetSequenceWorker` 建立连接之前就已生效。
+// 同款做法见 `CameraCaptureWorker.cpp` 的 `qRegisterMetaType<CameraFramePtr>`。
+namespace {
+const int g_detectionMetaRegistered = []() {
+    qRegisterMetaType<SequenceWorker::DetectionResult>("SequenceWorker::DetectionResult");
+    return 0;
+}();
+}  // namespace
+
 namespace {
 
 // 在调用线程非主线程时，将 lambda 排队到主线程同步执行并返回结果。
@@ -985,7 +995,22 @@ bool SequenceWorker::StepRunner(RunnerState& r)
             emit logMessage(QStringLiteral("视觉：检测中 (阈值 %1)...").arg(action.threshold));
             // P1：`Detect` 改为纯函数式（参数由调用方传入），这里两件事都在**主线程**做——
             // `SnapshotParams()` 读 ConfigManager，只有主线程能读（见本文件 :106 的约定）。
-            auto results = InMainThread([&] { return algo->Detect(frame, algo->SnapshotParams()); });
+            // S6 决策 6：参数快照单独取一份，供 `detectionReady` 载荷带上阈值（渲染叠加图用）。
+            const auto algoParams = InMainThread([&] { return algo->SnapshotParams(); });
+            auto results = InMainThread([&] { return algo->Detect(frame, algoParams); });
+
+            // S6 决策 6（2026-09-23）：把「本次用的帧 + 图像空间结果」广播给自动运行页，
+            // 使它**不必再订阅原始帧流**（那正是用例 11.26「消费 ≠ 持有」不对称的根源）。
+            // **空结果也发**——「跑过检测但没检出目标」同样是一张有意义的画面（无框的原图），
+            // 否则自动运行页会一直停在上一轮的旧图上。
+            // `frame` 在此之后不再使用，用 move 转移进共享指针，避免 14.5 MB 深拷贝。
+            {
+                SequenceWorker::DetectionResult dr;
+                dr.frame     = std::make_shared<const CameraFrame>(std::move(frame));
+                dr.results   = QVector<PuffResult>(results.begin(), results.end());
+                dr.threshold = algoParams.confidenceThreshold;
+                emit detectionReady(dr);
+            }
 
             if (results.empty()) {
                 SPDLOG_WARN("[SequenceWorker] Vision: no target detected");

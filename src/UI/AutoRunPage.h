@@ -30,6 +30,23 @@ public:
     // 模式互锁入口（下一步 TR-073 接入；本次恒 true，行为不变）
     void SetAutoModeActive(bool active);
 
+    // 预览源开关（P3 S6 决策 6 + 2026-09-23 用户裁定）。
+    //
+    // **默认关** = 本页显示「检测结果」：由 `SequenceWorker::detectionReady` 驱动，
+    // **不订阅原始帧流** —— 从结构上消除用例 11.26 的「消费 ≠ 持有」不对称
+    // （原先本页构造期就订阅 `frameReady`，却只在方案运行中登记持有相机，
+    //  于是视觉页一停流，本页画面就定格）。
+    //
+    // **开** = 回到「原始视频流 + 可见性持有」：本页可见期间登记持有相机（消费 ⟺ 持有），
+    // 隐藏时释放。这条路径**保留**（用户明确要求不删），现场排障看实时画面时可用。
+    //
+    // **调用方（TR-113，2026-09-23）**：配置页「视觉与工艺参数」页签的开关 →
+    // `ConfigPage::autoRunPreviewSourceChanged`；`MainWindow` 启动时按
+    // `ui.autoRunStreamPreview` 再应用一次。**不要新增调用方**——本函数是预览源的唯一
+    // 切换入口，且只在值真变化时才动作（相等即早退，故启动期不产生提示噪音）。
+    void SetStreamPreviewEnabled(bool enabled);
+    bool IsStreamPreviewEnabled() const { return m_streamPreviewOn; }
+
 signals:
     // 全局消息横幅（2026-09-15）：本页不再自持底部提示控件（10 寸触控屏竖向空间紧张），
     // SetHint 统一转发至 MainWindow 顶栏横幅（Elide 截断 + 点击弹窗看全文）。
@@ -48,6 +65,9 @@ private slots:
     void OnWorkerStateChanged(SequenceWorker::WorkerState state,
                               SequenceWorker::PauseReason reason);
 
+    // 检测结果通道（S6 决策 6）：每次「识别」动作跑完来一次（**含未检出目标的空结果**）。
+    void OnDetectionReady(const SequenceWorker::DetectionResult& result);
+    // 原始帧流。**只有 `SetStreamPreviewEnabled(true)` 时才订阅**（见 SetupStreamPreview）。
     void OnFrameReady(const CameraFramePtr& frame);
     void OnLogMessage(const QString& msg);
     void OnStateUpdated(const QVector<MotorStatus>& axes);
@@ -65,8 +85,18 @@ private:
     void RefreshSchemeCombo();
     // 相机两格的位图刷新（P3-4，2026-09-22）。抽成函数是因为两个入口共用同一套：
     // ① 每帧（**仅本页可见时**）；② `showEvent` 切回本页时补绘。
+    // ⚠ 2026-09-23 起本函数属于**「视频流」预览路径**（仅 `m_streamPreviewOn == true` 时被调用）；
+    // 默认路径是 `RenderDetectionTiles()`（检测结果，S6 决策 6）。
     void RenderCameraTiles();
+    // 检测结果两格（S6 决策 6）：左格 = 该次检测所用的**原始帧**，右格 = 同帧 + 检测框。
+    // 两格数据都来自 `m_lastDetection`，**不碰实时流**。
+    void RenderDetectionTiles();
+    // 「视频流 + 可见性持有」独立函数对（保留能力，见 SetStreamPreviewEnabled 的说明）。
+    // Setup 订阅 `frameReady` 并在本页可见时 acquire；Teardown 反订阅并 release。
+    void SetupStreamPreview();
+    void TeardownStreamPreview();
     void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
     // 循环生产控件（TR-091）：读 config 初始化 / 写回 config / 组装 LoopConfig
     void LoadLoopConfigFromConfig();
@@ -87,11 +117,19 @@ private:
     QLabel*     m_cameraRgbLabel   = nullptr;
     QLabel*     m_cameraOverlayLabel = nullptr;
     // P3-4（2026-09-22）：本页不可见时只缓存帧、**不产出位图**。
-    // `frameReady` 是构造期就建立的订阅（`MainWindow` 启动即 `new AutoRunPage()`），
-    // 页面切走之后 Qt 只会跳过「重绘」、不会跳过「转换」——改造前它仍以 15 fps 在 UI
-    // 线程上做 `ColorToQImage`（6.2 MB 拷贝）+ 全分辨率 `QPixmap::fromImage`，
-    // 与用户正在看的页面抢线程。切回本页时由 `showEvent` 用这份缓存补一帧。
+    // ⚠ 2026-09-23（S6 决策 6）起 `frameReady` **不再是构造期订阅**——只有
+    // `SetStreamPreviewEnabled(true)` 经 `SetupStreamPreview()` 才建立（默认关闭，
+    // 见本文件 :33-43）；本页默认路径不订阅原始帧流，`m_lastFrame` 因此可能长期为空。
+    // 【改造前】它由 `MainWindow` 启动即 `new AutoRunPage()` 的构造期建立，页面切走后 Qt
+    // 只会跳过「重绘」、不会跳过「转换」→ 仍以 15 fps 在 UI 线程做 `ColorToQImage`
+    // （6.2 MB 拷贝）+ 全分辨率 `QPixmap::fromImage`，与用户正在看的页面抢线程。
+    // 「不可见只缓存、不产位图」这条策略两条路径都保留；切回本页时由 `showEvent` 补一帧。
     CameraFramePtr m_lastFrame;
+    // 最近一次检测结果（S6 决策 6）。与 `m_lastFrame` 同款策略：本页不可见时只缓存、不产位图，
+    // 切回本页时由 `showEvent` 补绘。**「未运行」时本页就停在上一轮的结果图上**（2026-09-23 用户裁定）。
+    SequenceWorker::DetectionResult m_lastDetection;
+    // 预览源：false = 检测结果（默认）；true = 原始视频流 + 可见性持有。
+    bool m_streamPreviewOn = false;
     // 2026-09-15：底部 m_hintLabel 已删除——提示改由 MainWindow 顶栏全局横幅承载
     // （SetHint 转发 requestGlobalHint），释放本页竖向空间。
 

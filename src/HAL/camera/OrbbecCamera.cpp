@@ -519,6 +519,7 @@ bool OrbbecCamera::Open(const std::string& deviceId, int width, int height, doub
 
 void OrbbecCamera::Close()
 {
+    wantStreaming_ = false;   // 先清意图位，再拆管线（TR-111；顺序不能反）
     DestroyPipeline();
     DestroyContext();
     linkState_ = CameraLinkState::Disconnected;
@@ -538,6 +539,7 @@ bool OrbbecCamera::StartStream()
         return false;
     }
     streaming_ = true;
+    wantStreaming_ = true;   // 意图位：此后 `CaptureFrame()` 拿不到管线会主动重连（TR-111）
     linkState_ = CameraLinkState::Streaming;
     // 重新开始采集前排空积压帧，避免首帧是几秒前的陈旧画面
     for (int i = 0; i < 3; ++i) {
@@ -555,6 +557,9 @@ void OrbbecCamera::StopStream()
     // 只停「取帧」，**不拆 pipeline**——这样重新开始采集是瞬时的。
     // 真正释放设备在 Close()。
     streaming_ = false;
+    // ⚠ 意图位必须一起清（TR-111）：否则 `CaptureFrame()` 会把「用户主动停流」误判成
+    // 「恢复失败」，每 15 fps 触发一次重连。
+    wantStreaming_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -618,7 +623,22 @@ CameraFrame OrbbecCamera::TakeLastGood()
 CameraFrame OrbbecCamera::CaptureFrame()
 {
     CameraFrame out;
-    if (!opened_ || !streaming_ || !pipeline_) return out;
+
+    // 主动停流（`StopStream()` / `Close()`）→ 什么都不做，也**不触发重连**。
+    if (!wantStreaming_) return out;
+
+    // ⚠ 期望在流、但当前拿不到管线 —— 这里必须进恢复状态机（TR-111，2026-09-23）。
+    // 改造前是 `if (!opened_ || !streaming_ || !pipeline_) return out;`，而
+    // `HandleGrabFailure()` 在**本守卫之下**：L2/L3 一旦失败，其失败分支只写
+    // `linkState_ = Disconnected`、**不复位 `streaming_`**（`DestroyPipeline()` 已把它清零），
+    // 于是此后每一次 `CaptureFrame()` 都在这里早退 → `HandleGrabFailure()` 再也进不来 →
+    // 无重试、无状态边沿、无日志，**永久死锁**。
+    // 用例 11.28 实测：11:11:43.194 L3 重建失败（`state:1`）之后日志彻底停止，与此吻合。
+    // 恢复路径本身在 `HandleGrabFailure()` 内部按 3 s 冷却节流，不会形成重连风暴。
+    if (!opened_ || !streaming_ || !pipeline_) {
+        HandleGrabFailure();
+        return TakeLastGood();
+    }
 
     // ③ 取帧前先探活——拔线瞬间直接取帧会导致底层 waitForFrameset 崩溃
     // （参考实现 :127-128）。这是本实现里最不能省的一步。
@@ -703,6 +723,20 @@ CameraFrame OrbbecCamera::CaptureFrame()
 void OrbbecCamera::ResetFailureCounters()
 {
     consecutiveFailures_ = 0;
+    lastAttemptLevel_ = 0;   // 恢复成功 / 重新开流后，档位重新从 L1 起（TR-111）
+}
+
+// 可中断睡眠（TR-111）：`wantStreaming_` 变假（用户停流 / 关设备）时立即返回 false。
+// 必要性：本函数只在采集线程调用，而 L3 要睡 6 s；若不可中断，用户在重连过程中停流会让
+// `CameraManager` 析构里的 `cameraThread_->wait(2000)` 超时。
+bool OrbbecCamera::InterruptibleSleep(std::chrono::milliseconds total)
+{
+    const auto deadline = std::chrono::steady_clock::now() + total;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!wantStreaming_) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return true;
 }
 
 void OrbbecCamera::HandleGrabFailure()
@@ -713,47 +747,80 @@ void OrbbecCamera::HandleGrabFailure()
     // 冷却：3 s 内不重复发起重连动作，防重连风暴（参考实现 :31-32）
     if (now - lastReconnectAt_ < kReconnectCooldown) return;
 
-    if (consecutiveFailures_ >= kFailL3) {
+    // ⚠ **先定档位、再逐级升**（TR-111，2026-09-23）。改造前冷却闸门在档位判定**之前** `return`，
+    // 而计数在冷却期内**继续累加**：L1（第 5 次）记上 `lastReconnectAt_` 之后，3 s 冷却一过
+    // 计数已越过 40 → 直接命中 L3，**L2「pipeline 软重启」永不执行**。
+    // 用例 11.28 实测：11:11:35 的日志是「连续 42 次取帧失败 → L3」，全程没有 L2 字样。
+    // 现按「每个冷却窗口最多升一档」推进：L1 → L2 → L3；失败后停在当前档，下个窗口继续。
+    int level = 0;
+    if (consecutiveFailures_ >= kFailL3)      level = 3;
+    else if (consecutiveFailures_ >= kFailL2) level = 2;
+    else if (consecutiveFailures_ >= kFailL1) level = 1;
+    if (level == 0) return;                          // 还没到 L1，仅累计
+    if (level > lastAttemptLevel_ + 1) level = lastAttemptLevel_ + 1;
+    lastAttemptLevel_ = level;
+
+    if (level == 3) {
         SPDLOG_WARN("[OrbbecCamera] 连续 {} 次取帧失败 → L3 全量重建 Context", consecutiveFailures_);
         lastReconnectAt_ = now;
         DestroyPipeline();
         DestroyContext();
-        std::this_thread::sleep_for(std::chrono::seconds(6));
+        if (!InterruptibleSleep(std::chrono::seconds(6))) {
+            linkState_ = CameraLinkState::Disconnected;   // 用户在重连中停流 → 放弃本次
+            return;
+        }
         linkState_ = CameraLinkState::Connecting;
         if (CreateContext() && BuildAndStartPipeline(currentSn_)) {
             opened_ = true;
             consecutiveFailures_ = 2;   // 计数退回低档，避免立即再次升级
-            linkState_ = CameraLinkState::Streaming;
+            // ⚠ 必须重新置 `streaming_`（2026-09-23 修复，TR-110）。`DestroyPipeline()` 已把它
+            // 清零（`:333`），而 `CaptureFrame()` 开头是
+            // `if (!opened_ || !streaming_ || !pipeline_) return out;`（`:621`）——原实现只写
+            // `linkState_ = Streaming`，于是恢复「成功」却一帧都取不到：画面冻结，且再也走不到
+            // 探活与 `HandleGrabFailure()` → 后续拔插**无任何日志、无任何状态变化**。
+            // 用例 11.28 实测复现：首次 L3 恢复后画面定格、第三次拔插零日志。
+            StartStream();   // 置 streaming_ + linkState_=Streaming + 排空 3 帧积压
             SPDLOG_INFO("[OrbbecCamera] L3 恢复成功");
         } else {
+            // ⚠ 失败必须留痕（TR-111）：改造前这里只有一行 `linkState_ = Disconnected`，
+            // 全程静默 —— 用户只能看到 PollCamera 广播的状态码，无法判断卡在哪一步。
+            SPDLOG_WARN("[OrbbecCamera] L3 恢复失败（CreateContext / BuildAndStartPipeline 之一失败）"
+                        " → Disconnected，下个冷却窗口重试");
             linkState_ = CameraLinkState::Disconnected;
         }
         return;
     }
 
-    if (consecutiveFailures_ >= kFailL2) {
+    if (level == 2) {
         SPDLOG_WARN("[OrbbecCamera] 连续 {} 次取帧失败 → L2 pipeline 软重启", consecutiveFailures_);
         lastReconnectAt_ = now;
         DestroyPipeline();
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (!InterruptibleSleep(std::chrono::seconds(2))) {
+            linkState_ = CameraLinkState::Disconnected;   // 用户在重连中停流 → 放弃本次
+            return;
+        }
         linkState_ = CameraLinkState::Connecting;
         if (BuildAndStartPipeline(currentSn_)) {
             opened_ = true;
             ResetFailureCounters();
-            linkState_ = CameraLinkState::Streaming;
+            // ⚠ 同 L3：必须重新置 `streaming_`，否则恢复后 `CaptureFrame()` 在 `:621` 早退
+            // （`DestroyPipeline()` 已把 streaming_ 清零）→ 画面冻结 + 后续拔插零日志（TR-110）。
+            StartStream();   // 置 streaming_ + linkState_=Streaming + 排空 3 帧积压
             SPDLOG_INFO("[OrbbecCamera] L2 恢复成功");
         } else {
+            SPDLOG_WARN("[OrbbecCamera] L2 恢复失败（pipeline 软重启未成功）"
+                        " → Disconnected，下个冷却窗口升到 L3");
             linkState_ = CameraLinkState::Disconnected;
         }
         return;
     }
 
-    if (consecutiveFailures_ >= kFailL1) {
-        // L1 轻度：丢积压帧 + 短暂退避，不重建
-        linkState_ = CameraLinkState::Degraded;
-        lastReconnectAt_ = now;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
+    // L1 轻度：丢积压帧 + 短暂退避，不重建。
+    // ⚠ 补日志（TR-111）：改造前 L1 分支完全静默，分级过程对用户不可见。
+    SPDLOG_WARN("[OrbbecCamera] 连续 {} 次取帧失败 → L1 退避（不重建）", consecutiveFailures_);
+    linkState_ = CameraLinkState::Degraded;
+    lastReconnectAt_ = now;
+    InterruptibleSleep(std::chrono::milliseconds(200));
 }
 
 // ---------------------------------------------------------------------------

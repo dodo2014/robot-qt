@@ -378,6 +378,13 @@ QWidget* VisionTestPage::CreateControlPanel()
         int row = 0;
 
         grid->addWidget(MakeLabel(QStringLiteral("相机型号")), row, 0);
+        // ⚠ 本控件**没有连接任何槽**（2026-09-22 用例 11.28 实测确认）——与同组的
+        // `deviceSnCombo_`（`:394`）、`colorResCombo_`（`:410`）等不同，改它既不写回 config、
+        // 也不重建相机实例。`HardwareManager::Initialize` 只在启动时按 `simulation.cameraType`
+        // 造一次实例（`HardwareManager.cpp:168`），运行期无「切型号重建」接口。
+        // **故切型号必须改 `config/config.json` 后重启软件才生效**（11.28 的前置条件）。
+        // 设计文档 `doc/vision_test_page_redesign_plan.md` M5 行（`:76` / `:155`）写明
+        // 「切型号需重建实例」，该步尚未实现——补齐需给 HardwareManager 加接口。
         cameraTypeCombo_ = MakeCombo();
         cameraTypeCombo_->setObjectName(QStringLiteral("cameraTypeCombo"));
         grid->addWidget(cameraTypeCombo_, row++, 1);
@@ -714,7 +721,13 @@ void VisionTestPage::UpdateButtons()
     const bool recovering = (st == CameraLinkState::Disconnected || st == CameraLinkState::Connecting);
 
     if (startStreamBtn_) startStreamBtn_->setEnabled(hasCam && !locked_ && !iHold);
-    if (stopStreamBtn_)  stopStreamBtn_->setEnabled(hasCam && !locked_ && iHold);
+    // ⚠「停止采集」**刻意不受 `locked_` 门禁**（2026-09-23 裁定，用例 11.26，TR-110）：
+    // 它只解除本页那一份持有登记，**不碰** `AutoRun` 的持有——`AutoRunPage.cpp:502` 自动运行页
+    // 自己独立 `AcquireCamera("AutoRun")`、只在 Idle/Fault 释放（`:791`），且 `SequenceWorker`
+    // 取帧是直接 `hw.camera()->CaptureFrame()`（`SequenceWorker.cpp:981`）、不经过本页。
+    // 故放行**不会**打断正在执行的识别动作——原设计文档 §6.2 的立论已被代码证伪。
+    // 「开始采集」仍受 `locked_` 门禁：自动运行已持流，本页无需（也不应）重复 acquire。
+    if (stopStreamBtn_)  stopStreamBtn_->setEnabled(hasCam && iHold);
     if (singleDetectBtn_) singleDetectBtn_->setEnabled(hasFrame_ && !recovering);
     if (continuousBtn_)  continuousBtn_->setEnabled(opened && !recovering);
     if (refreshDevBtn_)  refreshDevBtn_->setEnabled(enuming && !locked_ && !iHold);

@@ -1,7 +1,7 @@
 # 3D 相机接入（Orbbec Gemini 336）与视觉检测页重构方案
 
 > **需求来源**：用户提供的两份架构指令（由 Gemini 整理）——「3D 相机 HAL 层接入与 Orbbec SDK 封装」与「重构视觉检测专业调试页面」。
-> **本文性质**：**方案 → 🟡 S0–S4 已实施（TR-099，2026-09-20），S5/S6 未实施**。S0–S4 的真机实测结果见 §五 各节末尾的「✅ 落地情况」；S5（视觉页重构）的规格已拆到 `vision_test_page_redesign_plan.md`（=P4），S6 的检测结果通道与渲染节流待 P4/P5。
+> **本文性质**：**方案 → 🟡 S0–S4 已实施（TR-099，2026-09-20）；S5 = P4 已落地；S6 的决策 6（检测结果通道）已实施（TR-112，2026-09-23），渲染节流（M7）未做**。S0–S4 的真机实测结果见 §五 各节末尾的「✅ 落地情况」；S5（视觉页重构）的规格已拆到 `vision_test_page_redesign_plan.md`（=P4）。
 > **前置经验**：相机侧的关键实现与踩坑来自既有 Python 项目 `D:\workspace\projects\robot-single-thread\src\vision\orbbec_camera.py`（812 行，同型号 Gemini 336L，已在生产环境跑过），本文 §四 是它的经验移植清单——**这部分优先于 SDK 文档的乐观描述**。
 
 ## 一、需求评审结论
@@ -56,7 +56,7 @@
 | 3 | **不注册 SDK 设备插拔回调**，改轮询式探测 + 分级恢复 | 用户实测（回调导致崩溃） |
 | 4 | **曝光控件本版移除**，固定自动曝光 | 用户裁定 |
 | 5 | **算法模板配置是可选填项**：配置数据会随算法版本迭代，不填则用算法内置默认值 | 用户裁定 |
-| 6 | **`AutoRunPage` 只订阅检测结果（叠加图 + 结果），不订阅原始帧流** | 用户裁定 |
+| 6 | **`AutoRunPage` 只订阅检测结果（叠加图 + 结果），不订阅原始帧流**（✅ 2026-09-23 实施，TR-112；原始帧路径保留为可选开关 `SetStreamPreviewEnabled`） | 用户裁定 |
 | 7 | 常用工作档位：**彩色 1280×720 + 深度 848×480** | 用户实测 |
 | 8 | 保留现有 `CameraManager` 的 `QTimer` 拉模型，`OrbbecCamera` 内部用「最新帧槽」适配 | 本文评审 E2 |
 | 9 | **相机流改「持有者集合」模型**：流是全局共享资源，持有者 = `{VisionPage, AutoRun}`，**流运行 ⟺ 集合非空**；页面启停 = acquire / release | 用户裁定（§2.1） |
@@ -244,6 +244,7 @@
 
 > **✅ 落地情况（2026-09-20，TR-099）**：代码已就位——`OrbbecCamera` 内实现 L1/L2/L3 分级恢复（5/20/40 次失败，3 s 冷却，L3 重建 `Context`）；`HardwareManager::PollCamera()` 以 **500 ms 降频**（50 ms tick × 10）做链路状态**边沿检测**并广播 `cameraStateChanged(CameraLinkState)`，**恢复动作一律不在 PollTick 里做**（L3 要 sleep 6 s，放 50 ms 轮询里会卡死 UI 线程）。
 > **⚠ 本项验收尚未完成**：拔插线必须**人工动手**（沙箱与自动化都无法模拟），请在 `test_camera_check --stream 700` 运行期间拔线再插回，观察日志中链路状态是否 `Disconnected → Connecting → Streaming` 且进程不退出。
+> **⚠ 2026-09-23 修正（TR-111，用例 11.28 真机复测暴露）**：上述分级恢复有**三处实现缺陷**，当日已修——① **失败分支死锁（致命）**：L2/L3 恢复**失败**时只写 `linkState_ = Disconnected`，而 `DestroyPipeline()` 已把 `streaming_` 清零，`CaptureFrame()` 遂在守卫 `!opened_ || !streaming_ || !pipeline_` 处早退，**再也调不到 `HandleGrabFailure()`** → 无重试 / 无边沿 / 无日志（`CameraCaptureWorker` 仍 15 fps 空转）；② **失败静默**：L1 分支与 L2/L3 的失败分支全无日志，分级过程对用户不可见；③ **分级失效**：冷却闸门在档位判定**之前** `return`，而计数在 L1 之后的 3 s 冷却期内继续累加越过 40 → 直接命中 L3，**L2「pipeline 软重启」永不执行**。修法 = 新增**意图位** `wantStreaming_`（区分「恢复失败」与「用户主动停流」）+ 逐级升档 `lastAttemptLevel_`（每个冷却窗口最多升一档）+ `InterruptibleSleep()`（6 s sleep 可被停流中止）；详见 `TEST_RECORD.md` **TR-111**。**⚠ 因此本项真机验收顺延到 TR-111 修复后的复测**（判据改为：拔插后日志应逐级出现 `L1 退避 → L2 软重启 → L3 全量重建`，并自动恢复出图）。
 > **已有部分证据（但不构成验收）**：Release 配置连续取流 **60 s（1801 帧 / 30.0 fps / 空帧 0 / 退出码 0）** 未见帧率衰减或崩溃——这只覆盖「静置长稳」的一半，**完全没覆盖拔插线**；10 min 长稳也仍待跑。
 
 ### S5 视觉检测页重构（可与 S2–S4 并行，SimCamera 即可验收）
@@ -259,7 +260,11 @@
 
 ### S6 收口
 
-1. 检测结果通道（决策 6）：新增 `detectionReady` 信号（叠加图 + 结果），`AutoRunPage` 改订阅它，与视觉页解耦；`AutoRunPage` 的原始帧订阅移除。
+1. ✅ **检测结果通道（决策 6）已实施（TR-112，2026-09-23）**：新增 `SequenceWorker::detectionReady` 信号（载荷 `DetectionResult` = 帧 + 图像空间结果 + 阈值），`AutoRunPage` 改订阅它、与视觉页解耦；构造期那条 `frameReady` 订阅**已移除**。
+   - **载荷取「帧 + 结果」而非预渲染位图**：渲染责任留给消费者，从而保住 P3-4 的「本页不可见时不产出位图」优化（`QImage` 隐式共享，`DrawOverlays` 写时才分离，比再转一次整帧少一次解码）。
+   - **空结果也发**——「跑过检测但没检出目标」同样是有意义的画面（无框原图）；未运行时本页停在**上一轮结果图**上（用户裁定）。
+   - **「视频流 + 可见性持有」路径保留**（用户明确要求），抽成独立函数对 `SetupStreamPreview()` / `TeardownStreamPreview()`，由 `SetStreamPreviewEnabled(bool)` 整体启用；该路径用独立持有者名 `"AutoRunPreview"`，与方案运行期的 `"AutoRun"` 生命周期分开。
+   - **入口（TR-113，2026-09-23）**：配置页「视觉与工艺参数」页签的勾选框「自动运行页预览源用「实时视频流」」→ 持久化在 `ui.autoRunStreamPreview`（默认 `false`）→ `ConfigPage::autoRunPreviewSourceChanged` → `MainWindow` 接到 `AutoRunPage::SetStreamPreviewEnabled`，**切换即时生效**；启动时按该键应用一次。补此入口的动因：TR-112 落地后该能力**全仓无任何调用点**（默认恒关），而它的设计用途是「现场排障看实时画面」——现场没有编译器，纯代码级开关等于用不上。键的规格见 `doc/config.md` §ui。
 2. **相机流持有者模型（决策 9 / §2.1）**：`HardwareManager` 新增 `AcquireCamera(owner)` / `ReleaseCamera(owner)` + 持有者集合；自动运行启动 / 结束分别 acquire / release，视觉页启停改走同一对接口。
 3. **视觉页互锁修正（决策 10）**：自动运行期间置灰「相机开关 / 启停采集」——改 `VisionTestPage.cpp:28-31` 注释与 `SetParamsLocked`（`:160-168`）控件清单；检测 / 截图 / 视图切换保持可用。
 4. 渲染节流（M7）。
