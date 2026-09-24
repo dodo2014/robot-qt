@@ -181,8 +181,10 @@ int main(int argc, char** argv)
     Check(cw > 0 && ch > 0, "彩色 profile 已解析（>0）");
 
     int  frames = 0, rgbFrames = 0, depthFrames = 0, badFrames = 0;
+    int  depthSelfConsistent = 0;   // 深度非空且 size == depthWidth*depthHeight（TR-116 回归守卫）
     int  firstW = 0, firstH = 0;
-    size_t firstColorBytes = 0;
+    int  firstDepthW = 0, firstDepthH = 0;
+    size_t firstColorBytes = 0, firstDepthCount = 0;
     double firstDepthMm = 0.0;
     const auto t0 = std::chrono::steady_clock::now();
 
@@ -215,12 +217,20 @@ int main(int argc, char** argv)
         if (frames == 0) {
             firstW = f.width; firstH = f.height;
             firstColorBytes = f.colorData.size();
+            firstDepthW = f.depthWidth; firstDepthH = f.depthHeight;
+            firstDepthCount = f.depthData.size();
             for (float d : f.depthData) if (d > 0.0f) { firstDepthMm = d; break; }
         }
         ++frames;
         // FrameConverter::ColorToQImage 只认 RGB888 → 字节数必须 == w*h*3
         if (f.colorData.size() == static_cast<size_t>(f.width) * f.height * 3) ++rgbFrames;
         if (!f.depthData.empty()) ++depthFrames;
+        // TR-116 回归守卫：深度图必须**自带尺寸**且与数据量自洽。D2C 关闭时深度是原生
+        // 分辨率（如 848×480）而彩色是 1280×720——若 `depthWidth/depthHeight` 未写回，
+        // UI 会按彩色尺寸索引 `depthData` 越界崩溃（2026-09-23 用例 11.35 实测）。
+        if (!f.depthData.empty() && f.depthWidth > 0 && f.depthHeight > 0 &&
+            f.depthData.size() == static_cast<size_t>(f.depthWidth) * f.depthHeight)
+            ++depthSelfConsistent;
     }
 
     const double secs = std::chrono::duration<double>(
@@ -228,13 +238,16 @@ int main(int argc, char** argv)
     const double fps = frames / (secs > 0 ? secs : 1.0);
 
     std::printf("  采集 %.1f s：有效帧 %d（%.1f fps），空帧 %d\n", secs, frames, fps, badFrames);
-    std::printf("  首帧 %dx%d，colorData=%zu 字节，深度首值=%.1f mm\n",
-                firstW, firstH, firstColorBytes, firstDepthMm);
+    std::printf("  首帧 彩色 %dx%d，colorData=%zu 字节；深度 %dx%d，depthData=%zu 个 float，深度首值=%.1f mm\n",
+                firstW, firstH, firstColorBytes,
+                firstDepthW, firstDepthH, firstDepthCount, firstDepthMm);
 
     Check(frames > 0, "至少取到一帧");
     Check(fps >= 2.0, "帧率 ≥ 2 fps（参考实现的「流异常」阈值）");
     Check(rgbFrames == frames, "每帧都是 RGB888（字节数 == w*h*3，UI 不花屏）");
     Check(depthFrames > 0, "深度图非空（D2C 对齐链路通）");
+    Check(depthFrames > 0 && depthSelfConsistent == depthFrames,
+          "深度图尺寸自洽（depthData.size() == depthWidth×depthHeight）——不自洽会让 UI 越界崩溃");
 
     const CameraLinkState st = cam.GetLinkState();
     std::printf("  链路状态: %s\n", LinkStateName(st));

@@ -699,6 +699,12 @@ CameraFrame OrbbecCamera::CaptureFrame()
                 out.depthData.resize(n);
                 for (uint32_t i = 0; i < n; ++i)
                     out.depthData[i] = static_cast<float>(src[i]) * scale;
+                // 深度图**自带尺寸**（TR-116，2026-09-23）：D2C 关闭时这里是深度原生分辨率
+                // （常用档 848×480），与彩色的 1280×720 不同；D2C 开启时 `align_->process()`
+                // 已把深度重采样到彩色分辨率，二者相同。**必须写回**——否则下游会按彩色的
+                // `width` 索引 `depthData` 而越界（用例 11.35 实测崩溃的根因）。
+                out.depthWidth  = static_cast<int>(w);
+                out.depthHeight = static_cast<int>(h);
                 if (out.width == 0) { out.width = static_cast<int>(w); out.height = static_cast<int>(h); }
             }
         }

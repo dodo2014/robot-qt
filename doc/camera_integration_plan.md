@@ -198,11 +198,11 @@
 
 ### S1 CMake 与 SDK 接入
 
-- `src/HAL/CMakeLists.txt`：加 `option(USE_ORBBEC "Build Orbbec 3D camera support" OFF)`；`HAL_SOURCES` 加 `camera/OrbbecCamera.cpp`；`HAL_HEADERS` 加 `camera/OrbbecCamera.h`；`target_include_directories(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/include)`；`target_compile_definitions(HAL PRIVATE USE_ORBBEC)`；`target_link_libraries(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/lib/OrbbecSDK.lib)`。
+- `src/HAL/CMakeLists.txt`：加 `option(USE_ORBBEC "Build Orbbec 3D camera support" OFF)`（⚠ **默认值已于 2026-09-24 改为按 SDK 存在性自动探测**，见下方「落地情况」与 `AGENTS.md` 的 TR-117）；`HAL_SOURCES` 加 `camera/OrbbecCamera.cpp`；`HAL_HEADERS` 加 `camera/OrbbecCamera.h`；`target_include_directories(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/include)`；`target_compile_definitions(HAL PRIVATE USE_ORBBEC)`；`target_link_libraries(HAL PRIVATE ${CMAKE_SOURCE_DIR}/3rdparty/orbbec/lib/OrbbecSDK.lib)`。
 - 根 `CMakeLists.txt`：照 `BOPAI_DLLS` 范式（`:140-151`）加 POST_BUILD，**只拷 `OrbbecSDK.dll` 单文件**（M3）。
 - **验收**：`USE_ORBBEC=ON` / `OFF` 两种配置均可编译。
 
-> **✅ 落地情况（2026-09-20，TR-099）**：`USE_ORBBEC` 默认 **OFF**（SDK 是闭源二进制，仅真机需要；OFF 时 `OrbbecCamera.cpp` 不参与编译，`simulation.cameraType` 回落 `SimCamera` 即一键回仿真）。**ON / OFF 两种配置均已实测编译通过**（Debug）。POST_BUILD 用**显式白名单**拷 `OrbbecSDK.dll` + `extensions/`（实测输出目录无 `opencv_world340.dll`、无 60+ 个 `ob_*.exe` 示例）。`build_release.bat` 打包段同步补了 `extensions\` 目录（顶层 `*.dll` 通配本就覆盖 `OrbbecSDK.dll`）。
+> **✅ 落地情况（2026-09-20，TR-099）**：`USE_ORBBEC` 默认 **OFF**（SDK 是闭源二进制，仅真机需要；OFF 时 `OrbbecCamera.cpp` 不参与编译，`simulation.cameraType` 回落 `SimCamera` 即一键回仿真）。**⚠ 2026-09-24 更新（TR-117）**：该默认值已改为**按 SDK 存在性自动探测**（`3rdparty/orbbec/lib/OrbbecSDK.lib` 与 `include/` 都在则 `ON`）——因为「默认 OFF」会让开发机每次 CMakeCache 重建都**静默丢掉相机支持**（视觉页下拉框只剩 `SimCamera`、全程零报错）；同一逻辑已推广到 `USE_BOPAI`。**ON / OFF 两种配置均已实测编译通过**（Debug）。POST_BUILD 用**显式白名单**拷 `OrbbecSDK.dll` + `extensions/`（实测输出目录无 `opencv_world340.dll`、无 60+ 个 `ob_*.exe` 示例）。`build_release.bat` 打包段同步补了 `extensions\` 目录（顶层 `*.dll` 通配本就覆盖 `OrbbecSDK.dll`）。
 
 ### S2 设备枚举（真机里程碑 1）
 
@@ -221,6 +221,7 @@
 
 1. `Open(deviceId, w, h, fps)`：按 SN 匹配设备 → 创建 `Pipeline` / `Config` → **动态枚举 profile**（按 `getVideoStreamProfile` 尝试 `[RGB, YUYV, MJPG]`，失败回落默认流）→ `enableFrameSync()` → `start(config)` → 等 1.5 s 预热。
 2. 对齐：按配置选择 **HW**（`Config` 的 align，仅 640×480 + 848×480 档）或 **SW**（`ob::Align(OB_STREAM_COLOR)` 逐帧 `process()`，失败只跳帧不判断线）。
+   - ⚠ **`OFF` 时深度图尺寸 ≠ 彩色图尺寸**（TR-116，2026-09-23）：SW 会把深度**重采样到彩色分辨率**（1280×720）故二者一致；**关闭对齐后深度保持原生分辨率**（常用档 848×480，而彩色 1280×720）。`CameraFrame` 因此显式携带 `depthWidth`/`depthHeight`（0 = 与 `width`/`height` 相同），**所有消费 `depthData` 的代码必须按该字段（含 0 回落）索引并校验 `depthData.size()`**——改造前直接按彩色的 `width` 索引，D2C 关闭时越界读约 2 MB ⇒ 进程闪退（用例 11.35 实测 `0xC0000005`）。
 3. 帧归一化：彩色 → **RGB8**（MJPG 需解码；**YUYV 分支须补**，参考实现漏了）；深度 → `float` mm 填 `depthData`。
 4. **最新帧槽**：`std::mutex` + `std::shared_ptr<const CameraFrame>` 双缓冲，`CaptureFrame()` 返回副本——与现有 `CameraManager` 拉模型零改动衔接，且天然防阻塞。
 5. 取帧前先探活（避免拔线瞬间崩溃）。
@@ -243,7 +244,7 @@
 - **验收**：运行中拔线 → 状态转 `Disconnected` + 自动停流；插回 → 自动恢复出图；反复插拔 10 次不崩溃、日志无刷屏。
 
 > **✅ 落地情况（2026-09-20，TR-099）**：代码已就位——`OrbbecCamera` 内实现 L1/L2/L3 分级恢复（5/20/40 次失败，3 s 冷却，L3 重建 `Context`）；`HardwareManager::PollCamera()` 以 **500 ms 降频**（50 ms tick × 10）做链路状态**边沿检测**并广播 `cameraStateChanged(CameraLinkState)`，**恢复动作一律不在 PollTick 里做**（L3 要 sleep 6 s，放 50 ms 轮询里会卡死 UI 线程）。
-> **✅ 本项验收已完成（2026-09-23，用例 11.31 真机）**：`test_camera_check.exe --stream 700` 运行期间拔插 **11 轮**，**每轮都自动恢复、零漏配对**——**6 轮** `L2 恢复成功`、**5 轮** `L2 失败 → L3 恢复成功`；逐级 `L1 退避 → L2 软重启 → L3 全量重建` **全部留痕**（正是 TR-111 修法要达成的目标）；恢复耗时 L2 路径 7.0~7.1 s / L3 路径 15.4~15.9 s（最差 40.8 s）；**进程全程不退出、无崩溃**。日志 `out\build\x64-Debug\tmp_700.txt`（留存副本 `.workbuddy-ai/tmp_1131_debug_700.txt`）。⚠ **一处留证缺口**：该次运行被**提前终止**（日志仅覆盖 ~318 s、**无末尾汇总行**）⇒ 「退出码 0」**本次未实证**；详见 `doc/test/real_machine_plan_phase3.md` 11C 记录块。
+> **✅ 本项验收已完成（2026-09-23，用例 11.31 真机）**：`test_camera_check.exe --stream 700` 运行期间拔插 **11 轮**，**每轮都自动恢复、零漏配对**——**6 轮** `L2 恢复成功`、**5 轮** `L2 失败 → L3 恢复成功`；逐级 `L1 退避 → L2 软重启 → L3 全量重建` **全部留痕**（正是 TR-111 修法要达成的目标）；恢复耗时 L2 路径 7.0~7.1 s / L3 路径 15.4~15.9 s（最差 40.8 s）；**进程全程不退出、无崩溃**。日志 `out\build\x64-Debug\tmp_700.txt`（留存副本 `.workbuddy-ai/tmp_1131_debug_700.txt`）。⚠ **一处留证缺口**：该次运行被**提前终止**（日志仅覆盖 ~318 s、**无末尾汇总行**）⇒ 「退出码 0」**本次未实证**（2026-09-24 用户裁定**降级为非核心项**、不补跑——11.31 的核心是拔插恢复能力）；详见 `doc/test/real_machine_plan_phase3.md` 11C 记录块。
 > （**原表述「⚠ 本项验收尚未完成：拔插线必须人工动手（沙箱与自动化都无法模拟）…」已被上述 11.31 实测推翻**。）
 > **⚠ 2026-09-23 修正（TR-111，用例 11.28 真机复测暴露）**：上述分级恢复有**三处实现缺陷**，当日已修——① **失败分支死锁（致命）**：L2/L3 恢复**失败**时只写 `linkState_ = Disconnected`，而 `DestroyPipeline()` 已把 `streaming_` 清零，`CaptureFrame()` 遂在守卫 `!opened_ || !streaming_ || !pipeline_` 处早退，**再也调不到 `HandleGrabFailure()`** → 无重试 / 无边沿 / 无日志（`CameraCaptureWorker` 仍 15 fps 空转）；② **失败静默**：L1 分支与 L2/L3 的失败分支全无日志，分级过程对用户不可见；③ **分级失效**：冷却闸门在档位判定**之前** `return`，而计数在 L1 之后的 3 s 冷却期内继续累加越过 40 → 直接命中 L3，**L2「pipeline 软重启」永不执行**。修法 = 新增**意图位** `wantStreaming_`（区分「恢复失败」与「用户主动停流」）+ 逐级升档 `lastAttemptLevel_`（每个冷却窗口最多升一档）+ `InterruptibleSleep()`（6 s sleep 可被停流中止）；详见 `TEST_RECORD.md` **TR-111**。**⚠ 因此本项真机验收顺延到 TR-111 修复后的复测**（判据改为：拔插后日志应逐级出现 `L1 退避 → L2 软重启 → L3 全量重建`，并自动恢复出图）。
 > **静置长稳亦已完成（2026-09-23，用例 11.32）**：`--stream 700` 跑满 **700.1 s**、有效帧 **10491**、**空帧全程 0**、**退出码 0**；工具新增的分钟级分段统计显示第 1 分钟 901 帧 vs 第 11 分钟 899 帧 ⇒ **无衰减**；外部 `tasklist` 每分钟采样 12 点（71.8 MB 启动 → 105 MB 首分钟后持平）⇒ **无内存持续增长**。（**原表述「这只覆盖静置长稳的一半…10 min 长稳也仍待跑」已被 11.31 + 11.32 推翻**。）
@@ -302,6 +303,7 @@
 | SDK 崩溃（回调 / `stop()` / 拔线瞬间取帧） | 进程退出 | 不注册回调、吞 `stop()` 异常、取帧前探活；`USE_ORBBEC=OFF` 一键回到 Sim |
 | 软对齐偶发失败 | 单帧丢失 | 只跳帧不判断线（参考实现同款处理）；连续失败升级到 L1 |
 | 高分辨率帧拷贝开销（1280×720×3 + 848×480×4 ≈ 4.3 MB/帧，30 fps ≈ 130 MB/s） | UI 掉帧 | 渲染节流（M7）；`AutoRunPage` 退出原始帧订阅（决策 6） |
+| **D2C 关闭 ⇒ 深度图与彩色图分辨率不同**（848×480 vs 1280×720） | 消费端若按彩色的 `width` 索引 `depthData` ⇒ 越界读、进程闪退 | `CameraFrame` 显式携带 `depthWidth`/`depthHeight`（0 = 回落 `width`/`height`）+ 消费端 `depthData.size()` 守卫（**TR-116，2026-09-23 已修**） |
 | `opencv_world340.dll` 混入输出目录 | 运行时 DLL 冲突 | POST_BUILD 白名单只拷 `OrbbecSDK.dll`（M3） |
 | Release 包缺 `OrbbecSDK.dll` | 目标机跑不起来 | 同步 `build_release.bat`（M4） |
 | 分辨率组合不被支持 | 开流失败 | 下拉框从 SDK 枚举填充（E8），而非硬编码预置 |

@@ -162,6 +162,13 @@ cmake -G Ninja -S "D:/workspace/projects/CreamPuffRobot" -B "D:/workspace/projec
 ```
 Debug 同，`-DCMAKE_BUILD_TYPE=Debug` + 目录 x64-Debug。
 
+> **硬件开关不必手传（2026-09-24，TR-117）**：`USE_BOPAI` / `USE_ORBBEC` 的默认值由**第三方 SDK 是否就位**自动探测
+> （守 `3rdparty/bopai/lib/MultiCard.lib` 与 `3rdparty/orbbec/lib/OrbbecSDK.lib`，均需**同时**有 `include/`）。
+> 装了 SDK 的机器自动 `ON`、新克隆自动 `OFF`（仍可编译）；探测为 `OFF` 时 configure 期会打一行 `HAL: 未找到 … SDK` 说明原因。
+> ⚠ **探测结果写进 `CMakeCache.txt`** ⇒ 后来才装 SDK 必须**重新 configure**（或显式 `-DUSE_ORBBEC=ON`），已配置过的目录不会自己翻转。
+> ⚠ 显式传 `-DUSE_ORBBEC=ON` 而 SDK 缺失 ⇒ 配置期直接 `FATAL_ERROR` 并列出缺哪个文件（不再拖到链接期）。
+> `USE_XRSERVO` 无第三方 SDK 依赖（只用 `<Windows.h>` + 系统库 `setupapi`），保持默认 `ON`。
+
 ## 6. 开发机（无沙箱限制）仍用一键脚本
 
 - Release：双击/`cmd /c build_release.bat`（vcvars64 可用，LNK1168 自动处理）。

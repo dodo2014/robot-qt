@@ -966,6 +966,12 @@ void VisionTestPage::OnCameraStateChanged(CameraLinkState state)
     case CameraLinkState::Unknown:      return;   // SimCamera：不记日志（避免噪声）
     }
     AppendLog(QStringLiteral("[相机] %1").arg(QString::fromUtf8(text)));
+    // 链路状态**边沿**补一条文件日志（2026-09-24）：`AppendLog` 只写 UI 页面日志区、
+    // **不调 spdlog**（见 `:1432`），而用例 11.36 的判据 `[相机] 断开 / 正在连接/恢复 /
+    // 已恢复出图` 需要能在 `log/creampuff_*.log` 中**离线取证**（此前只能目视页面）。
+    // 不引入噪声：`Unknown`（SimCamera）已在上方 `return`，且 `HardwareManager::PollCamera`
+    // 只在该状态**边沿**广播、首次仅建基线不广播（`HardwareManager.cpp:395-417`）。
+    SPDLOG_INFO("[VisionTestPage] [相机] {}", text);
     UpdateCameraState();
     UpdateButtons();
 }
@@ -1003,14 +1009,21 @@ void VisionTestPage::OnRenderTick()
 void VisionTestPage::UpdateTileInfos()
 {
     if (!hasFrame_) return;
-    const QString info = QStringLiteral("FPS %1 | %2 | %3x%4")
-                             .arg(QString::number(fps_, 'f', 1))
-                             .arg(CameraTimeText(latestFrame_->timestamp))
-                             .arg(latestFrame_->width)
-                             .arg(latestFrame_->height);
-    if (rgbInfoLabel_)     rgbInfoLabel_->setText(info);
-    if (depthInfoLabel_)   depthInfoLabel_->setText(info);
-    if (overlayInfoLabel_) overlayInfoLabel_->setText(info);
+    // 深度格显示**深度图自身**尺寸（TR-116，2026-09-23）：D2C 关闭时深度是原生 848×480
+    // 而彩色是 1280×720，沿用彩色尺寸会**误导**——用户正是靠这一行判断 D2C 是否生效。
+    auto infoText = [this](int w, int h) {
+        return QStringLiteral("FPS %1 | %2 | %3x%4")
+                   .arg(QString::number(fps_, 'f', 1))
+                   .arg(CameraTimeText(latestFrame_->timestamp))
+                   .arg(w)
+                   .arg(h);
+    };
+    const int dw = (latestFrame_->depthWidth  > 0) ? latestFrame_->depthWidth  : latestFrame_->width;
+    const int dh = (latestFrame_->depthHeight > 0) ? latestFrame_->depthHeight : latestFrame_->height;
+
+    if (rgbInfoLabel_)     rgbInfoLabel_->setText(infoText(latestFrame_->width, latestFrame_->height));
+    if (depthInfoLabel_)   depthInfoLabel_->setText(infoText(dw, dh));
+    if (overlayInfoLabel_) overlayInfoLabel_->setText(infoText(latestFrame_->width, latestFrame_->height));
 }
 
 void VisionTestPage::RenderTiles(bool force)
@@ -1044,12 +1057,16 @@ void VisionTestPage::RenderTiles(bool force)
     // 语义上不依赖「同线程」这个隐含前提。
     const CameraFramePtr frame = latestFrame_;
     const QSize srcSize(frame->width, frame->height);
+    // 深度图**可能自带尺寸**（TR-116，2026-09-23）：D2C 关闭时是 848×480 而彩色是 1280×720
+    // ⇒ 适配必须按**深度自身**宽高比算，否则会被拉伸到彩色比例（同族：别用彩色尺寸代替深度尺寸）。
+    const QSize depthSrcSize((frame->depthWidth  > 0) ? frame->depthWidth  : frame->width,
+                             (frame->depthHeight > 0) ? frame->depthHeight : frame->height);
 
     // 「源尺寸按 KeepAspectRatio 适配到标签」后的实际绘制尺寸。
     // `QSize::scaled` 是纯尺寸计算，不碰像素。
-    auto fitSize = [&srcSize](const QSize& box) {
-        if (srcSize.isEmpty() || box.isEmpty()) return box;
-        return srcSize.scaled(box, Qt::KeepAspectRatio);
+    auto fitSize = [](const QSize& src, const QSize& box) {
+        if (src.isEmpty() || box.isEmpty()) return box;
+        return src.scaled(box, Qt::KeepAspectRatio);
     };
 
     // P3-1（2026-09-22）：**先缩放到目标尺寸、再转 QPixmap**。
@@ -1072,9 +1089,9 @@ void VisionTestPage::RenderTiles(bool force)
         view->setPixmap(QPixmap::fromImage(out));
     };
 
-    const QSize rgbFit = fitSize(tileSize(rgbViewLabel_));
-    const QSize depFit = fitSize(tileSize(depthViewLabel_));
-    const QSize ovlFit = fitSize(tileSize(overlayViewLabel_));
+    const QSize rgbFit = fitSize(srcSize,      tileSize(rgbViewLabel_));
+    const QSize depFit = fitSize(depthSrcSize, tileSize(depthViewLabel_));
+    const QSize ovlFit = fitSize(srcSize,      tileSize(overlayViewLabel_));
 
     // P3-3：彩图只转一次、且**零拷贝**——RGB 格与 Overlay 格共用同一份只读视图。
     const QImage rgb = FrameConverter::ColorToQImageView(*frame);

@@ -70,6 +70,12 @@ export PATH="/d/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC
 
 ⚠ grep 必须加 `-a`，否则见到 windeployqt 的 GBK 字节会判定为二进制而停止输出。
 
+⚠ **退出码 ≠ 构建成败：`EXIT=1` 可能只是 POST_BUILD 失败**（2026-09-24 实测）。
+`CreamPuffRobot` 目标挂了 POST_BUILD（拷 BoPai/Orbbec DLL、`windeployqt`、拷 config）。沙箱内 `windeployqt` 会因**拦截 native exe 管道**而失败：
+`Unable to query qtpaths: Error running binary qtpaths: pipe: Batch file failed at line 10 with errorcode 1`
+⇒ ninja 报 `FAILED: [code=1] CreamPuffRobot.exe` + `ninja: build stopped`，**但链接本身早已完成**。
+**判据**：看日志里 `FAILED:` 那行属于**哪个阶段**——出现 `Linking CXX executable` 之后才失败 ⇒ 产物已生成，用 `ls -la <exe>` 的 **mtime + 体积变化**确认（例：Debug `5,408,256 → 5,681,664` 字节）。**别因为 `EXIT=1` 就重编或去查编译错误**（`grep "error C"` 会一无所获）。用户侧跑 `build_debug.bat` / `build_release.bat` 无此问题。
+
 **既有警告基线（不算新增）**：`SimCamera.cpp:126/127 C4244`、`SimCard.cpp:156 C4100`、
 `BoPaiCard.cpp:237 C4244`、SDK `Filter.hpp:598 C4996`、`main.cpp:48 C4273`。
 
@@ -104,6 +110,24 @@ Windows 下运行中的 exe 会拒绝 `r+b` 打开（`PermissionError`）。**�
 
 ⚠ `-t clean` 会连 exe 一起删。若之后编译**失败**，该 build 目录会**没有 exe**——别误判成
 「exe 不见了 = 环境坏了」，看 `[N/N] Linking` 那一行有没有出现即可。
+
+### exe 被占用时，仍可**只编改动 TU 的 obj** 验证编译（2026-09-24 补）
+
+`ninja` 的每个 `.obj` 都是**独立 target**，可直接点名构建——**不碰 exe ⇒ 不触发 LNK1168**，
+即使该 build 的 exe 正被用户运行：
+
+```bash
+ninja -C out/build/x64-Debug "src/UI/CMakeFiles/UI.dir/VisionTestPage.cpp.obj"
+```
+
+obj 路径从 `build.ninja` 里 grep 得到（`grep -n "<文件名>.obj" out/build/<cfg>/build.ninja`），
+**用正斜杠**、加引号。判据 = `rc=0` 且无 `error C####`，并用 `ls -la --time-style=+%H:%M:%S` 确认 obj 的
+mtime 已更新（否则是「没编」而不是「编过了」）。
+
+**适用边界**：只证明**该 TU 能编过**，不证明能链。若改动只在一个 `.cpp` 内（新增一行日志、
+改一个函数体），这已是实质验证；**若同时改了头文件，仍须等用户关闭后全清重建**。
+另可顺手在**未被占用的那个配置**上做全量构建（会重链它的 exe），两个配置各验一半。
+⚠ 全量构建的那个配置 POST_BUILD 仍会在沙箱内失败（`EXIT=1`），判据见上文「退出码 ≠ 构建成败」。
 
 ## 第 3 步：Sim 冒烟
 
@@ -169,7 +193,39 @@ ninja -C out/build/x64-Debug   test_camera_check test_kinematics_check test_node
 同类的还有 `out/build/x64-Debug/test_sequenceworker.exe`（2026-08-20，该目标已不在 `CMakeLists` 里）。
 
 ⚠ `test_camera_check` 受 `if(USE_ORBBEC)` 保护——`USE_ORBBEC=OFF` 时**目标根本不存在**（不是构建失败）。
-本机两个 build 的 `CMakeCache.txt` 均为 `USE_ORBBEC:BOOL=ON`。
+
+### ⚠ `USE_ORBBEC` 会**静默丢失**（2026-09-24 实测，TR-117）
+
+`option(USE_ORBBEC ... OFF)` 默认 **OFF**，且**既不在 `CMakeSettings.json` 的 `cmakeCommandArgs` 里、
+也不在 `compile_guide.md` §5 的「首次配置」命令里** ⇒ **任何一次 CMakeCache 重建都会把相机支持悄悄关掉**：
+`OrbbecCamera.cpp` 不进 `HAL_SOURCES` ⇒ `REGISTER_CAMERA` 注册宏不存在 ⇒ `CameraFactory::AvailableTypes()`
+只返回 `SimCamera` ⇒ 视觉页**相机型号下拉框只剩 SimCamera**（`VisionTestPage.cpp:233`）。
+**程序不报任何错**，`test_camera_check` 目标也一并消失——只有肉眼看下拉框才会发现。
+
+- **判据**：`grep -E "^USE_ORBBEC:" out/build/<cfg>/CMakeCache.txt`；
+  `grep -c OrbbecCamera out/build/<cfg>/build.ninja`（0 = 没编进去，>0 时还应能看到
+  `HAL.lib: … camera/OrbbecCamera.cpp.obj …`）。
+- **沙箱内补配**（直接 configure 会在 `vcpkg install` 阶段失败，见 compile_guide §3.5）：
+  ```bash
+  "<VS>/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" \
+    --regenerate-during-build -DVCPKG_MANIFEST_INSTALL=OFF -DUSE_ORBBEC=ON \
+    -SD:/workspace/projects/CreamPuffRobot -BD:/workspace/projects/CreamPuffRobot/out/build/<cfg>
+  ```
+  **用完把 `VCPKG_MANIFEST_INSTALL` 改回 `ON`**（否则以后 `vcpkg.json` 变更不会自动装包）。
+  随后 `cmake --build <cfg> --target HAL` 可先验证 `OrbbecCamera.cpp` 能编过（**不碰 exe ⇒ 不影响用户正在运行的程序**）。
+- **✅ 根治已落地（2026-09-24，用户裁定方案 ②，TR-117）**：`option()` 默认值改为**按 SDK 存在性自动探测**
+  （`EXISTS 3rdparty/<sdk>/lib/<lib> AND EXISTS 3rdparty/<sdk>/include`），已**同步推广到 `USE_BOPAI`**（守 `MultiCard.lib`）；
+  `USE_XRSERVO` 经核实无第三方 SDK 依赖（`XRServo.cpp` 只 include `<Windows.h>`，链系统库 `setupapi`）⇒ 保持默认 ON。
+  - **判据**：`grep -E "^USE_(BOPAI|ORBBEC):" out/build/<cfg>/CMakeCache.txt` 应为 `ON`（本机两 SDK 都在）；
+    configure 输出里**不应**出现 `HAL: 未找到 … SDK`。
+  - ⚠ 探测值写进 cache ⇒ **后来才装 SDK 必须重新 configure**；显式 `-DUSE_XXX=ON` 而 SDK 缺失会 `FATAL_ERROR`（含缺失路径）。
+  - ⚠ **改 `src/HAL/CMakeLists.txt` 会触发 reconfigure**：Debug 侧通常能过，**Release 侧沙箱内 `vcpkg install` 会失败**
+    （`error: calling CreateFileW stdin failed with 231 (All pipe instances are busy.)`，解 7z 时；根因是它还要下自己的 cmake/7zip）
+    ⇒ 用 `cmake --regenerate-during-build -DVCPKG_MANIFEST_INSTALL=OFF -S<src> -B<build>` 绕，
+    **用完把该 cache 值改回 `ON`**——直接文本改 `CMakeCache.txt` 即可，重跑 configure 反而会再触发一次 install。
+  - **探测逻辑可离线自测**（不必真去删 SDK）：把 `src/HAL/CMakeLists.txt` 的判定块抽成 `.cmake` 文件，
+    用 `cmake -P` 配 `set(CMAKE_SOURCE_DIR "<真实根>")` / `set(CMAKE_SOURCE_DIR "<不存在根>")` 跑正反两分支
+    （实测 → `ON/ON` 与 `OFF/OFF`）；守卫同理，`message(FATAL_ERROR)` 在 `-P` 下会以 rc=1 中止。
 
 ⚠ 构建 ≠ 运行。`test_node_tree_check` 会临时改写 `config/process.json`（RAII 恢复），**不得在真机调试中运行**。
 
@@ -193,6 +249,71 @@ ninja -C out/build/x64-Debug   test_camera_check test_kinematics_check test_node
 真正跑不了的是 `.bat`。做法：**重定向到 `.workbuddy-ai/tmp_*.txt`（已 gitignore）再用 Read 看**——
 既绕开上面的乱码问题，也避免 SDK 的 `PropertyServer` / `PresetHandler` 警告刷屏（可用 `grep -avE` 先滤掉）。
 ⚠ 长跑（如 11.32 的 `--stream 700` ≈ 11.7 min）**超出 Bash 工具单次超时上限**，须 `run_in_background`。
+
+### 修「纯函数层」缺陷时：手敲 `cl.exe` 编一个**离线复现程序**（不进 CMake）
+
+**适用**：缺陷落在**不依赖硬件**的层（越界读、尺寸契约、坐标换算等）。
+**价值**：不依赖真机、**秒级复现**，且能留成**回归断言**——远强于「改完等用户上真机试」。
+（2026-09-23 用例：TR-116 的 `DepthToQImage` 越界，用**崩溃现场参数**离线复现并验证修复。）
+
+**做法**：临时 `.cpp` 放 `.workbuddy-ai/tmp_*.cpp`（已 gitignore），**直接编译仓库内真实实现文件**（不是复制一份），
+这样测的就是交付代码本身。环境变量同第 1 步（注意 INCLUDE/LIB 与 PATH 的**两类写法差异**），Qt include 多版本子目录见 `doc/compile_guide.md` §8：
+
+```bash
+cd /d/workspace/projects/CreamPuffRobot/.workbuddy-ai     # obj 落在临时目录，不污染 src/
+export MSYS2_ARG_CONV_EXCL="*"                            # 必须：否则 /nologo 等会被 MSYS 当路径转换
+"<MSVC>/bin/Hostx64/x64/cl.exe" /nologo /std:c++17 /permissive- /Zc:__cplusplus /EHsc /O2 /utf-8 \
+  /I "D:/workspace/projects/CreamPuffRobot/src/HAL/camera" \
+  /I "D:/workspace/projects/CreamPuffRobot/src/HAL/interfaces" \
+  tmp_xxx.cpp ../src/HAL/camera/FrameConverter.cpp \
+  /Fe:tmp_xxx.exe /link /LIBPATH:"<QT>/lib" Qt6Gui.lib Qt6Core.lib user32.lib gdi32.lib shell32.lib /SUBSYSTEM:CONSOLE
+./tmp_xxx.exe > tmp_xxx_out.txt 2>&1 ; echo "EXIT=$?"
+```
+
+- **`/I` 要指到每个头文件所在目录**（`FrameConverter.h` 在 `src/HAL/camera/`、`ICamera.h` 在 `src/HAL/interfaces/`）。
+- **先 `cd` 到 `.workbuddy-ai/` 再编**：`cl` 默认把 `.obj` 写在当前目录，否则会在 `src/` 下留一堆 `.obj`（事后用 python `os.remove` 清，`rm` 会被静默拦截）。
+- 断言写成 `printf` + 失败计数、`return failures ? 1 : 0` —— **看退出码**即知成败；输出**重定向到文件再 Read**（免乱码）。
+- 用例设计：**第一条就用崩溃现场的真实参数**（本例：彩色 1280×720 + 深度 848×480），再补回归项（对齐开启 / 数据量不足 / 其它实现契约 / 存图路径）——一次跑完既证「修好了」也证「没修坏别的」。
+- ⚠ **不能替代真机复测**：只覆盖被链接进来的那一层，UI 渲染 / 相机取帧仍须真机。
+
+### 缺陷在「算法层 / 有依赖」的 TU 里：改链**仓库静态库**（2026-09-23 补，TR-116 的 `SimAlgo::Detect`）
+
+`FrameConverter.cpp` 只依赖 Qt 与结构体，单独编译最省事；但像 `SimAlgo.cpp` 这种同一个 TU 里还带着
+`ConfigManager`（读 config）与 `REGISTER_PUFF_ALGORITHM`（工厂注册）的文件，**单独编会缺符号**。
+不必复制源码，**直接链构建目录里已编好的静态库**即可——目标函数本体不碰那些符号，链接器只按需拉取：
+
+```bash
+B="D:/workspace/projects/CreamPuffRobot/out/build/x64-Release"
+cl.exe /nologo /std:c++17 /permissive- /Zc:__cplusplus /EHsc /O2 /MD /utf-8 \
+  /I "$R/src/HAL/algorithm" /I "$R/src/HAL/interfaces" /I "$R/src/HAL/camera" /I "$R/src/HAL/core" \
+  /I "$B/vcpkg_installed/x64-windows/include" \
+  tmp_xxx.cpp /Fe:tmp_xxx.exe \
+  /link /LIBPATH:"$B/src/HAL" /LIBPATH:"$B/src/Config" /LIBPATH:"$B/src/Core" \
+        /LIBPATH:"$B/vcpkg_installed/x64-windows/lib" /LIBPATH:"D:/Qt/6.11.1/msvc2022_64/lib" \
+        HAL.lib Config.lib Core.lib spdlog.lib fmt.lib Qt6Gui.lib Qt6Core.lib \
+        user32.lib gdi32.lib shell32.lib ole32.lib /SUBSYSTEM:CONSOLE
+```
+
+- ⚠ **必须加 `/MD`**：仓库库是用**动态 CRT**（`MD_DynamicRelease`）编的，`cl` 默认 `/MT` ⇒ 满屏
+  `LNK2038: 检测到"RuntimeLibrary"的不匹配项`，并伴生一串 `LNK2019 __imp_strtod / __imp_strtol /
+  __imp_strtoll / __imp_strtoull`。2026-09-23 首次就栽在这，加 `/MD` 后一次通过。
+- **不要用 `WHOLE_ARCHIVE`**：不加时链接器只拉被引用的 `.obj`，不会把 `OrbbecCamera` / OrbbecSDK 拖进来。
+- **运行要能找到 Qt DLL**：`export PATH="<build 根目录>:$PATH"`（那里有 windeployqt 部署的 DLL）再跑 exe。
+- ⚠ 顺带自查：构建目录里可能残留**旧路径的 `.obj`**（本仓 `CMakeFiles/HAL.dir/SimAlgo.cpp.obj` 是
+  8 月的陈旧残留，真正生效的是 `.../HAL.dir/algorithm/SimAlgo.cpp.obj`）。**链之前用 grep 查 `.lib`
+  里的成员路径**，确认链的是哪一个，否则可能「测了旧代码还以为测了新的」。
+
+### 让「越界读」变成**可判定**的断言：哨兵 + 下标编码（2026-09-23 补）
+
+越界读**多数不崩**（`std::vector` 的堆内存照样读得到），所以「没崩 = 没越界」是**伪证**。要让结果可判定：
+
+1. 把被测缓冲区填成「**值 = 下标**」（`buf[i] = i`）；
+2. 在**真实数据区之后**再补一段**哨兵**（如 `-1`）；
+3. 断言返回值**等于按公式算出的期望下标**。
+
+于是：读对 ⇒ 值 = 期望下标；越界 ⇒ 读到哨兵 ⇒ 值 = 哨兵（在 `SimAlgo` 里 `-1` 不满足 `d > 0`，
+`z` 直接落回 0）⇒ **与期望不等 ⇒ 断言失败**。TR-116 用这招把 `SimAlgo::Detect` 从「只靠数学论证」
+变成了实测：崩溃现场参数下 `z = 379022`（= 期望下标），而**修复前**会索引到 `858830`（深度区仅 407040）。
 
 ## 其它
 

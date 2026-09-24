@@ -2,12 +2,66 @@
 # HAL — 硬件抽象层
 # 编译为静态库，包含所有硬件接口定义、仿真实现与品牌实现
 # ============================================================
-option(USE_BOPAI "Build BoPai motion card support" ON)
+# ---------------------------------------------------------------------------
+# 品牌实现开关：默认值按「第三方 SDK 是否就位」**自动探测**（2026-09-24，TR-117）
+#
+# 动机：这些 SDK 都是**闭源二进制且不入库**（`.lib` / `.dll` 有全局 gitignore 规则，
+# `3rdparty/orbbec/` 另已整体排除）。于是「默认 ON」在新克隆上必然缺库、「默认 OFF」又让
+# 开发机每次 CMakeCache 重建都**静默丢掉硬件支持**（TR-117：视觉页「相机型号」下拉框
+# 只剩 `SimCamera`，全程零报错）。改为按存在性探测后：装了 SDK 的机器自动 `ON`（不必记开关），
+# 新克隆自动 `OFF`（仍可正常编译），两种环境都不需要人工干预。
+#
+# ⚠ **边界**：`EXISTS` 在 **configure 期**求值，结果写进 `CMakeCache.txt` ⇒ 后来才装 SDK 时
+#    必须**重新 configure**（删缓存，或显式 `-DUSE_XXX=ON`）；已配置过的目录不会自己翻转。
+# ⚠ 探测结论一律**显式播报**（`message(STATUS)` / `FATAL_ERROR`）——TR-117 的教训就是「降级不吭声」。
+# ---------------------------------------------------------------------------
+set(_bopai_root  "${CMAKE_SOURCE_DIR}/3rdparty/bopai")
+set(_orbbec_root "${CMAKE_SOURCE_DIR}/3rdparty/orbbec")
+
+if(EXISTS "${_bopai_root}/lib/MultiCard.lib" AND EXISTS "${_bopai_root}/include")
+    set(_bopai_default ON)
+else()
+    set(_bopai_default OFF)
+endif()
+
+if(EXISTS "${_orbbec_root}/lib/OrbbecSDK.lib" AND EXISTS "${_orbbec_root}/include")
+    set(_orbbec_default ON)
+else()
+    set(_orbbec_default OFF)
+endif()
+
+option(USE_BOPAI "Build BoPai motion card support（默认按 SDK 存在性自动探测）" ${_bopai_default})
+# XR 串口舵机**无第三方 SDK 依赖**（`XRServo.cpp` 只用 `<Windows.h>`，链接的是系统库 `setupapi`）
+# ⇒ 没有可守卫的对象，保持默认 ON。
 option(USE_XRSERVO "Build XR serial servo support" ON)
-# Orbbec 3D 相机（Gemini 336）。**默认 OFF**：SDK 为闭源二进制，且仅真机环境需要；
-# OFF 时 `OrbbecCamera.cpp` 不参与编译，`simulation.cameraType` 回落 `SimCamera`
-# 即可一键回到仿真（doc/camera_integration_plan.md §七 回退）。
-option(USE_ORBBEC "Build Orbbec 3D camera support" OFF)
+# Orbbec 3D 相机（Gemini 336）。OFF 时 `OrbbecCamera.cpp` 不参与编译，
+# `simulation.cameraType` 回落 `SimCamera` 即可一键回到仿真（doc/camera_integration_plan.md §七 回退）。
+option(USE_ORBBEC "Build Orbbec 3D camera support（默认按 SDK 存在性自动探测）" ${_orbbec_default})
+
+# 自动探测为 OFF ⇒ 播报原因（否则「功能没了但没人知道」会重演）。
+if(NOT _bopai_default)
+    message(STATUS "HAL: 未找到 BoPai SDK（${_bopai_root}/lib/MultiCard.lib）→ USE_BOPAI 默认 OFF"
+                   "（仿真可用；真机运动卡不支持）")
+endif()
+if(NOT _orbbec_default)
+    message(STATUS "HAL: 未找到 Orbbec SDK（${_orbbec_root}/lib/OrbbecSDK.lib）→ USE_ORBBEC 默认 OFF"
+                   "（simulation.cameraType 回落 SimCamera）")
+endif()
+
+# 显式要求 ON 而 SDK 缺失 ⇒ 立刻在 **configure 期**给出可读错误，
+# 而不是拖到链接期报一句「无法打开 MultiCard.lib / OrbbecSDK.lib」。
+if(USE_BOPAI AND NOT _bopai_default)
+    message(FATAL_ERROR
+        "USE_BOPAI=ON 但未找到 BoPai SDK：\n"
+        "  需要 ${_bopai_root}/lib/MultiCard.lib 与 ${_bopai_root}/include/\n"
+        "  请把 SDK 放到 3rdparty/bopai/，或改用 -DUSE_BOPAI=OFF 构建仿真版。")
+endif()
+if(USE_ORBBEC AND NOT _orbbec_default)
+    message(FATAL_ERROR
+        "USE_ORBBEC=ON 但未找到 Orbbec SDK：\n"
+        "  需要 ${_orbbec_root}/lib/OrbbecSDK.lib 与 ${_orbbec_root}/include/\n"
+        "  请把 SDK 放到 3rdparty/orbbec/，或改用 -DUSE_ORBBEC=OFF 构建仿真版。")
+endif()
 
 set(HAL_SOURCES
     motioncard/SimCard.cpp

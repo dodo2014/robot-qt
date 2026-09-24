@@ -29,7 +29,7 @@ CreamPuffRobot/
    │  │  └─ HALFactory        运行时字符串注册工厂
    │  ├─ motioncard/       BoPaiCard(真机网口,MC_*)、SimCard(仿真,脉冲域软限位)
    │  ├─ servo/            XRServo(FashionStar 0x4C12/0x1C05 协议,共享串口句柄+引用计数)、SimServo
-   │  ├─ camera/           SimCamera(测试图案)、OrbbecCamera(真机 Orbbec Gemini 336，USE_ORBBEC 开关，默认 OFF)、
+   │  ├─ camera/           SimCamera(测试图案)、OrbbecCamera(真机 Orbbec Gemini 336，USE_ORBBEC 开关，默认按 SDK 存在性自动探测)、
    │  │                    CameraCaptureWorker(采集 QThread)、FrameSaver(存储 QThread)、
    │  │                    FrameConverter(RGB/深度渲染+叠加)、CameraManager(相机生命周期 + communication.camera.* 读取点)、
    │  │                    SimVision(目标规格)

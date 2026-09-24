@@ -17,8 +17,25 @@ struct CameraIntrinsics
 struct CameraFrame
 {
     int64_t timestamp = 0;
-    int width  = 0;
-    int height = 0;
+    int width  = 0;   // 彩色宽（`colorData` 的宽）
+    int height = 0;   // 彩色高
+
+    // 深度图尺寸（TR-116，2026-09-23）。
+    //
+    // **`depthData` 与彩色图不保证同分辨率**：D2C 软对齐开启时 `ob::Align(OB_STREAM_COLOR)`
+    // 会把深度重采样到**彩色**分辨率（此时与 `width`/`height` 相同）；**关闭时深度保持
+    // 原生分辨率**（常用档 848×480，而彩色 1280×720）。
+    //
+    // 0 = 「与 `width`/`height` 相同」——`SimCamera` 正是此情形（彩色/深度同尺寸），
+    // 故无需改动；`OrbbecCamera` 显式填真实值。
+    //
+    // ⚠ 消费 `depthData` 前**必须**按本字段（含 0 回落）校验
+    // `depthData.size() >= depthWidth * depthHeight`。改造前无此校验、直接用
+    // `width` 索引 `depthData`，D2C 关闭时越界读约 2 MB → 0xC0000005
+    // （用例 11.35 实测崩溃；越界点 `FrameConverter::DepthToQImage` 与 `SimAlgo::Detect`）。
+    int depthWidth  = 0;
+    int depthHeight = 0;
+
     std::vector<uint8_t> colorData;   // RGB/BGR
     std::vector<float>   depthData;   // 深度图 (mm)
     std::vector<float>   pointCloud;  // 可选: XYZ 点云
@@ -26,7 +43,10 @@ struct CameraFrame
 
 // 帧在信号链上以**共享只读指针**传递（P2，2026-09-22）。
 //
-// 一帧 = `colorData`(1920×1080×3) + `depthData`(1920×1080 float) ≈ **14.5 MB**。
+// 一帧 = `colorData`(彩色 w×h×3) + `depthData`(深度 dw×dh×4)，**两者分辨率可以不同**
+// （见 `CameraFrame::depthWidth`）。按常用档 彩色 1280×720 + 深度 848×480 计
+// ≈ 2.64 + 1.55 = **4.2 MB**；若 D2C 对齐开启则深度被重采样到彩色分辨率（1280×720）
+// ⇒ ≈ 2.64 + 3.52 = **6.2 MB**。
 // 值语义下这笔账要付两次：① 采集线程 `emit` → UI 线程是跨线程 queued connection，
 // Qt 会把实参**深拷贝**进事件队列；② 订阅者缓存（`VisionTestPage::latestFrame_`）
 // 再深拷贝一次 ⇒ 15 fps 下约 **435 MB/s** 的 UI 线程内存搬运，是视觉页卡顿的一大来源。

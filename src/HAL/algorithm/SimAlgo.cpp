@@ -104,9 +104,28 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame, const Algorith
         res.height = a.maxY - a.minY + 1;
 
         double z = 0.0;
-        if (!frame.depthData.empty() && res.pixelV >= 0 && res.pixelV < h &&
+        // 深度取样（TR-116，2026-09-23）：`res.pixelU/pixelV` 是**彩色**坐标系，而
+        // `depthData` 可能是**深度**坐标系——D2C 关闭时深度保持原生分辨率
+        // （常用档 848×480 vs 彩色 1280×720）。改造前直接用彩色 `w`/`h` 索引深度数组
+        // ⇒ 越界读（与 `FrameConverter::DepthToQImage` 同根因、同次崩溃）。
+        const int dw = (frame.depthWidth  > 0) ? frame.depthWidth  : w;
+        const int dh = (frame.depthHeight > 0) ? frame.depthHeight : h;
+        const bool depthUsable = !frame.depthData.empty() &&
+                                 frame.depthData.size() >=
+                                     static_cast<size_t>(dw) * static_cast<size_t>(dh);
+        if (depthUsable && res.pixelV >= 0 && res.pixelV < h &&
             res.pixelU >= 0 && res.pixelU < w) {
-            float d = frame.depthData[static_cast<size_t>(res.pixelV) * w + res.pixelU];
+            // 彩色像素 → 深度像素：比例最近邻。D2C 开启时 dw==w && dh==h，退化为恒等映射；
+            // 关闭时是**无外参标定下的近似**——两传感器视场不同，像素级对应关系并不严格
+            // 成立，故 z 只作参考。首次遇到时打一条 warn 留痕，不静默。
+            const int du = std::min(res.pixelU * dw / w, dw - 1);
+            const int dv = std::min(res.pixelV * dh / h, dh - 1);
+            if ((dw != w || dh != h) && !depthAlignWarned_) {
+                depthAlignWarned_ = true;
+                SPDLOG_WARN("[SimAlgo] 深度 {}x{} 与彩色 {}x{} 分辨率不同（D2C 关闭）→ "
+                            "深度取样按比例近似，z 仅作参考（非像素级对应）", dw, dh, w, h);
+            }
+            float d = frame.depthData[static_cast<size_t>(dv) * dw + du];
             if (d > 0.0f && d >= zMin && d <= zMax) {
                 z = d;
             } else if (d > 0.0f) {

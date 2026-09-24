@@ -10,6 +10,12 @@ QImage ColorToQImage(const CameraFrame& frame)
 {
     if (frame.colorData.empty() || frame.width <= 0 || frame.height <= 0)
         return {};
+    // 尺寸守卫（TR-116，2026-09-23）：`colorData` 必须容得下 `width×height×3`，否则下面的
+    // `QImage` 会按该尺寸读越界。与 `DepthToQImage` 的同类守卫**对称**——后者缺守卫正是
+    // 用例 11.35 崩溃（`0xC0000005`）的根因，彩色这条路结构完全相同，只是尚未被触发。
+    if (frame.colorData.size() <
+        static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) * 3u)
+        return {};
 
     int bytesPerLine = frame.width * 3;
     return QImage(frame.colorData.data(),
@@ -21,6 +27,11 @@ QImage ColorToQImage(const CameraFrame& frame)
 QImage ColorToQImageView(const CameraFrame& frame)
 {
     if (frame.colorData.empty() || frame.width <= 0 || frame.height <= 0)
+        return {};
+    // 同 `ColorToQImage` 的尺寸守卫；**零拷贝视图尤其要挡**——它不复制，越界读的是
+    // `frame.colorData` 的堆内存。
+    if (frame.colorData.size() <
+        static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) * 3u)
         return {};
 
     // 与 `ColorToQImage` 同参，只去掉末尾的 `.copy()`——走 `const uchar*` 重载，
@@ -67,11 +78,20 @@ QRgb GradientColor(float t)
 
 QImage DepthToQImage(const CameraFrame& frame, float depthMin, float depthMax, const QSize& targetSize)
 {
-    if (frame.depthData.empty() || frame.width <= 0 || frame.height <= 0)
+    // 深度图**自带尺寸**（TR-116，2026-09-23）。改造前这里用 `frame.width/height`（彩色尺寸）
+    // 索引 `depthData`——D2C 开启时二者相同（`ob::Align` 把深度重采样到彩色分辨率）故一直
+    // 没暴露；**D2C 关闭时深度是原生分辨率**（常用档 848×480 vs 彩色 1280×720）⇒
+    // 按彩色宽度跨行，最大索引 719×1280+1279 = 921599 远超 `depthData.size() = 407040`
+    // ⇒ 越界读约 2 MB ⇒ 0xC0000005（用例 11.35 实测，崩溃偏移 `+0x387` 正落在下方 `row[sx]`）。
+    const int w = (frame.depthWidth  > 0) ? frame.depthWidth  : frame.width;
+    const int h = (frame.depthHeight > 0) ? frame.depthHeight : frame.height;
+    if (frame.depthData.empty() || w <= 0 || h <= 0)
+        return {};
+    // 防御性校验：数据量不足即视为「无有效深度图」——宁可不出图也不越界。
+    // 将来若有新的相机实现忘了填 `depthWidth/depthHeight`，这里只降级、不崩溃。
+    if (frame.depthData.size() < static_cast<size_t>(w) * static_cast<size_t>(h))
         return {};
 
-    const int w = frame.width;
-    const int h = frame.height;
     const float range = (depthMax > depthMin) ? (depthMax - depthMin) : 1.0f;
 
     // P3-2（2026-09-22）：`targetSize` 有效且确实比源小 → 直接按最近邻步长采样产出目标

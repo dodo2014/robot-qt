@@ -1,0 +1,235 @@
+== crash addr=00007FF76F6E14B7 code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [0] 00007FF76F605F23 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:64)
+  [1] 00007FFDEAB2C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFDED3D5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFDED3BCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFDED3D28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFDED382554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFDED3D13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [8] 00007FF76F80D95E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::BuildDepthImage+0x7e  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1097)
+  [9] 00007FF76F80D219 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::RenderTiles+0x5b9  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1082)
+  [10] 00007FF76F803E24 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::OnRenderTick+0x34  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1000)
+  [11] 00007FF76F828B2A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1>::operator()+0x4a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [12] 00007FF76F823D59 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [13] 00007FF76F82A320 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [14] 00007FF76F82376D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl VisionTestPage::*)(void)>::call<QtPrivate::List<>,void>+0x3d  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [15] 00007FF76F82BB5E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl VisionTestPage::*)(void),QtPrivate::List<>,void>::impl+0xbe  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [16] 00007FFCB52C3CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [17] 00007FFCB557CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [18] 00007FFCB5561D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [19] 00007FFCB55BE414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [20] 00007FFCB55BAA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [21] 00007FFCB55BB055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [22] 00007FFCB556431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [23] 00007FFD22B4A5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [24] 00007FFD22B47AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [25] 00007FFCB548DF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [26] 00007FFCB548BA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [27] 00007FFCB59D7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [28] 00007FFCB59D4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [29] 00007FFDECE9EF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [30] 00007FFDECE9E684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [31] 00007FFCB59D4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [32] 00007FFCB818A8BB [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0xa17a35
+  [33] 00007FFCB54AFE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [34] 00007FFCB54B0144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [35] 00007FFCB548B7E4 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23d93e
+  [36] 00007FFCB793089A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0x1bda14
+  [37] 00007FFD22B447FC [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x31857
+  [38] 00007FF76F607E2D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  main+0xa0d  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:260)
+  [39] 00007FF76F899829 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  invoke_main+0x39  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:79)
+  [40] 00007FF76F899712 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main_seh+0x132  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288)
+  [41] 00007FF76F8995CE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:331)
+  [42] 00007FF76F8998BE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  mainCRTStartup+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp:17)
+  [43] 00007FFDEC867374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [44] 00007FFDED37CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
+== crash addr=00007FF76F6E14B7 code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [0] 00007FF76F605F23 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:64)
+  [1] 00007FFDEAB2C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFDED3D5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFDED3BCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFDED3D28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFDED382554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFDED3D13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [8] 00007FF76F80D95E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::BuildDepthImage+0x7e  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1097)
+  [9] 00007FF76F80D219 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::RenderTiles+0x5b9  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1082)
+  [10] 00007FF76F803E24 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::OnRenderTick+0x34  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1000)
+  [11] 00007FF76F828B2A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1>::operator()+0x4a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [12] 00007FF76F823D59 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [13] 00007FF76F82A320 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [14] 00007FF76F82376D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl VisionTestPage::*)(void)>::call<QtPrivate::List<>,void>+0x3d  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [15] 00007FF76F82BB5E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl VisionTestPage::*)(void),QtPrivate::List<>,void>::impl+0xbe  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [16] 00007FFCAAAE3CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [17] 00007FFCAAD9CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [18] 00007FFCAAD81D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [19] 00007FFCAADDE414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [20] 00007FFCAADDAA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [21] 00007FFCAADDB055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [22] 00007FFCAAD8431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [23] 00007FFD222BA5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [24] 00007FFD222B7AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [25] 00007FFCAACADF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [26] 00007FFCAACABA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [27] 00007FFCAB1F7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [28] 00007FFCAB1F4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [29] 00007FFDECE9EF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [30] 00007FFDECE9E684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [31] 00007FFCAB1F4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [32] 00007FFCB58BA8BB [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0xa17a35
+  [33] 00007FFCAACCFE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [34] 00007FFCAACD0144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [35] 00007FFCAACAB7E4 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23d93e
+  [36] 00007FFCB506089A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0x1bda14
+  [37] 00007FFD222B47FC [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x31857
+  [38] 00007FF76F607E2D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  main+0xa0d  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:260)
+  [39] 00007FF76F899829 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  invoke_main+0x39  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:79)
+  [40] 00007FF76F899712 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main_seh+0x132  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288)
+  [41] 00007FF76F8995CE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:331)
+  [42] 00007FF76F8998BE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  mainCRTStartup+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp:17)
+  [43] 00007FFDEC867374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [44] 00007FFDED37CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
+== crash addr=00007FF76F6E14B7 code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [0] 00007FF76F605F23 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:64)
+  [1] 00007FFDEAB2C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFDED3D5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFDED3BCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFDED3D28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFDED382554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFDED3D13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [8] 00007FF76F80D95E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::BuildDepthImage+0x7e  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1097)
+  [9] 00007FF76F80D219 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::RenderTiles+0x5b9  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1082)
+  [10] 00007FF76F803E24 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::OnRenderTick+0x34  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1000)
+  [11] 00007FF76F828B2A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1>::operator()+0x4a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [12] 00007FF76F823D59 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [13] 00007FF76F82A320 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [14] 00007FF76F82376D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl VisionTestPage::*)(void)>::call<QtPrivate::List<>,void>+0x3d  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [15] 00007FF76F82BB5E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl VisionTestPage::*)(void),QtPrivate::List<>,void>::impl+0xbe  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [16] 00007FFCAAAE3CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [17] 00007FFCAAD9CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [18] 00007FFCAAD81D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [19] 00007FFCAADDE414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [20] 00007FFCAADDAA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [21] 00007FFCAADDB055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [22] 00007FFCAAD8431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [23] 00007FFD228FA5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [24] 00007FFD228F7AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [25] 00007FFCAACADF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [26] 00007FFCAACABA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [27] 00007FFCAB1F7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [28] 00007FFCAB1F4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [29] 00007FFDECE9EF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [30] 00007FFDECE9E684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [31] 00007FFCAB1F4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [32] 00007FFCB58BA8BB [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0xa17a35
+  [33] 00007FFCAACCFE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [34] 00007FFCAACD0144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [35] 00007FFCAACAB7E4 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23d93e
+  [36] 00007FFCB506089A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0x1bda14
+  [37] 00007FFD228F47FC [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x31857
+  [38] 00007FF76F607E2D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  main+0xa0d  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:260)
+  [39] 00007FF76F899829 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  invoke_main+0x39  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:79)
+  [40] 00007FF76F899712 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main_seh+0x132  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288)
+  [41] 00007FF76F8995CE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:331)
+  [42] 00007FF76F8998BE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  mainCRTStartup+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp:17)
+  [43] 00007FFDEC867374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [44] 00007FFDED37CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
+== crash addr=00007FF76F6E14B7 code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [0] 00007FF76F605F23 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:64)
+  [1] 00007FFDEAB2C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFDED3D5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFDED3BCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFDED3D28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFDED382554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFDED3D13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [8] 00007FF76F80D95E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::BuildDepthImage+0x7e  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1097)
+  [9] 00007FF76F80D219 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::RenderTiles+0x5b9  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1082)
+  [10] 00007FF76F803E24 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::OnRenderTick+0x34  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1000)
+  [11] 00007FF76F828B2A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1>::operator()+0x4a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [12] 00007FF76F823D59 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [13] 00007FF76F82A320 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [14] 00007FF76F82376D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl VisionTestPage::*)(void)>::call<QtPrivate::List<>,void>+0x3d  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [15] 00007FF76F82BB5E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl VisionTestPage::*)(void),QtPrivate::List<>,void>::impl+0xbe  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [16] 00007FFCB52C3CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [17] 00007FFCB557CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [18] 00007FFCB5561D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [19] 00007FFCB55BE414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [20] 00007FFCB55BAA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [21] 00007FFCB55BB055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [22] 00007FFCB556431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [23] 00007FFD22B4A5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [24] 00007FFD22B47AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [25] 00007FFCB548DF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [26] 00007FFCB548BA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [27] 00007FFCB59D7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [28] 00007FFCB59D4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [29] 00007FFDECE9EF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [30] 00007FFDECE9E684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [31] 00007FFCB59D4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [32] 00007FFCB818A8BB [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0xa17a35
+  [33] 00007FFCB54AFE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [34] 00007FFCB54B0144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [35] 00007FFCB548B7E4 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23d93e
+  [36] 00007FFCB793089A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0x1bda14
+  [37] 00007FFD22B447FC [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x31857
+  [38] 00007FF76F607E2D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  main+0xa0d  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:260)
+  [39] 00007FF76F899829 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  invoke_main+0x39  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:79)
+  [40] 00007FF76F899712 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main_seh+0x132  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288)
+  [41] 00007FF76F8995CE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:331)
+  [42] 00007FF76F8998BE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  mainCRTStartup+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp:17)
+  [43] 00007FFDEC867374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [44] 00007FFDED37CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
+== crash addr=00007FF76F6E14B7 code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [0] 00007FF76F605F23 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:64)
+  [1] 00007FFDEAB2C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFDED3D5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFDED3BCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFDED3D28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFDED382554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFDED3D13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76F6E14B7 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  FrameConverter::DepthToQImage+0x387  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\FrameConverter.cpp:96)
+  [8] 00007FF76F80D95E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::BuildDepthImage+0x7e  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1097)
+  [9] 00007FF76F80D219 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::RenderTiles+0x5b9  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1082)
+  [10] 00007FF76F803E24 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  VisionTestPage::OnRenderTick+0x34  (D:\workspace\projects\CreamPuffRobot\src\UI\VisionTestPage.cpp:1000)
+  [11] 00007FF76F828B2A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1>::operator()+0x4a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [12] 00007FF76F823D59 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [13] 00007FF76F82A320 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl VisionTestPage::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [14] 00007FF76F82376D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl VisionTestPage::*)(void)>::call<QtPrivate::List<>,void>+0x3d  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [15] 00007FF76F82BB5E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl VisionTestPage::*)(void),QtPrivate::List<>,void>::impl+0xbe  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [16] 00007FFCB52C3CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [17] 00007FFCB557CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [18] 00007FFCB5561D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [19] 00007FFCB55BE414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [20] 00007FFCB55BAA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [21] 00007FFCB55BB055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [22] 00007FFCB556431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [23] 00007FFD22B4A5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [24] 00007FFD22B47AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [25] 00007FFCB548DF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [26] 00007FFCB548BA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [27] 00007FFCB59D7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [28] 00007FFCB59D4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [29] 00007FFDECE9EF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [30] 00007FFDECE9E684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [31] 00007FFCB59D4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [32] 00007FFCB818A8BB [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0xa17a35
+  [33] 00007FFCB54AFE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [34] 00007FFCB54B0144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [35] 00007FFCB548B7E4 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23d93e
+  [36] 00007FFCB793089A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Guid.dll]  QTextCharFormat::setFontLetterSpacingType+0x1bda14
+  [37] 00007FFD22B447FC [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x31857
+  [38] 00007FF76F607E2D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  main+0xa0d  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:260)
+  [39] 00007FF76F899829 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  invoke_main+0x39  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:79)
+  [40] 00007FF76F899712 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main_seh+0x132  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288)
+  [41] 00007FF76F8995CE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  __scrt_common_main+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:331)
+  [42] 00007FF76F8998BE [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  mainCRTStartup+0xe  (D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_main.cpp:17)
+  [43] 00007FFDEC867374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [44] 00007FFDED37CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
