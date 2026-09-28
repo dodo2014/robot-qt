@@ -143,6 +143,11 @@ CMake Error at vcpkg/scripts/buildsystems/vcpkg.cmake:984 (message):
   （实测 `nlohmann_json` / `OpenCV 4.12.0` / `spdlog` / `Eigen3 5.0.1` 全部 found）。
 - **用完请改回 `ON`**，保持与开发机一致：
   `sed -i 's/^VCPKG_MANIFEST_INSTALL:BOOL=OFF/VCPKG_MANIFEST_INSTALL:BOOL=ON/' out/build/<cfg>/CMakeCache.txt`
+- ⚠ **「改回 `ON`」这一步会重新武装这个陷阱**（2026-09-28 实测）：`sed` 改 `CMakeCache.txt` ⇒ 它比 `build.ninja` 新 ⇒ **下一次编译必然再触发一次 `[0/1] Re-running CMake`**（沙箱内即再失败一次）。
+  `touch build.ninja` **不能**消除——ninja 比的是**记录的** mtime，`-d explain` 会明说：
+  `ninja explain: recorded mtime of build.ninja older than most recent input CMakeCache.txt`。
+  更要命的是**失败的 configure 仍会重写 `CMakeCache.txt`**，于是每跑一次就再武装一次，看起来像「永远修不好」。
+  ⇒ **沙箱内每次 Release 编译前都先跑一遍本节绕法**，别指望它自愈；开发机（无沙箱）无此问题。
 - **Debug 与 Release 各自独立**：两边都改过 `CMakeLists.txt` 时，两个 build 目录都要各来一次。
 
 ## 4. Sim 冒烟验证（编译后必跑）

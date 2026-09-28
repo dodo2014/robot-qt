@@ -217,7 +217,15 @@ int ProcessManager::normalizeActionIds(SchemeData& scheme)
         flattenInto(flat, n.children);
         SPDLOG_WARN("[Process] Group '{}' had nested group(s): flattened {} child node(s) -> {}",
                     n.name.toStdString(), n.children.size(), flat.size());
-        changed += n.children.size() - flat.size();
+        // 计数口径 = **被改写的节点数**（见 ProcessManager.h 的契约）：本外层分组的 `children`
+        // 被整体替换 ⇒ 记 1 个节点被改写，与下方「每改写一个节点 ++changed」同口径，
+        // 也与 :437 日志里的 `{} of {} node(s)`（按一级节点计数）自洽。
+        // ⚠ 不可写成 `n.children.size() - flat.size()`：那是「直接子节点数 − 拉平后叶子数」，
+        // 内层分组**非空**时给出**负值**（1 个内层含 2 个动作 ⇒ `1 − 2 = −1`），
+        // 与真实的编号改写相抵后会让 `if (fixed > 0)` 静默吞掉 `normalized` 日志行
+        // （2026-09-28 阶段 13.6 的 A/B 实跑实证）；只有「内层分组为空」时它才恰好为正，
+        // 与直觉正好相反。回归覆盖见 tests/test_node_tree_check.cpp 的 T6 / T6b。
+        changed += 1;
         n.children = std::move(flat);
     }
 

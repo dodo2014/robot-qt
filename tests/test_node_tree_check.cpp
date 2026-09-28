@@ -260,16 +260,35 @@ void TestIdAllocationAndNormalize()
     }
 
     // 非法嵌套 → 拉平（内层分组节点丢弃，子节点上提）
+    // ⚠ **返回值必须一起断言**：本夹具 `[正常子, 内层(深子)]` 恰好让旧公式
+    // `children.size() - flat.size()` 贡献 `2 − 2 = 0`，只查树形**抓不到**符号错误
+    // （2026-09-28 实测：70 项全绿却漏掉了这条公式）。
     SchemeData g;
     g.schemeName = "T6";
     ActionData nested = makeGroup(1, "外层", {});
     nested.children.push_back(makeAction(2, "正常子", ActionType::Delay));
     nested.children.push_back(makeGroup(3, "内层", { makeAction(4, "深子", ActionType::Gripper) }));
     g.nodes.push_back(nested);
-    ProcessManager::normalizeActionIds(g);
+    const int fixedG = ProcessManager::normalizeActionIds(g);
+    checkEq(fixedG, 1, "拉平记「1 个节点被改写」（T6 夹具旧公式给 0）");
     checkEq(g.nodes[0].children.size(), 2, "非法嵌套被拉平（内层分组的子节点上提）");
     check(!g.nodes[0].children[1].isGroup(), "拉平后不再有分组子节点");
     checkEqStr(g.nodes[0].children[1].name, QStringLiteral("深子"), "上提的是内层分组的子节点");
+
+    // T6b：外层**只有** 1 个子节点（就是内层分组）、内层含 2 个动作
+    // ⇒ 旧公式 `1 − 2 = -1`（**负值**），会与真实的编号改写相抵、吞掉 `normalized` 日志行。
+    // 这是阶段 13.6 实跑用过的形状，必须留作回归。
+    SchemeData g2;
+    g2.schemeName = "T6b";
+    ActionData outer2 = makeGroup(1, "外层", {});
+    outer2.children.push_back(makeGroup(2, "内层", { makeAction(3, "A", ActionType::Delay),
+                                                     makeAction(4, "B", ActionType::Delay) }));
+    g2.nodes.push_back(outer2);
+    const int fixedG2 = ProcessManager::normalizeActionIds(g2);
+    checkEq(fixedG2, 1, "拉平返回值不得为负（T6b 夹具旧公式给 -1）");
+    checkEq(g2.nodes[0].children.size(), 2, "内层 2 个动作全部上提");
+    check(!g2.nodes[0].children[0].isGroup() && !g2.nodes[0].children[1].isGroup(),
+          "拉平后外层不再有分组子节点");
 }
 
 // ============================================================ 3) 查找

@@ -228,6 +228,13 @@ ninja -C out/build/x64-Debug   test_camera_check test_kinematics_check test_node
       任一文件比 `build.ninja` 新即触发；且 Debug / Release **各自独立判定**——实测同一次「只改两个 `.cpp`」的改动，
       Debug 直编通过、Release 却在 `[0/1] Re-running CMake...` 后失败。**判据**：ninja 输出首行出现
       `[0/1] Re-running CMake...` 即为触发，**与是否改过 `CMakeLists.txt` 无关**，别按「我没动 CMake」就排除此因。
+    - ⚠ **2026-09-28 再补：`CMakeCache.txt` 本身就是最常被忽略的那个输入，且它「改回 `ON`」会重新武装陷阱**。
+      §3.5 绕法用完要把 `VCPKG_MANIFEST_INSTALL` 改回 `ON`，而 `sed` 一改 ⇒ cache 比 `build.ninja` 新 ⇒
+      下次编译必再触发一次重配；**失败的 configure 还会再写一次 cache**，于是循环自维持。
+      **`touch build.ninja` 无效**——ninja 比的是**记录的** mtime，`-d explain` 明说
+      `recorded mtime of build.ninja older than most recent input CMakeCache.txt`。
+      ⇒ **诊断口诀**：`ninja -C <build> -n -d explain <target> 2>&1 | grep -i explain`，它直接点名是哪个输入更新的；
+      **结论**：沙箱内 Release 每次编译前都先跑一遍 §3.5 绕法，别指望自愈。
   - **探测逻辑可离线自测**（不必真去删 SDK）：把 `src/HAL/CMakeLists.txt` 的判定块抽成 `.cmake` 文件，
     用 `cmake -P` 配 `set(CMAKE_SOURCE_DIR "<真实根>")` / `set(CMAKE_SOURCE_DIR "<不存在根>")` 跑正反两分支
     （实测 → `ON/ON` 与 `OFF/OFF`）；守卫同理，`message(FATAL_ERROR)` 在 `-P` 下会以 rc=1 中止。
