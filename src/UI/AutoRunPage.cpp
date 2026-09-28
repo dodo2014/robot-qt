@@ -868,14 +868,19 @@ void AutoRunPage::OnError(const QString& message)
     SetHint(QStringLiteral("执行出错：%1（清除报警后可重新启动）").arg(message), QStringLiteral("#ff5e6b"));
 }
 
-// 循环进度（TR-091）：每轮开始时由引擎发一次；index 从 1 起，total < 0 = 无限循环。
+// 循环进度（TR-091）：每轮开始时由引擎发一次；index 从 1 起。
+// total 三态：== 1 单轮 / > 1 指定次数 / < 0 无限循环——文案与 `ResetCycleLabel()` 一一对应。
+// ⚠ 单轮必须走「单轮」分支：否则启动后会从 `ResetCycleLabel()` 的「单轮」跳成「循环 1/1」。
 // 终态不清空（便于取证），下次启动前由 ResetCycleLabel() 复位。
 void AutoRunPage::OnCycleChanged(int index, int total)
 {
     if (!m_cycleLabel) return;
-    m_cycleLabel->setText(total > 0
-                              ? QStringLiteral("循环 %1/%2").arg(index).arg(total)
-                              : QStringLiteral("循环 %1/∞").arg(index));
+    if (total == 1)
+        m_cycleLabel->setText(QStringLiteral("单轮"));
+    else if (total > 0)
+        m_cycleLabel->setText(QStringLiteral("循环 %1/%2").arg(index).arg(total));
+    else
+        m_cycleLabel->setText(QStringLiteral("循环 %1/∞").arg(index));
 }
 
 // ---- 循环生产控件（TR-091）：读 config / 写 config / 组装 LoopConfig ----

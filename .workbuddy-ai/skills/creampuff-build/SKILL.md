@@ -219,10 +219,15 @@ ninja -C out/build/x64-Debug   test_camera_check test_kinematics_check test_node
   - **判据**：`grep -E "^USE_(BOPAI|ORBBEC):" out/build/<cfg>/CMakeCache.txt` 应为 `ON`（本机两 SDK 都在）；
     configure 输出里**不应**出现 `HAL: 未找到 … SDK`。
   - ⚠ 探测值写进 cache ⇒ **后来才装 SDK 必须重新 configure**；显式 `-DUSE_XXX=ON` 而 SDK 缺失会 `FATAL_ERROR`（含缺失路径）。
-  - ⚠ **改 `src/HAL/CMakeLists.txt` 会触发 reconfigure**：Debug 侧通常能过，**Release 侧沙箱内 `vcpkg install` 会失败**
+  - ⚠ **`CMakeLists.txt` 变更会触发 reconfigure（但不限于此）**：Debug 侧通常能过，**Release 侧沙箱内 `vcpkg install` 会失败**
     （`error: calling CreateFileW stdin failed with 231 (All pipe instances are busy.)`，解 7z 时；根因是它还要下自己的 cmake/7zip）
     ⇒ 用 `cmake --regenerate-during-build -DVCPKG_MANIFEST_INSTALL=OFF -S<src> -B<build>` 绕，
     **用完把该 cache 值改回 `ON`**——直接文本改 `CMakeCache.txt` 即可，重跑 configure 反而会再触发一次 install。
+    - ⚠ **2026-09-28 补充：没改任何 `CMakeLists.txt` 也会触发**。`build.ninja` 的 `RERUN_CMAKE` 依赖里含
+      **整套 Qt cmake 模块**（`D:/Qt/6.11.1/msvc2022_64/lib/cmake/Qt6*/**.cmake`）与 **vcpkg `share/**/*.cmake`**，
+      任一文件比 `build.ninja` 新即触发；且 Debug / Release **各自独立判定**——实测同一次「只改两个 `.cpp`」的改动，
+      Debug 直编通过、Release 却在 `[0/1] Re-running CMake...` 后失败。**判据**：ninja 输出首行出现
+      `[0/1] Re-running CMake...` 即为触发，**与是否改过 `CMakeLists.txt` 无关**，别按「我没动 CMake」就排除此因。
   - **探测逻辑可离线自测**（不必真去删 SDK）：把 `src/HAL/CMakeLists.txt` 的判定块抽成 `.cmake` 文件，
     用 `cmake -P` 配 `set(CMAKE_SOURCE_DIR "<真实根>")` / `set(CMAKE_SOURCE_DIR "<不存在根>")` 跑正反两分支
     （实测 → `ON/ON` 与 `OFF/OFF`）；守卫同理，`message(FATAL_ERROR)` 在 `-P` 下会以 rc=1 中止。

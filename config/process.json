@@ -1,7 +1,7 @@
 {
     "schemes": [
         {
-            "nextActionId": 11,
+            "nextActionId": 15,
             "nodes": [
                 {
                     "delayMs": 0,
@@ -101,6 +101,28 @@
                     "threshold": 0.85,
                     "type": 1,
                     "visionType": "CCD"
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 9,
+                    "isGripperOpen": false,
+                    "name": "引导抓取",
+                    "nodeType": "action",
+                    "offsetZ": 20.0,
+                    "points": [],
+                    "sourceActionId": 3,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 5,
+                    "visionType": ""
                 },
                 {
                     "delayMs": 1000,
@@ -270,7 +292,7 @@
             "schemeName": "方案_1"
         },
         {
-            "nextActionId": 4,
+            "nextActionId": 11,
             "nodes": [
                 {
                     "delayMs": 0,
@@ -369,6 +391,72 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 3,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 4,
+                    "isGripperOpen": false,
+                    "name": "识别泡芙",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 1,
+                    "visionType": "CCD"
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 5,
+                    "isGripperOpen": false,
+                    "name": "引导定位",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "sourceActionId": 4,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 5,
+                    "visionType": ""
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 6,
+                    "isGripperOpen": false,
+                    "name": "抓取",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 4,
                     "visionType": ""
                 }
             ],

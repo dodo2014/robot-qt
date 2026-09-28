@@ -220,24 +220,24 @@
     },
     "production": {
         "loop": {
-            "count": 100,
+            "count": 3,
             "mode": 1,
             "returnToSafePos": true
         }
     },
     "simulation": {
         "algorithmType": "SimAlgo",
-        "cameraType": "OrbbecCamera",
+        "cameraType": "SimCamera",
         "enabled": true,
-        "motionCardType": "Bopai",
-        "servoType": "XRServo"
+        "motionCardType": "SimCard",
+        "servoType": "SimServo"
     },
     "tcpCalibration": {
         "handEyeMatrix": [
             1,
             0,
             0,
-            12.3,
+            180,
             0,
             1,
             0,
@@ -254,6 +254,9 @@
         "toolOffsetX": 53.0,
         "toolOffsetY": 0.0,
         "toolOffsetZ": -130.0
+    },
+    "ui": {
+        "autoRunStreamPreview": false
     },
     "version": "1.0.0",
     "vision": {

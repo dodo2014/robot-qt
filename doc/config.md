@@ -31,7 +31,7 @@
 | `enabled` | bool | 总开关 |
 | `motionCardType` | `SimCard` / `Bopai` / `ZMotion` | 运动控制卡实现名 |
 | `servoType` | `SimServo` / `XRServo` | 串口舵机实现名 |
-| `cameraType` | `SimCamera` / ... | 相机实现名（预留） |
+| `cameraType` | `SimCamera` / `OrbbecCamera`... | 相机实现名（预留） |
 | `algorithmType` | `SimAlgo` / ... | 视觉算法实现名（预留） |
 
 当前已注册实现：`SimCard`（运动卡仿真）、`SimServo`（舵机仿真）、`Bopai`（博派运动卡）、`XRServo`（XR 串口舵机）。`ZMotion`/`Leisai` 为预留品牌（SDK 目录已建）。

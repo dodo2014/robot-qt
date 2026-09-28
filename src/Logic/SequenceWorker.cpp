@@ -584,7 +584,13 @@ void SequenceWorker::StartSingleExecution(int nodeId)
 bool SequenceWorker::ExecuteActions()
 {
     const LoopConfig loop = impl_->loopCfg;   // 值快照：循环期间不受外部影响
-    const int total = (loop.mode == LoopConfig::Mode::Count) ? qMax(1, loop.count) : -1;
+    // total 语义：> 0 = 有限轮数（`Single` 即 1 轮），-1 = 无限循环。
+    // ⚠ `Single` **不可给 -1**：下游（本轮日志文案、`AutoRunPage::OnCycleChanged`）只看得到
+    // total，无法区分 `Single` 与 `Infinite`，给 -1 会把「单轮」渲染成「循环 1/∞」——
+    // 操作员会误以为在无限循环，实际跑完 1 轮就结束。
+    const int total = (loop.mode == LoopConfig::Mode::Infinite)
+                          ? -1
+                          : (loop.mode == LoopConfig::Mode::Single ? 1 : qMax(1, loop.count));
 
     for (int cycle = 1; ; ++cycle) {
         if (impl_->cancel.load()) {                            // ① 轮边界 cancel

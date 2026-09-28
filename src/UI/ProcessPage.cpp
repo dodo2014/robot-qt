@@ -1008,9 +1008,16 @@ void ProcessPage::RefreshGuideSourceCombo(int selectedId)
     m_guideSourceCombo->blockSignals(true);
     m_guideSourceCombo->clear();
 
+    // 首项为「未选择」占位（userData = 0，与 `ActionData::sourceActionId = 0` 的「未设置」语义一致）。
+    // ⚠ 不可省：`QComboBox::addItem` 会把**首个加入的项**自动置为 current，缺了占位项，新建
+    // 「视觉引导」动作时下拉会**静默预选第一个识别动作**——「不选引用」这一状态在 UI 上无从构造，
+    // 于是 `UpdateGuidePreview` 的黄字分支与 `OnSaveAction` 的 `src <= 0` 弹窗分支**永远走不到**，
+    // 编辑期校验（§4.3 / 用例 12.8、12.17①）也就无法验证。
+    m_guideSourceCombo->addItem(QStringLiteral("（未选择）"), QVariant(0));
+
     const auto& schemes = ProcessManager::instance().schemes();
     if (m_currentSchemeIdx >= 0 && m_currentSchemeIdx < schemes.size()) {
-        // 只列本方案的「识别」动作（决策 2：不允许跨方案引用）。
+        // 占位项之外只列本方案的「识别」动作（决策 2：不允许跨方案引用）。
         // P6：动作可能位于分组内 —— 一级节点与分组子节点都要遍历，否则组内的识别动作选不到。
         const auto& nodes = schemes[m_currentSchemeIdx].nodes;
         for (const auto& n : nodes) {
@@ -2078,7 +2085,7 @@ void ProcessPage::OnSaveAction()
         break;
     case ActionType::VisionGuide: {
         // §4.3 编辑期校验：sourceActionId 必须指向**本方案内存在且类型为 Vision** 的动作。
-        // 跨方案引用不合法（决策 2）——下拉只列本方案动作，此处再校验一次防悬垂引用落盘。
+        // 跨方案引用不合法（决策 2）——下拉除「（未选择）」占位项外只列本方案动作，此处再校验一次防悬垂引用落盘。
         // P6：动作可能在分组内，故**全树扫描**（FindVisionNode）。
         const int src = m_guideSourceCombo->currentData().isValid()
                             ? m_guideSourceCombo->currentData().toInt()

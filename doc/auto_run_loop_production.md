@@ -164,6 +164,18 @@ bool SequenceWorker::ExecuteActions()
 }
 ```
 
+> ⚠ **2026-09-28 修订（TR-119）——`total` 取值语义已变**：`Single` 由 `-1` 改为 **`1`**，只有 `Infinite` 保持 `-1`：
+> ```cpp
+> const int total = (loop.mode == LoopConfig::Mode::Infinite)
+>                       ? -1
+>                       : (loop.mode == LoopConfig::Mode::Single ? 1 : qMax(1, loop.count));
+> ```
+> 原因：`total` 是下游**唯一可见**的轮数信息，`Single` 与 `Infinite` 共用 `-1` 时，本文 §八 的
+> `total > 0 ? number : "∞"` 渲染（日志 + `AutoRunPage::OnCycleChanged`）会把「单轮」写成「循环 1/∞」，
+> 操作员误以为在无限循环、实际跑完 1 轮即结束。同步改动 `AutoRunPage::OnCycleChanged` 为三态分支
+> （`== 1` → 「单轮」，与 `ResetCycleLabel()` 一致）。
+> ⚠ 另注：本文代码块中的 `impl_->loop` 为方案稿旧名，**现行成员名为 `impl_->loopCfg`**（见 `SequenceWorker.cpp`）。
+
 - `ExecuteOnce()` = 现 `ExecuteActions` 主体**原样搬迁**（cancel 检查 / PauseGate / currentIndex / actionStarted / 失败→Fault 锁存 / 单步挂起），**仅动作调用点一处**改为 `ExecuteActionWithRetry(action, i)`（见 §4.1 末注），其余一行不改。
 - `RunSequence` 增量：`impl_->loop = loop; cycleIndex = 0;` + **主线程捕获安全位数值**（`safePos.enabled` 为真时读 j1/j2/z/r 存 Impl），规避 worker 读 config。注意 `RunSequence` 现有重置段（`:169-181`）**不含** `stepMode`（TR-076），新增的 `loop`/`cycleIndex` 属"会话级状态"，与本段其余项同列清空即可。
 - `RunSingleAction`（:191-232）与 `ClearFault`（:370-381）增量清 `loop` / `cycleIndex`（与既有清 `currentIndex`、`singleSession` 同列）。

@@ -81,7 +81,7 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 
 | 时机 | 规则 | 落地（2026-09-20，TR-101） |
 | :--- | :--- | :--- |
-| 编辑期 | `sourceActionId` 必须指向**存在且类型为 `Vision`** 的动作，否则提示并拒绝保存（`ProcessPage::OnSaveAction`） | ✅ `OnSaveAction` 的 `VisionGuide` 分支：编号须在**本方案内**存在且类型为 `Vision`，否则 `QMessageBox::warning` + `return`（**不落盘**）；引用下拉对**悬垂引用显式列出 `#N（已不存在）`**，不静默落到第一个合法项 |
+| 编辑期 | `sourceActionId` 必须指向**存在且类型为 `Vision`** 的动作，否则提示并拒绝保存（`ProcessPage::OnSaveAction`） | ✅ `OnSaveAction` 的 `VisionGuide` 分支：编号须在**本方案内**存在且类型为 `Vision`，否则 `QMessageBox::warning` + `return`（**不落盘**）；引用下拉**首项为 `（未选择）` 占位**（`userData = 0`，对应 `sourceActionId` 的「未设置」，2026-09-28 TR-120 补——缺了它 `QComboBox::addItem` 会把首个识别动作自动置为 current，「未选择」状态在 UI 上无从构造），对**悬垂引用显式列出 `#N（已不存在）`**，不静默落到第一个合法项 |
 | 执行期（必须） | 查不到该编号的识别结果 → `impl_->lastError` + 返回 `false`，**不产生任何运动** | ✅ `PrepareRunnerSegment` 的 `case ActionType::VisionGuide` 两条失败路径（`sourceActionId <= 0` / 结果表 `constFind` 未命中）均写 `r.failReason`（由 `RunScheduler` 汇总进 `impl_->lastError`）并 `return false`，**先于任何下发** |
 
 ## 五、视觉引导动作定义
@@ -167,7 +167,9 @@ PrepareRunnerSegment(r) 的 case ActionType::VisionGuide：
 
 相机固定安装 → 机器人移动**不改变**已识别目标的基座坐标有效性 → **视觉引导与识别动作之间可以间隔其他动作**，不必紧邻。这正是采用「按编号引用」而非「时序约定」的前提。
 
-⚠ **相机安装参数与基座标的关系标定待实现**——现行 `config.tcpCalibration.handEyeMatrix` 是占位值（平移 `12.3, −5.7, 38.1` mm）。标定完成前，视觉引导的坐标**只能用于仿真验证**。
+⚠ **相机安装参数与基座标的关系标定待实现**——现行 `config.tcpCalibration.handEyeMatrix` 是**非标定值**（平移 `180, −5.7, 38.1` mm；2026-09-28 阶段 12B 为让 `SimAlgo` 的构造目标落进可达环而把 x 由 `12.3` 手工改为 `180`，**仅为仿真验证凑数，不是标定结果**）。标定完成前，视觉引导的坐标**只能用于仿真验证**。
+
+> ⚠ **为什么必须改 x**：`SimAlgo` 在 640×480 图像里把目标放在 `cx=320` 附近、`ampX=120`、`fx=520`、`z=55` ⇒ 相机系 x ∈ ±12.7 mm；叠加原手眼平移 x=12.3 后机器人 x ∈ [−0.4, 25.0] mm，**极径只有几十毫米量级，远落进 IK 不可达环**。改成 180 后机器人 x ∈ [167.3, 192.7] mm，落进可达环。**可达环下界不是几何内边界** `|L1 − L2_eff| = 81.03`（`Kinematics.cpp` 的 annulus 检查用的正是它），而是 **J2 限位**（`config.json` 的 `axes.Axis_J2 = [−90, 152]`）决定的 **117.10 mm**：`r(J2) = √(L1² + L2_eff² + 2·L1·L2_eff·cos J2)`，`L2_eff = L2 + toolOffsetX = 166.86 + 53.0 = 219.86`；`r` 在 `J2 = 152` 处取最小 `117.0960`、在 `J2 = 0` 处取最大 `358.69`。故 **实际可达环 = [117.10, 358.69]**。
 
 ## 七、R 角处理（易混点）
 
