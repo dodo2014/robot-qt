@@ -98,6 +98,11 @@ AutoRunPage.RunSequence → SequenceWorker(worker 线程排队) → StartExecuti
     → 失败归因 = 首个失败者（其余仅记日志）；内部中止用独立 aborting 标记，
       与 cancel（用户停止 / 急停）分流——置 cancel 会把动作失败误报成「用户停止」
     → 单动作走同一条链（ExecuteAction 内部即 1 元素 runners），故暂停 / 停止 / 续走只有一份语义
+    → ⚠ **澄清「同时下发」的粒度**：tick 内按 `group.children` 顺序逐个 `StepRunner`（`for (auto& r : runners)`），
+      某个子状态机失败即 `break` ⇒ **排在其后的子状态机本轮不推进**；失败若发生在**首个 tick**
+      （如「移动到不可达点」在 IK 阶段即返回），它们**永不推进**。「同时」= 同一 tick 内依次推进、互不阻塞等待，
+      **不是**同一瞬间启动（2026-09-29 阶段 13.21 两轮补测日志实证；构造用例时若要观察「同组延时被中途切断」，
+      延时必须排在失败者**之前**）
   → 暂停：Pause() 置标志 → 挂起点(PauseGate/RunScheduler 到位轮询 ≤20ms) StopAxes 减速停 → 挂起
     → Resume() 重发当前绝对目标 MoveAbs 原地续走（Delay 按剩余时间续算）
   → 停止：StopImmediate() = cancel + StopAllAxes(减速停保持使能)；急停 = EmergencyStop(断使能)

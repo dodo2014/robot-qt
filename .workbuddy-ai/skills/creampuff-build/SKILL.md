@@ -148,9 +148,29 @@ cd /d/workspace/projects/CreamPuffRobot ; cp config/config.json /tmp/cfg_orig.js
 ⚠ **`Initialize complete` 只在日志里判，不要看 `SMOKE` 那行**：`echo` 可能不落 stdout（见上）。
 ⚠ **Bash 里 grep「中文模式」会静默失效**（2026-09-23 实测）：`grep -a -c '视觉' log/creampuff_<date>.log` 返回 **0**，而同期 ASCII 的 `Vision` 有 2501 条命中——**`0` 与「真的没有」不可区分**。本次差点把「日志里没有『视觉』」当成「视觉动作没跑过」的证据。**判据：查中文一律走 ripgrep（Grep 工具，UTF-8 正常）**；非要在 Bash 里查，先用一个**已知必然存在**的中文串（如 `导航切换到页面`）做对照，验证 grep 本身有效再下结论。
 ⚠ **先看进程是否真没了**：`tasklist | grep -ai creampuff`（Bash）。**不要用 PowerShell `Get-Process`**——本沙箱 PowerShell 工具**不回 stdout**，「无匹配」与「没在跑」输出一模一样，会误判成「软件已关闭」（2026-09-23 踩过）。
-⚠ 冒烟会真实删除 7 天前的 `log/creampuff_*.log`（S8 启动清理），属预期。
+⚠ 冒烟会真实清理 `log/creampuff_*.log`：**保留日期最新的 7 个、删更早的**（S8 启动清理；2026-09-29 由「7 天」改为「按个数」，TR-122），属预期。真实 `log/` 通常不足 7 个 ⇒ **冒烟一般一个都不删**；要验证清理逻辑本身，用下面那节的办法指向临时目录。
 ⚠ **冒烟必须把三处都置 Sim**：`motionCardType` / `servoType` / **`cameraType`**。前两处原脚本已覆盖；`cameraType` 是 2026-09-23 补上的——当时用户把 config 切到了 `OrbbecCamera` 且软件正在运行，冒烟实例会去抢**真机相机**。
 ⚠ **Debug exe 被占用时（LNK1168 / 用户正开着软件）可改用 Release exe 冒烟**：`./out/build/x64-Release/CreamPuffRobot.exe`，判据不变。但真机相机/运动卡被占用时，仍须等用户关闭软件——否则两个实例争硬件。
+
+### 验证日志保留清理逻辑：用 `CREAMPUFF_LOG_DIR` 指向临时目录（2026-09-29 补，TR-122）
+
+清理逻辑（`src/main.cpp` 的 `PurgeOldLogs`）**只在启动时跑一次**，且作用于**程序选定的 log 目录**（`ConfigPaths::logDir()`，`ConfigPaths.cpp:100`）。要验证它而不动真实 `log/`：
+
+```bash
+cd /d/workspace/projects/CreamPuffRobot
+export CREAMPUFF_LOG_DIR="D:/workspace/projects/CreamPuffRobot/.workbuddy-ai/tmp_logtest"
+# 先用 python 在该目录造：10 个 creampuff_2026-09-01..09-10.log（模拟「假期前的一批」）
+#   + 4 个干扰项 crash.txt / creampuff.log / creampuff_notadate.log / OrbbecSDK.log.txt
+# 再启动 exe（config 须为 SimCard/SimServo/SimCamera），sleep 20+ 后看目录与日志
+```
+
+- 判据 = 目录里只剩**日期最新的 7 个**（含当日新建的）+ 4 个干扰项；日志出现 `[Main] Log retention: removed N file(s), kept newest 7 of M day-file(s)`。
+- `CREAMPUFF_LOG_DIR` 是 `logDir()` 的**第一优先级**，daily sink 与清理**同源**落到该目录 ⇒ 验证的就是交付代码本身，不碰真实日志。
+- **干扰项必须造**：用来证明「只删匹配 `^creampuff_YYYY-MM-DD\.log$` 的文件」，`crash.txt` / `creampuff.log` 一律不碰。
+- 实测（2026-09-29）：`BEFORE=14 → AFTER=11`，删 4 留 7，4 个干扰项未动。
+- 收尾用 python `shutil.rmtree`（`rm` 在本沙箱被静默拦截）。
+- ⚠ **别靠改 `keepCount` 参数验证边界**——它硬编码在 `main.cpp` 的调用点，改它要重编；直接构造文件数即可覆盖「不足 N 个 ⇒ 一个不删」与「超过 N 个 ⇒ 删最老」两个分支。
+- ⚠ 本条**取代**旧判据「删 7 天前的文件」：按天数在**长假后首次开机**时会把历史日志一次性清空（现存文件日期全部早于 `today − 7`），故改为按个数。
 
 ## 冒烟失败时的排查顺序
 

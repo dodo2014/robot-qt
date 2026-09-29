@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QDate>
 #include <QFile>
+#include <QList>
+#include <QPair>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -157,35 +159,52 @@ private:
     size_t rootLen_ = 0;
 };
 
-// 日志保留策略（D16，2026-09-14 定稿：保留 7 天）。
-// 为何要自己清：日志已按日期分文件（daily_file_sink 的 %Y-%m-%d 命名），但 sink 的
-// max_files 实测未生效——现存 35 个日期文件（最早 2026-07-27）。故显式清理。
+// 日志保留策略（D16：2026-09-14 定稿「7 天」→ 2026-09-29 修订为「保留最近 N 个文件」）。
+// 为何按个数而非按天数：日志已按日期分文件（daily_file_sink 的 %Y-%m-%d 命名），若以
+// 「今天 − N 天」为 cutoff 删除，长假期间不开机则现存文件的日期**全部早于 cutoff**
+// ⇒ 复工第一次启动会把历史日志一次性清空，旧记录一个不剩。改为**保留日期最新的
+// keepCount 个文件**，与开机频次解耦：休假再久也只丢最老的，最近 N 次开机的记录始终在。
+// 另：spdlog daily_file_sink 的 max_files 实测未生效（曾积到 35 个日期文件，最早
+// 2026-07-27），故必须自己清。
 // 安全边界（窄到只可能命中本程序自己的日志）：
 //   · 只在程序选定的 log 目录内；
 //   · 只匹配 ^creampuff_YYYY-MM-DD\.log$（creampuff.log / crash.txt / 其它文件一律不碰）；
-//   · 只删**日期早于 cutoff（今天 - keepDays）**的；日期非法或 ≥ cutoff 一律保留；
+//   · 文件名日期非法的一律保留（不参与排序、不占配额）；总数不足 keepCount 时一个不删；
 //   · 删除数量写日志，便于事后核对。
-static void PurgeOldLogs(const QString& logDir, int keepDays)
+static void PurgeOldLogs(const QString& logDir, int keepCount)
 {
     QDir dir(logDir);
     if (!dir.exists()) return;
 
-    const QDate today = QDate::currentDate();
-    const QDate cutoff = today.addDays(-keepDays);
     static const QRegularExpression re(QStringLiteral("^creampuff_(\\d{4})-(\\d{2})-(\\d{2})\\.log$"));
 
     const auto entries = dir.entryList({ QStringLiteral("creampuff_*.log") }, QDir::Files);
-    int removed = 0;
+
+    QList<QPair<QDate, QString>> dated;   // (文件日期, 文件名)
+    dated.reserve(entries.size());
     for (const auto& name : entries) {
         const auto m = re.match(name);
         if (!m.hasMatch()) continue;
         const QDate d(m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt());
-        if (!d.isValid() || d >= cutoff) continue;
-        if (QFile::remove(dir.filePath(name))) ++removed;
+        if (!d.isValid()) continue;
+        dated.append({ d, name });
+    }
+
+    // 日期降序（最新在前）。同日不可能出现两个日期文件（daily sink 只按日期命名），
+    // 故无需再以文件名做次级比较。
+    std::sort(dated.begin(), dated.end(),
+              [](const QPair<QDate, QString>& a, const QPair<QDate, QString>& b) {
+                  return a.first > b.first;
+              });
+
+    const int keep = (keepCount > 0) ? keepCount : 1;
+    int removed = 0;
+    for (int i = keep; i < dated.size(); ++i) {
+        if (QFile::remove(dir.filePath(dated.at(i).second))) ++removed;
     }
     if (removed > 0) {
-        SPDLOG_INFO("[Main] Log retention: removed {} file(s) older than {} days (cutoff {})",
-                    removed, keepDays, cutoff.toString(QStringLiteral("yyyy-MM-dd")).toStdString());
+        SPDLOG_INFO("[Main] Log retention: removed {} file(s), kept newest {} of {} day-file(s)",
+                    removed, keep, dated.size());
     }
 }
 
@@ -244,7 +263,8 @@ int main(int argc, char* argv[])
         // 日志目录不可用时禁用文件日志，避免启动崩溃
     }
 
-    // 日志保留 7 天（D16）：启动时清理过期日期文件（不删当天/7 天内的）
+    // 日志保留最近 7 个日期文件（D16 修订，2026-09-29）：按**个数**保留，不按天数——
+    // 否则长假后首次开机会把假期前的历史日志全部清掉（详见 PurgeOldLogs 注释）
     PurgeOldLogs(logDir, 7);
 
     MainWindow mainWindow;

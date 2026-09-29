@@ -173,7 +173,7 @@ Layering (link direction): `UI → Logic → Core → HAL`; `HAL → Config` (Ha
   - **日志目录判定（2026-09-16 改为便携优先，`src/main.cpp` `ResolveLogDir()`）**，优先级：① `CREAMPUFF_LOG_DIR` 环境变量（现场排障逃生门）→ ② **exe 所在目录位于编译期源码树 `PROJECT_SOURCE_DIR` 之下** → `PROJECT_SOURCE_DIR/log`（开发机行为，与改动前一致）→ ③ 否则 → **exe 旁 `log/`**（便携部署，整目录拷贝即用）→ ④ 兜底 `%APPDATA%/CreamPuffRobot/log`。
   - **关键**：判定比较的是 **exe 的实际位置** 与烧进 exe 的源码路径字符串，**不是**「盘符存不存在」——所以目标机有无 `D:` 盘都会正确落到 exe 旁。开发机上 Debug/Release 仍共用 `D:\workspace\projects\CreamPuffRobot\log\creampuff_YYYY-MM-DD.log`（daily sink 只按日期命名，无 build 标识，两版混流）。
   - **不可改成「exe 旁一律优先」**：工程根 `log/` 被 `out\smoke\sim_smoke.ps1:29`（`$root` 硬编码 + 读 `$root\log\creampuff_YYYY-MM-DD.log` 判 `SMOKE_INIT_COMPLETE`）、`doc/compile_guide.md:103/116`、`doc/test/*.md` 硬依赖，改了会造成冒烟**假失败**。
-  - 日志保留 7 天（D16）：启动时 `PurgeOldLogs(logDir, 7)`，只匹配 `^creampuff_YYYY-MM-DD\.log$` 且只删早于 cutoff 的；`crash.txt` 与其它文件不碰。spdlog 自带的 `max_files=30` **实测未生效**（曾积到 35 个文件），故必须自己清。
+  - 日志保留**最近 7 个日期文件**（D16：2026-09-14 定「7 天」→ 2026-09-29 修订为按个数，TR-122）：启动时 `PurgeOldLogs(logDir, 7)` 按**文件日期降序取前 7 个保留**、其余删除；只匹配 `^creampuff_YYYY-MM-DD\.log$`，文件名日期非法的**不参与排序也不占配额**，总数不足 7 个时**一个不删**；`crash.txt` 与其它文件不碰，删除条数写日志。**为何不按天数**：长假期间不开机时现存文件的日期**全部早于 `today − 7`** ⇒ 复工首次启动会把历史日志一次性清空；按个数则与开机频次解耦，休假再久也只丢最老的。spdlog 自带的 `max_files=30` **实测未生效**（曾积到 35 个文件），故必须自己清。
   - `crash.txt`（`CrashHandler`）与 `SymInitialize` 符号路径**不再硬编码**（2026-09-16 修）：路径由 `main()` 在日志目录判定后以窄字符预填进 `g_crashLogPath`/`g_symSearchPath`，崩溃上下文不触碰 Qt；`main()` 完成前崩溃则退回当前目录的相对路径。
   - **统一用 `SPDLOG_INFO/WARN/ERROR/CRITICAL` 宏，禁止 `spdlog::info(...)` 等函数式调用**：函数式调用不带 source location，`%P` 会兜底成 `[unknown:0]`（曾全库 67 处误用）。宏默认带上 `__FILE__:__LINE__`
 
