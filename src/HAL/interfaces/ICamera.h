@@ -171,6 +171,21 @@ public:
 
     virtual CameraFrame CaptureFrame() = 0;
 
+    /// 取「**最近一帧**」快照（TR-123，2026-10-12）。
+    ///
+    /// **为什么需要它**：`CaptureFrame()` 不只是取帧——它在拿不到管线时会进**恢复状态机**
+    /// （`HandleGrabFailure()` → `DestroyPipeline()` / 重建管线）。而 `SequenceWorker` 的
+    /// 「识别」动作在**主线程**调它、`CameraCaptureWorker::CaptureTick` 在**采集线程**也调它，
+    /// 两个线程可同时进入同一 `pipeline`（`OrbbecCamera` 只有 `frameMutex_` / `errMutex_`，
+    /// **无管线级锁**）⇒ UB，在拔插 / 掉线恢复与取帧重叠时以随机 `0xC0000005` 暴露。
+    ///
+    /// 本方法**只读最新帧槽、不触碰 pipeline** ⇒ 把「进 pipeline」收敛到采集线程一条路径。
+    /// 恢复状态机由采集线程独占驱动（它按 fps 持续调 `CaptureFrame()`）。
+    ///
+    /// **非纯虚**：默认回落到 `CaptureFrame()` —— `SimCamera` 等无快照槽的实现零改动。
+    /// ⚠ **语义**：返回「最近一帧」而非「此刻新取一帧」，延迟 ≤ 1/fps；调用方须接受这一点。
+    virtual CameraFrame TakeLatestFrame() { return CaptureFrame(); }
+
     virtual CameraIntrinsics GetIntrinsics() const = 0;
     virtual bool SetIntrinsics(const CameraIntrinsics& intrinsics) = 0;
 

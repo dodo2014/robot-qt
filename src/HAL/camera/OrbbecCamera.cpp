@@ -620,6 +620,27 @@ CameraFrame OrbbecCamera::TakeLastGood()
     return CameraFrame{};
 }
 
+CameraFrame OrbbecCamera::TakeLatestFrame()
+{
+    // TR-123（2026-10-12）：**只读最新帧槽，绝不触碰 pipeline**。
+    //
+    // 背景：`CaptureFrame()` 不只是取帧——拿不到管线时会进恢复状态机
+    // （`HandleGrabFailure()` → `DestroyPipeline()` / 重建管线）。而 `SequenceWorker` 的
+    // 「识别」动作在主线程调它、`CameraCaptureWorker::CaptureTick` 在采集线程也调它，
+    // 二者可同时进入同一 `pipeline`；本类只有 `errMutex_`（护 `lastError_`）与
+    // `frameMutex_`（护 `lastGoodFrame_`），**没有管线级互斥** ⇒ UB，在拔插 / 掉线恢复
+    // 与取帧重叠时以随机 `0xC0000005` 暴露。
+    //
+    // 收敛后：**只有采集线程进 pipeline**（它按 fps 持续调 `CaptureFrame()`），本路径只读
+    // 采集线程产出的最新帧 ⇒ 双线程进管线的路径**从根上消失**，且比原来少一次实际取帧
+    // （复用采集线程已取的那帧）。恢复仍由采集线程驱动，不会因本改动失去重连能力。
+    //
+    // ⚠ 语义与 `CaptureFrame()` 对齐：**主动停流后不返回旧帧**。否则停流后 1 s 内执行的
+    // 识别动作会检测到「上一轮画面里的目标」并据此发出坐标——那比报「未检出」危险得多。
+    if (!wantStreaming_) return CameraFrame{};
+    return TakeLastGood();
+}
+
 CameraFrame OrbbecCamera::CaptureFrame()
 {
     CameraFrame out;

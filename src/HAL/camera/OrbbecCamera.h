@@ -54,6 +54,12 @@ public:
 
     CameraFrame CaptureFrame() override;
 
+    // TR-123（2026-10-12）：取「最近一帧」快照，**只读最新帧槽、不触碰 pipeline**。
+    // `SequenceWorker` 的「识别」动作改走本路径 ⇒ 消除「采集线程与 worker 线程同时进
+    // 同一 pipeline」的并发 UB（原走 `CaptureFrame()`，会调 `HandleGrabFailure()`
+    // → `DestroyPipeline()` / 重建管线）。恢复状态机由采集线程独占驱动。
+    CameraFrame TakeLatestFrame() override;
+
     CameraIntrinsics GetIntrinsics() const override;
     bool SetIntrinsics(const CameraIntrinsics& intrinsics) override;
 

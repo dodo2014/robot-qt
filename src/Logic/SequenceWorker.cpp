@@ -996,7 +996,13 @@ bool SequenceWorker::StepRunner(RunnerState& r)
                 return true;
             }
             emit logMessage(QStringLiteral("视觉：采帧中 (%1)...").arg(action.visionType));
-            CameraFrame frame = InMainThread([&] { return camera->CaptureFrame(); });
+            // TR-123（2026-10-12）：**不再自己取帧**，改为向采集线程取「最近一帧」快照。
+            // 原 `camera->CaptureFrame()` 会让本线程与采集线程同时进同一 pipeline
+            // （`OrbbecCamera` 无管线级锁）⇒ UB；且它还会触发恢复状态机，与采集线程的
+            // 恢复动作互相踩。收敛后 pipeline 只由采集线程进（`OrbbecCamera::TakeLatestFrame`）。
+            // ⚠ 前提：流必须在跑（`AcquireCamera` 持有者集合非空）——自动运行路径由
+            // `AutoRunPage` 在启动时登记，满足；无持流时返回空帧，与原行为一致。
+            CameraFrame frame = InMainThread([&] { return camera->TakeLatestFrame(); });
 
             emit logMessage(QStringLiteral("视觉：检测中 (阈值 %1)...").arg(action.threshold));
             // P1：`Detect` 改为纯函数式（参数由调用方传入），这里两件事都在**主线程**做——
