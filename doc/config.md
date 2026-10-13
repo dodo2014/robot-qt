@@ -152,12 +152,19 @@ vision
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `autoRunStreamPreview` | bool | `false` | **自动运行页预览源**（S6 决策 6 的「视频流预览」保留能力，TR-113）。`false` = 显示「**检测结果叠加图**」（左格该次检测的原图 / 右格带检测框），由 `SequenceWorker::detectionReady` 驱动、**不订阅原始帧流** → 与视觉检测页解耦，视觉页停流不会让本页定格。`true` = 显示「**原始实时视频流**」，本页**可见期间**以持有者名 `"AutoRunPreview"` 占用相机（消费 ⟺ 持有），隐藏即释放 |
+| `inspectionPanel.show` | bool | `true` | **是否在自动运行页创建「检测结果」页签**（`doc/inspection_result_panel_plan.md`，⏳ 计划中）。`false` = **不建**该页签，自动运行页布局与改动前**完全一致**（不留页签栏）。⚠ 即使本键为 `true`，若 `config/inspection.json` 缺失或解析失败（无规格）**同样不建**——两层信号 |
 
 > **写入口与生效状态（TR-113，2026-09-23）**：
 > - 写入口 = 设备配置页「**视觉与工艺参数**」页签的勾选框「自动运行页预览源用「实时视频流」」（`ConfigPage::CreateTab3Vision`）→ 经 `set()` 更新内存 `root_` 并 `scheduleSave()` 落盘，同时 emit `autoRunPreviewSourceChanged`；`MainWindow` 已把它接到 `AutoRunPage::SetStreamPreviewEnabled` → **切换立即生效、无需重启**。
 > - **手改本文件则需重启**（同 `vision.*` 的成因：`getValue` 读内存 `root_`，`root_` 只在启动时由 `load()` 填充）。启动时 `MainWindow` 按本键应用一次。
 > - 该开关只改**自动运行页的画面来源**，不改相机流的启停逻辑（流仍由持有者集合驱动，流运行 ⟺ 集合非空）。两条预览路径的持有者名**刻意不同**：方案运行期 = `"AutoRun"`，预览路径 = `"AutoRunPreview"`。
 > - 与 `vision.*` 三个键的区别：那三个是**算法参数**（影响检测结果本身），本键只影响**画面怎么显示**，不进检测链路。
+>
+> **检测结果页签的生效状态（2026-10-10，见 `inspection_result_panel_plan.md` §6.6）**：
+> - 该键**本期无 UI 写入口**（不做配置页勾选框）⇒ 手改本文件 + **重启**生效。
+> - ⚠ **与 `autoRunStreamPreview` 的关键差异**：后者只改**画面来源**、可即时切换；本键改的是**页签的增删**，属**结构级**变更。运行时 `addTab` / `removeTab` 还要额外维护当前索引、布局重算与补绘状态机 ⇒ **本期不做**（只在构造期判定）。
+> - **两层信号**：本键为 `true` **且** `config/inspection.json` 存在且解析成功，才创建该页签。规格文件缺失 ⇒ 回落空规格 ⇒ 不建页签（避免出现「什么都测不了却显示合格」的面板）。
+> - ⚠ `config/inspection.json` 是**独立文件**，不走 `ConfigManager` 的内存 `root_`，其生效时机由 `inspection_result_panel_plan.md` §4.2 单独定义——**不要**套用本节的「经 UI 改即时生效」规则。
 
 ---
 

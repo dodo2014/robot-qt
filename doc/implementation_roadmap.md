@@ -1,8 +1,8 @@
-# 五篇需求方案的实施顺序
+# 需求方案的实施顺序
 
-> **本文性质**：**跨文档的实施编排（⏳ 计划中）**，不是新需求。职责只有一个——给下列 5 篇方案定**先后与并行边界**。各方案的内部细节一律以各自文档为准，**本文不重复维护**。
-> **核实时点**：2026-09-18（P1~P5 状态更新于 2026-09-20）。台账当前最大 **TR-102**。
-> **关联**：`doc/README.md`（索引与状态）、`doc/joint_drift_analysis.md`（P0 阻塞项）、`TEST_RECORD.md`（记账）。
+> **本文性质**：**跨文档的实施编排（⏳ 计划中）**，不是新需求。职责只有一个——给各篇方案定**先后与并行边界**。各方案的内部细节一律以各自文档为准，**本文不重复维护**。  
+> **核实时点**：2026-09-18（P1~P6 状态更新于 2026-09-20；**2026-10 新增的三篇方案登记于 2026-10-09，见 §八**；**剩余工作与工期重估于 2026-10-12，见 §九**）。台账当前最大 **TR-123**。  
+> **关联**：`doc/README.md`（索引与状态）、`doc/joint_drift_analysis.md`（P0 阻塞项）、`TEST_RECORD.md`（记账）；新增方案见 §八（`multi_camera_plan` / `third_party_integration_plan` / `inspection_result_panel_plan`）；**剩余工作清单见 §九**（相机安装 → 标定 → 坐标转换 → 深度法定位算法 → 泡芙实测）。
 
 ## 一、结论
 
@@ -23,12 +23,12 @@ P6  动作树 UI + 并发   action_tree_concurrency_plan（第二、三步）   
 
 ### 约束 1：依赖（谁不先做，后面就做不了）
 
-| 被依赖项 | 依赖方 | 不做的后果 |
-| :--- | :--- | :--- |
-| `config_ownership_plan` 的 **C1 / C2 / C5** | `camera_integration_plan` | **相机设备标识两个键互不相通**（`communication.camera.sn` 无读点、`CameraManager.cpp:42-43` 读的 `simulation.cameraDeviceId` 在 config 中不存在、`VisionTestPage.cpp:462` 又无条件覆盖用户输入）→ **真机连不上相机**，P3 之后全部无法真机验证 |
-| `config_ownership_plan` 的 **C1**（修 `SimAlgo::LoadConfig` 空实现） | `vision_guide_action_plan` | 算法配置链路无闭环 → 动作级 `threshold` / `visionType` **只打印日志**，视觉引导的判定阈值不可用 |
-| **编号机制** | `action_tree` 第二、三步 **且** `vision_guide_action_plan` | 两篇文档都会各自造一套编号 → 分叉。**必须一次设计**（见约束 2） |
-| `camera_integration_plan` S0~S4 | `vision_test_page_redesign_plan`、`vision_guide_action_plan` | 没有真实帧，视觉页的相机控件无处可接，视觉引导动作无法验证 |
+| 被依赖项                                                          | 依赖方                                                         | 不做的后果                                                                                                                                                                                  |
+| :------------------------------------------------------------ | :---------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config_ownership_plan` 的 **C1 / C2 / C5**                    | `camera_integration_plan`                                   | **相机设备标识两个键互不相通**（`communication.camera.sn` 无读点、`CameraManager.cpp:42-43` 读的 `simulation.cameraDeviceId` 在 config 中不存在、`VisionTestPage.cpp:462` 又无条件覆盖用户输入）→ **真机连不上相机**，P3 之后全部无法真机验证 |
+| `config_ownership_plan` 的 **C1**（修 `SimAlgo::LoadConfig` 空实现） | `vision_guide_action_plan`                                  | 算法配置链路无闭环 → 动作级 `threshold` / `visionType` **只打印日志**，视觉引导的判定阈值不可用                                                                                                                      |
+| **编号机制**                                                      | `action_tree` 第二、三步 **且** `vision_guide_action_plan`        | 两篇文档都会各自造一套编号 → 分叉。**必须一次设计**（见约束 2）                                                                                                                                                   |
+| `camera_integration_plan` S0~S4                               | `vision_test_page_redesign_plan`、`vision_guide_action_plan` | 没有真实帧，视觉页的相机控件无处可接，视觉引导动作无法验证                                                                                                                                                          |
 
 ### 约束 2：编号机制被两篇文档同时依赖，只能设计一次
 
@@ -39,13 +39,13 @@ P6  动作树 UI + 并发   action_tree_concurrency_plan（第二、三步）   
 
 ### 约束 3：文件冲突（决定谁必须排在谁后面）
 
-| 方案 | 主要改动范围 |
-| :--- | :--- |
-| `config_ownership_plan` | `src/Config/`、`src/HAL/core/` |
-| `camera_integration_plan` | `src/HAL/camera/`、`src/HAL/core/`、`3rdparty/orbbec/` |
-| `vision_test_page_redesign_plan` | `src/UI/VisionTestPage.*` |
-| `vision_guide_action_plan` | `src/UI/ProcessPage.*`、`src/Logic/SequenceWorker.*`、`src/Config/ProcessManager.*` |
-| `action_tree_concurrency_plan` | `src/UI/ProcessPage.*`、`src/Logic/SequenceWorker.*`、`src/Config/ProcessManager.*` |
+| 方案                               | 主要改动范围                                                                            |
+| :------------------------------- | :-------------------------------------------------------------------------------- |
+| `config_ownership_plan`          | `src/Config/`、`src/HAL/core/`                                                     |
+| `camera_integration_plan`        | `src/HAL/camera/`、`src/HAL/core/`、`3rdparty/orbbec/`                              |
+| `vision_test_page_redesign_plan` | `src/UI/VisionTestPage.*`                                                         |
+| `vision_guide_action_plan`       | `src/UI/ProcessPage.*`、`src/Logic/SequenceWorker.*`、`src/Config/ProcessManager.*` |
+| `action_tree_concurrency_plan`   | `src/UI/ProcessPage.*`、`src/Logic/SequenceWorker.*`、`src/Config/ProcessManager.*` |
 
 - **`config` ∩ `camera` = `src/HAL/core/`（`HardwareManager`）** → 必须串行，且 **config 在前**（camera 依赖其修复）。
 - **`vision_guide` ∩ `action_tree` = `ProcessPage` + `SequenceWorker` + `ProcessManager`** → **必须串行**。P5 在 P6 前（`action_tree` 第二步会重写 `ProcessPage` 的列表控件与 `m_currentActionIdx` 全部调用点，先做的话 `vision_guide` 的新动作类型要跟着重写一遍）。
@@ -53,23 +53,23 @@ P6  动作树 UI + 并发   action_tree_concurrency_plan（第二、三步）   
 
 ## 三、各阶段要点与验收
 
-| 阶段 | 内容 | 为什么排在这里 | 验收 |
-| :--- | :--- | :--- | :--- |
-| **P1** ✅ | `config_ownership_plan` 的 C1~C5 + §七 `save()` 原子写。**分文件本身不做**（该文档结论即「现在不分」） | 无界面变化、风险最低；不修则相机链路是流沙 | Sim 冒烟 + 相机能在真机枚举到设备、`vision.confidenceThreshold` 实际生效 |
-| **P2** ✅ | `ActionData` 加 `id`、`process.json` 读取兼容与**自动升级**（不要求用户手工迁移）、`ActionType` 追加 `VisionGuide = 5`、`actionTypeName` 与类型下拉项同步 | 两篇文档的共享前置；引擎零改动，小且低风险 | 现有方案加载后编号正确、工艺行为不变 |
-| **P3** | `camera_integration_plan` S0~S4（相机 HAL、持有者集合流模型、轮询探测、软对齐） | 产出真实帧，是 P4 / P5 的共同前置 | ✅ **2026-09-20 已落地（TR-099）**：真机枚举 `CP9KB530005S` + 1280×720@**30.2fps** 取流（RGB888 + 深度 Y16）、**Release 60 s 长稳 1801 帧 / 30.0 fps / 空帧 0 / 退出码 0**；`USE_ORBBEC` ON/OFF 双编译通过。**✅ 真机补验已完成（2026-09-23）**：拔插线 **11 轮全恢复**（用例 11.31，逐级 `L1 → L2 → L3` 日志实证）+ **10 min 长稳**（用例 11.32，700.1 s / 10491 帧 / 空帧 0 / 退出码 0 / 无内存增长）|
-| **P4** ✅ | `vision_test_page_redesign_plan`（左 320 px 滚动控制栏 + 右 2×2 四宫格） | 相机控件要对接 P3 接口；**它是 P5 的手动验证工具** | ✅ **2026-09-20 已落地（TR-100）**：左 320 px `QScrollArea` + 右 2×2 四宫格（三格同刷）；结果表 11 列；6 个流参数 combo 由 SDK profile 枚举填充；互锁按 P3 决策 10 修正（自动运行期间相机开关 / 启停采集置灰）；`FrameSaver` 队列上限 + 单 tick 预算 + 通知合并；Debug/Release 双编译 `EXITCODE=0` 零新警告 + Sim 冒烟通过。**⚠ 真机三项待人工**：真实 SN 枚举 / D2C 软对齐 / 插拔恢复（**D2C 软对齐已于 2026-09-23 执行 → 暴露崩溃：取消对齐后必闪退，已修 TR-116；✅ 2026-09-24 复测通过，同期 11.33 / 11.34 / 11.36 亦通过**） |
-| **P5** ✅ | `vision_guide_action_plan` 剩余部分（识别结果 → 基座坐标 → 两段移动） | 依赖 P2 编号 + P3 帧 + P4 作为验证工具 | ✅ **2026-09-20 已落地（TR-101）**：`ActionData` 加 `sourceActionId` / `offsetZ` / `guideR`；会话内 `QHash<int, Pose> visionResults_` 结果表（按识别动作 `id` 取用，两入口都清）；视觉引导执行路径 **零新运动代码**（两段全复用移动动作执行路径，取不到结果则报错且**不产生运动**）；UI 编辑区 + **两组坐标只读预览**（四态）+ 编辑期校验（未选择 / 悬垂引用 / 跨方案三种都拒）；`r` 一律取 `guideR`、**与 `PuffResult.yaw` 无关**；识别坐标**不入 `process.json`**。Debug `[47/47]` / Release `[15/15]` `EXITCODE=0` 零新警告 + Sim 冒烟 `BEFORE=10 → AFTER=11`。**⚠ 真机待人工**：抓取落点与重复定位精度**须先标定手眼矩阵**（`tcpCalibration.handEyeMatrix` 现为占位值） |
-| **P6** ✅ | `action_tree_concurrency_plan` 第二、三步（`QTreeWidget` 树化 + 单线程协作式调度） | 与 P5 改同一批文件 → 必须在其后；与相机链路正交，放最后让相机链先稳定 | ✅ **2026-09-20 已落地（TR-102）**：`QListWidget` → `QTreeWidget`、`m_currentActionIdx`（43 处）→ `m_currentNodeId`；分组详情页 + 新建分组按钮 + 冲突类型置灰；组内校验按**资源求交**并**新增数据依赖一类**；`actions` → `nodes` 改名 + `nodeType`（旧键仍可读、升级惰性）；`ExecuteNode` / `ExecuteGroup` / `RunScheduler`（**同时下发、统一汇合**，20 ms tick），失败归因 = 首个失败者、组内暂停 / 停止 / 单步均正确。Debug `[6/6]` / Release `[15/15]` `EXITCODE=0` 零警告 + Sim 冒烟 `11 → 12` + 离线自测 `test_node_tree_check` **70 项断言全通过**。**⚠ 真机待人工**：并发节拍对比、组内暂停 / 停止 / 急停、多轴干涉。**D8 / D9 节拍回收本批未做**（原建议同批） |
+| 阶段       | 内容                                                                                                                      | 为什么排在这里                                | 验收                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| :------- | :---------------------------------------------------------------------------------------------------------------------- | :------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P1** ✅ | `config_ownership_plan` 的 C1~C5 + §七 `save()` 原子写。**分文件本身不做**（该文档结论即「现在不分」）                                             | 无界面变化、风险最低；不修则相机链路是流沙                  | Sim 冒烟 + 相机能在真机枚举到设备、`vision.confidenceThreshold` 实际生效                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **P2** ✅ | `ActionData` 加 `id`、`process.json` 读取兼容与**自动升级**（不要求用户手工迁移）、`ActionType` 追加 `VisionGuide = 5`、`actionTypeName` 与类型下拉项同步 | 两篇文档的共享前置；引擎零改动，小且低风险                  | 现有方案加载后编号正确、工艺行为不变                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **P3**   | `camera_integration_plan` S0~S4（相机 HAL、持有者集合流模型、轮询探测、软对齐）                                                               | 产出真实帧，是 P4 / P5 的共同前置                  | ✅ **2026-09-20 已落地（TR-099）**：真机枚举 `CP9KB530005S` + 1280×720@**30.2fps** 取流（RGB888 + 深度 Y16）、**Release 60 s 长稳 1801 帧 / 30.0 fps / 空帧 0 / 退出码 0**；`USE_ORBBEC` ON/OFF 双编译通过。**✅ 真机补验已完成（2026-09-23）**：拔插线 **11 轮全恢复**（用例 11.31，逐级 `L1 → L2 → L3` 日志实证）+ **10 min 长稳**（用例 11.32，700.1 s / 10491 帧 / 空帧 0 / 退出码 0 / 无内存增长）                                                                                                                                                                                   |
+| **P4** ✅ | `vision_test_page_redesign_plan`（左 320 px 滚动控制栏 + 右 2×2 四宫格）                                                            | 相机控件要对接 P3 接口；**它是 P5 的手动验证工具**        | ✅ **2026-09-20 已落地（TR-100）**：左 320 px `QScrollArea` + 右 2×2 四宫格（三格同刷）；结果表 11 列；6 个流参数 combo 由 SDK profile 枚举填充；互锁按 P3 决策 10 修正（自动运行期间相机开关 / 启停采集置灰）；`FrameSaver` 队列上限 + 单 tick 预算 + 通知合并；Debug/Release 双编译 `EXITCODE=0` 零新警告 + Sim 冒烟通过。**⚠ 真机三项待人工**：真实 SN 枚举 / D2C 软对齐 / 插拔恢复（**D2C 软对齐已于 2026-09-23 执行 → 暴露崩溃：取消对齐后必闪退，已修 TR-116；✅ 2026-09-24 复测通过，同期 11.33 / 11.34 / 11.36 亦通过**）                                                                                                                     |
+| **P5** ✅ | `vision_guide_action_plan` 剩余部分（识别结果 → 基座坐标 → 两段移动）                                                                     | 依赖 P2 编号 + P3 帧 + P4 作为验证工具            | ✅ **2026-09-20 已落地（TR-101）**：`ActionData` 加 `sourceActionId` / `offsetZ` / `guideR`；会话内 `QHash<int, Pose> visionResults_` 结果表（按识别动作 `id` 取用，两入口都清）；视觉引导执行路径 **零新运动代码**（两段全复用移动动作执行路径，取不到结果则报错且**不产生运动**）；UI 编辑区 + **两组坐标只读预览**（四态）+ 编辑期校验（未选择 / 悬垂引用 / 跨方案三种都拒）；`r` 一律取 `guideR`、**与 `PuffResult.yaw` 无关**；识别坐标**不入 `process.json`**。Debug `[47/47]` / Release `[15/15]` `EXITCODE=0` 零新警告 + Sim 冒烟 `BEFORE=10 → AFTER=11`。**⚠ 真机待人工**：抓取落点与重复定位精度**须先标定手眼矩阵**（`tcpCalibration.handEyeMatrix` 现为占位值）      |
+| **P6** ✅ | `action_tree_concurrency_plan` 第二、三步（`QTreeWidget` 树化 + 单线程协作式调度）                                                       | 与 P5 改同一批文件 → 必须在其后；与相机链路正交，放最后让相机链先稳定 | ✅ **2026-09-20 已落地（TR-102）**：`QListWidget` → `QTreeWidget`、`m_currentActionIdx`（43 处）→ `m_currentNodeId`；分组详情页 + 新建分组按钮 + 冲突类型置灰；组内校验按**资源求交**并**新增数据依赖一类**；`actions` → `nodes` 改名 + `nodeType`（旧键仍可读、升级惰性）；`ExecuteNode` / `ExecuteGroup` / `RunScheduler`（**同时下发、统一汇合**，20 ms tick），失败归因 = 首个失败者、组内暂停 / 停止 / 单步均正确。Debug `[6/6]` / Release `[15/15]` `EXITCODE=0` 零警告 + Sim 冒烟 `11 → 12` + 离线自测 `test_node_tree_check` **70 项断言全通过**。**⚠ 真机待人工**：并发节拍对比、组内暂停 / 停止 / 急停、多轴干涉。**D8 / D9 节拍回收本批未做**（原建议同批） |
 
 ## 四、可并行边界
 
 若同时开两条工作线（多人 / 多分支）：
 
-| 工作线 | 阶段 | 文件范围 |
-| :--- | :--- | :--- |
-| **相机线** | P3 → P4 → P5 | `HAL/camera`、`HAL/core`、`UI/VisionTestPage`、`UI/ProcessPage`、`Logic/SequenceWorker` |
-| **动作树线** | P6 | `UI/ProcessPage`、`Logic/SequenceWorker`、`Config/ProcessManager` |
+| 工作线      | 阶段           | 文件范围                                                                                |
+| :------- | :----------- | :---------------------------------------------------------------------------------- |
+| **相机线**  | P3 → P4 → P5 | `HAL/camera`、`HAL/core`、`UI/VisionTestPage`、`UI/ProcessPage`、`Logic/SequenceWorker` |
+| **动作树线** | P6           | `UI/ProcessPage`、`Logic/SequenceWorker`、`Config/ProcessManager`                     |
 
 **两条线在 P5 与 P6 之间冲突**（同一批文件），所以：**相机线走到 P4 时，动作树线可以并行推进 P6 的准备（数据模型与防呆校验设计），但 P6 的代码落地必须等 P5 完成。**
 
@@ -77,13 +77,13 @@ P6  动作树 UI + 并发   action_tree_concurrency_plan（第二、三步）   
 
 ## 五、不建议的顺序（反例）
 
-| 反例 | 后果 |
-| :--- | :--- |
-| **先做 `action_tree`（树 + 并发）** | ① 编号机制单独定稿，与 `vision_guide` 的 `sourceActionId` 分叉；② 它重写 `ProcessPage`，之后 `vision_guide` 加动作类型要重写一遍；③ 相机链路仍未打通，节拍优化在「抓不到」的前提下没有意义 |
-| **先做 `camera_integration_plan`** | 配置断链（C1/C2/C5）未修 → 相机**枚举不到真机设备**，S0~S4 只能对着 `SimCamera` 空跑，真机问题推迟到最贵的时候才暴露 |
-| **先做 `vision_test_page_redesign_plan`** | 它是**纯 UI 重构**（25 项映射对账表说明重点在防功能丢失），但页面上的 11 个相机控件要绑 P3 的接口。先做就得绑旧 `CameraManager`，P3 落地后再改一次 |
-| **把 P2 拆到两篇各自做** | 必然产生两套编号。这是本编排里**唯一不可妥协**的一条 |
-| **P1 只做「分文件」不做 C1~C5** | `config_ownership_plan` 的结论就是**现在不分**；真正的缺陷是 C1（`SimAlgo::LoadConfig` 空实现）、C2（相机设备标识两键不相通）、C5（三套路径解析）与 §七（`save()` 非原子写）。**分文件不是目标** |
+| 反例                                      | 后果                                                                                                                                   |
+| :-------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- |
+| **先做 `action_tree`（树 + 并发）**            | ① 编号机制单独定稿，与 `vision_guide` 的 `sourceActionId` 分叉；② 它重写 `ProcessPage`，之后 `vision_guide` 加动作类型要重写一遍；③ 相机链路仍未打通，节拍优化在「抓不到」的前提下没有意义     |
+| **先做 `camera_integration_plan`**        | 配置断链（C1/C2/C5）未修 → 相机**枚举不到真机设备**，S0~S4 只能对着 `SimCamera` 空跑，真机问题推迟到最贵的时候才暴露                                                          |
+| **先做 `vision_test_page_redesign_plan`** | 它是**纯 UI 重构**（25 项映射对账表说明重点在防功能丢失），但页面上的 11 个相机控件要绑 P3 的接口。先做就得绑旧 `CameraManager`，P3 落地后再改一次                                         |
+| **把 P2 拆到两篇各自做**                        | 必然产生两套编号。这是本编排里**唯一不可妥协**的一条                                                                                                         |
+| **P1 只做「分文件」不做 C1~C5**                  | `config_ownership_plan` 的结论就是**现在不分**；真正的缺陷是 C1（`SimAlgo::LoadConfig` 空实现）、C2（相机设备标识两键不相通）、C5（三套路径解析）与 §七（`save()` 非原子写）。**分文件不是目标** |
 
 ## 六、台账与文档同步约定
 
@@ -108,3 +108,133 @@ P6  动作树 UI + 并发   action_tree_concurrency_plan（第二、三步）   
    - **D9（`smoothTime`）**：S 曲线平滑削减斜坡 jerk 尖峰，理论上允许在更高加速度下不丢步 → 是**同时保住节拍与精度**的杠杆。已从「治本方向」转为「节拍回收杠杆」，前置是查卡手册确认其合法范围（`3rdparty/bopai/` 内无 PDF 手册）。
 
 **结论**：**P0 不再占用排期**；D6 可在 P1 之前顺手做（成本极低，只影响长循环决策），D8 / D9 并入 **P6**。
+
+## 八、2026-10 新增三篇方案的登记（2026-10-09 补）
+
+P0~~P6 全部收口后，`doc/` 新增了三篇\*\*独立于 P0~~P6\** 的需求方案。它们**均无未完成前置**（P0~P6 已全 ✅），但**彼此之间存在文件与字段耦合**，须一并编排——这是本节存在的唯一理由。
+
+> ⚠ **范围裁定（2026-10-12，用户）**：本章三篇 + `physical_buttons_plan` **均非泡芙交付范围**——性质是**软件平台扩展储备**（为适应其他项目而做的设计与评估），本交付不实施 ⇒ **§8.3 的 N1→N2→N3 不占泡芙排期**，本章的保留价值仅为「将来重启这些储备项时的编排依据」。§8.1 的改动面与 §8.2 的耦合分析仍然有效，不必重做。
+>
+> ⚠ **但 `third_party` §十一 的「前置阻塞项 TR-123」须另行定性**：该文把它写成第三方对接的前置，实际**并发 UB 独立存在**——泡芙现有「识别」动作已在双线程调同一 pipeline（`SequenceWorker.cpp:1001` 经 `InMainThread` 在**主线程**取帧 vs `CameraCaptureWorker.cpp:58` **采集线程**按 fps 取帧；`AutoRunPage.cpp:651` 启动方案即 `AcquireCamera("AutoRun")` 让流常驻），而 `OrbbecCamera::CaptureFrame()` 全段**无管线级锁**（成员锁仅 `errMutex_` 护 `lastError_` / `frameMutex_` 护 `lastGoodFrame_`）。**已于 2026-10-12 落地（TR-123）**：走该文 §十一 **②** 的**取帧收敛**路线（`ICamera::TakeLatestFrame()`，**非** ① 加锁），与第三方对接解耦。
+
+### 8.1 三篇方案与改动范围
+
+| 方案                                | 状态    | 主要改动范围                                                                                                                                                                                                                                                                                                                                                                                   |
+| :-------------------------------- | :---- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `multi_camera_plan.md`            | ⏳ 计划中 | `src/HAL/core/`（活动相机）、`src/HAL/camera/`、`src/UI/VisionTestPage.*`、`src/UI/ConfigPage.*`、**`src/UI/AutoRunPage.*`**、**`src/Logic/SequenceWorker.h`**（`DetectionResult` 加 `cameraId` / `algorithmName`）、`src/Config/ProcessManager.*`（动作级相机绑定字段）                                                                                                                                           |
+| `third_party_integration_plan.md` | ⏳ 计划中 | **新增 `src/Interface/`**、**`src/Config/ProcessManager.*`**（`ActionType::Capture = 6` + `schemeId` + 8 个 `capture*` 字段）、`src/Logic/SequenceWorker.*`（拍照执行体）、**`src/UI/ProcessPage.cpp`**（`kGroupPageIndex` 7→8）、`src/UI/ConfigPage.*`、`CMakeLists.txt`（`Qt6::Network`）                                                                                                                     |
+| `inspection_result_panel_plan.md` | ⏳ 计划中 | `src/HAL/interfaces/IPuffAlgorithm.h`（`Measurement`）、`src/HAL/algorithm/SimAlgo.cpp`、**新增 `src/Config/InspectionSpec*` / `src/Logic/Inspection*` / `src/UI/inspection/`**、**`src/Logic/SequenceWorker.h`**（`DetectionResult` 加 `cycleIndex`）、**`src/UI/AutoRunPage.*`**（左侧列改 `QTabWidget`）、`config/config.json`（`ui.inspectionPanel.show`）、**`build_release.bat`**（复制 `inspection.json`） |
+
+
+### 8.2 三处必须串行的耦合（硬约束）
+
+| #  | 耦合点                                       | 涉及方案                           | 处置                                                                                                            |
+| :- | :---------------------------------------- | :----------------------------- | :------------------------------------------------------------------------------------------------------------ |
+| 1  | **`SequenceWorker::DetectionResult` 的字段** | `multi_camera` ∩ `inspection`  | **改的是同一个结构**。须**一次谈妥**：先做的一方带上另一方的字段（`inspection` 先做 ⇒ 同时加 `cameraId` / `algorithmName`；反之亦然）。⚠ **不可并行改同一文件** |
+| 2  | **`src/UI/AutoRunPage.*`**                | `multi_camera` ∩ `inspection`  | 两篇都要动自动运行页（前者加相机信息条、后者加「检测结果」按钮）⇒ **必须串行**                                                                    |
+| 3  | **`ProcessManager.h` 的 `ActionData`**     | `third_party` ∩ `multi_camera` | 前者追加 `Capture = 6` 与 8 个 `capture*` 字段、后者加动作级相机绑定字段 ⇒ 建议**合并为同一次 schema 增量**，避免两次改 `process.json` 的序列化往返      |
+
+> ⚠ 耦合 1 是**唯一会静默出错**的一处：两次改动若各加各的字段，后一次会覆盖前一次（`DetectionResult` 是值语义结构体，冲突表现为编译期报错或字段丢失，后者更隐蔽）。
+
+### 8.3 建议顺序（待用户裁定）
+
+| 步      | 方案                                 | 理由                                                                                                                                                |
+| :----- | :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **N1** | **`inspection_result_panel_plan`** | ① 以**新增文件**为主，改动面最小、**零前置阻塞**；② 不改 `ActionType`、不引入新的并发路径；③ 它要改的 `DetectionResult` 正是耦合 1 的载体——**先做可让它一次带上 `cameraId` / `algorithmName`**，避免二次改载荷 |
+| **N2** | **`multi_camera_plan` 阶段 A**       | 依赖耦合 1 已解决；它同时要动 `AutoRunPage`（耦合 2）⇒ 排在 N1 之后                                                                                                    |
+| **N3** | **`third_party_integration_plan`** | ⚠ **有独立硬前置**：`OrbbecCamera::CaptureFrame()` 管线级互斥（该文 §十一，建议单独走一条 TR）。且它动 `ActionType` 与 `ProcessPage`（耦合 3）⇒ 排最后，与 N2 的 schema 增量合并               |
+
+**不建议的顺序**：
+
+| 反例                                              | 后果                                                                                |
+| :---------------------------------------------- | :-------------------------------------------------------------------------------- |
+| `inspection` 与 `multi_camera` **并行**            | 撞耦合 1 与 2（同一结构体 + 同一页面），冲突难定位                                                     |
+| `third_party` 在 `CaptureFrame()` 互斥修复前开工        | 两个线程可同时进同一 pipeline，且其一可能在重建管线 → 真机验收时以**随机 `0xC0000005`** 的形式暴露（该文 §十一 已列为前置阻塞项） |
+| `third_party` 与 `multi_camera` 分别改 `ActionData` | `process.json` 的序列化往返要改两遍，且字段表两次漂移                                                |
+
+⚠ **TR 编号**：三篇均**不预留号段**（本文 §六 的约定同样适用）。`third_party` 文中「从 TR-123 起」只是**按其成稿时点**的估计，实际按当日台账最大号分配。
+
+## 九、2026-10-12 剩余工作重估（④ 算法路线变更）
+
+> **本节性质**：**进度与工期的重估登记**，不是新需求方案。算法侧的技术方案（接口扩展、移植步骤、参数表）**尚未成文**，待裁定后另开一篇（见 §9.6）。  
+> **变更缘起**：2026-10-12 用户先后两次裁定——① 早先认为算法由同事交付（⇒ 含外部依赖）；② **当日 17:20 更正为「没有同事交付，改由我方自己实现」，路线暂定「深度图定位」**。  
+> **本章不影响其他章节**：P0~P6 全部 ✅；§八 的三篇方案 + `physical_buttons_plan` 均**非本交付范围**（软件扩展储备），仍不占排期。
+
+### 9.1 剩余工作与人天（2026-10-12 重估）
+
+| #  | 项             | 人天                          | 依赖相机    | 说明                                                                                    |
+| :- | :------------ | :-------------------------- | :------ | :------------------------------------------------------------------------------------ |
+| ①  | 相机安装          | 1~1.5                       | —       | 机械 + 接线                                                                               |
+| ②  | 相机标定          | 4~6                         | 是       | 工具开发 ~2 + 现场 ~2（内参 + 手眼）。⚠ **标定程序当前不存在**，见 §9.5                                       |
+| ③  | 相机坐标 → 基座坐标转换 | 1.5~2                       | 是（依赖 ②） | `CoordTransform::SetCameraIntrinsics` 全仓**零调用点**                                      |
+| ④  | 深度法泡芙定位算法（自研） | 5.5~9.5                     | **部分**  | 拆分见 §9.2                                                                              |
+| ⑤  | 泡芙实测          | 4~6                         | 是       | 抓取 + 灌装                                                                               |
+| ⑥  | 挤出轴           | 1~2                         | 否       | ⚠ **用户清单外的漏项**：`axes.Axis_Extruder.enabled=false`（未装电机）+ 已知未修缺陷（暂停后重试反向退料到满行程 ⇒ 过量灌装） |
+| —  | TR-123 真机拔插复测 | 0.5                         | 是       | 用例 11.28 / 11.31 / 11.36；Sim 走默认回落，验不到该路径                                             |
+|    | **合计**        | **17.5~~27.5 ≈ 3.5~~5.5 周** |         | 按 5 人天/周                                                                              |
+
+### 9.2 ④ 的拆分与「可先开工」边界
+
+| 子项                                                                                      | 人天          | 依赖相机                 |
+| :-------------------------------------------------------------------------------------- | :---------- | :------------------- |
+| 移植 `CPuffLocator` → `IPuffAlgorithm` 实现                                                 | 1.5~2       | **否**                |
+| 接口 / 参数扩展（`AlgorithmParams` 加内参与调参量、`PuffResult` 加 `area` / `minDepthMm`、`vision.*` 扩键） | 1~1.5       | **否**                |
+| 仿真同构（`SimCamera` 已渲染深度；把仿真默认算法切到深度法，或同步改造 `SimAlgo`）                                    | 0.5~1       | **否**                |
+| 调参可视化（把全部连通域的 area / mean depth / score 画出来）                                            | 0.5~1       | **否**                |
+| 真机调参                                                                                    | 2~4         | 是                    |
+| **小计**                                                                                  | **5.5~9.5** | 其中 **3.5~5.5 可立即开工** |
+
+⇒ **④ 的移植段 + ⑥ ≈ 4.5~7.5 人天不依赖相机**，应排在相机到货 / 安装之前的窗口里做，不占真机排期。
+
+### 9.3 关键路径
+
+```
+① 相机安装 ─→ ② 相机标定 ─→ ③ 坐标转换 ─┐
+                                          ├─→ ⑤ 泡芙实测
+④ 深度法算法（移植段可提前）──────────────┤
+⑥ 挤出轴（可提前）────────────────────────┘
+```
+
+**关键路径 = ①→②→③→⑤ ≈ 11.5~~15.5 人天 ≈ 2.5~~3 周**；④ 的移植段与 ⑥ 可并行 / 前置，不占关键路径。
+
+### 9.4 ④ 的路线来源（老项目可移植实现）
+
+⚠ **老项目 `D:/workspace/projects/robot-puff/Framework/VisionModule/` 内已有一份可用的纯深度法实现，移植优先于重写。**
+
+| 文件                                                | 内容                                                                                                                                                      |
+| :------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `include/PuffLocator.h`（86 行）                     | `CPuffLocator` + `PuffLocateResult`（`found` / `center` / `boundingBox` / `depthMm` / `minDepthMm` / `area` / `confidence`）                              |
+| `src/PuffLocator.cpp`（407 行）                      | 纯深度流水线：`BuildDepthMmAndMask` → `BuildTopRegionMask`（最近 3% 分位数定参考面 + `heightBandMm` 取最高层）→ `SelectBestRegion`（`cv::connectedComponentsWithStats` + 加权打分） |
+| `examples/puff_locator_params.json`               | 参数已全部外置（10 项 + ROI）                                                                                                                                     |
+| `交接文档.md`（2026-06-17）                             | **完整调参清单与已知限制**，见其 §九 / §十                                                                                                                              |
+| `examples/puff_locator_clutter_*` / `_handheld_*` | 杂乱场景 / 手持场景验证图，各 6 组                                                                                                                                    |
+
+**为什么可直接用**：
+
+- 核心 6 个函数**零 MFC 依赖**（只用 OpenCV + std），仅 `BOOL` / `CString` / `CVisionBase` 外壳需替换；OpenCV 本仓已 `find_package` 接好、DLL 拷贝已配（`CMakeLists.txt:79,210`）。
+- ⚠ `Locate(color, depth, …)` 的 `color` 形参**匿名且完全未使用** ⇒ 它本来就是纯深度算法，与拟定路线一致。
+- ⚠ **相机是同一台**：老项目交接文档记 `Orbbec Gemini 336 [SN: CP9KB530005S]`，与本仓 `communication.camera.sn` **完全一致** ⇒ 深度噪声 / 量程特性可直接参考。
+- **边界不重叠**：老算法**只输出图像坐标 + 深度，不做相机 → 基座坐标转换**（交接文档 §九.3 / §十.7）⇒ 正是本项目 ③ 的起点。
+
+### 9.5 移植前必须处理的既有约束（逐条已核源码）
+
+| #  | 约束                                                                                                                                                                         | 落点                                 |
+| :- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------- |
+| 1  | **算法侧无内参通路**：`AlgorithmParams`（`IPuffAlgorithm.h:28-33`）无内参字段；`SimAlgo::Detect` 硬编码 `fx=fy=520`、`cx=w/2, cy=h/2`（`SimAlgo.cpp:53-56`），恰好等于 `SimCamera` 内参 ⇒ 仿真对得上、**真机必错** | `AlgorithmParams` 加内参字段            |
+| 2  | **D2C 必须保持 `SW`**：`OrbbecCamera::intrinsics_` 装的是**彩色**内参（`:387-397`）；只有对齐后深度才与彩色同坐标系。关掉 D2C ⇒ 深度回原生 848×480，而接口**无深度内参通路**                                                | 保持 `config.json` 的 `d2cAlign="SW"` |
+| 3  | **`vision.depthZMax=496` / `depthZMin=6`** 是按仿真背景 600 mm 定的；老项目默认 `[100,3000]`                                                                                             | 真机装高后重标                            |
+| 4  | **`PuffResult` 缺 `area` / `minDepthMm`**；`z` 语义待定（区域**均值** vs **最高点**——抓取应取最高点）                                                                                            | `IPuffAlgorithm.h`                 |
+| 5  | **`SelectBestRegion` 只返回 argmax 一个**，而 `Detect` 返回 `vector<PuffResult>`                                                                                                    | 改为遍历连通域                            |
+| 6  | **仿真同构**：`SimCamera` 深度是**平盘非穹顶、且无噪声**（`SimCamera.cpp:120-152`）⇒ 仿真只验通路；且 `depthZMax=496` 会滤掉 600 mm 背景 ⇒ **只检出 1 个目标**（颜色法现为 2 个），属**预期行为变化、非缺陷**                         | 验收判据须写明                            |
+
+### 9.6 最大未知数与待定项
+
+- ⚠ **老实现从未在真实泡芙上标定过**（`targetArea=0`）。交接文档 §九 自述「物体距相机太近时会出现深度孔洞、噪声、结果异常，拿远后明显稳定」，其验证场景是桌面杂物与手持，**不是真泡芙**。`heightBandMm` / `nearestPercentile` / `minArea` / `targetArea` 全部须按我们的安装高度重标——§9.2 中「真机调参 2~4 人天」的区间宽度来自这里。
+- **相机装好后第一件事**：在**最终安装高度**采一组真泡芙 RGB + 深度图，按交接文档 §十.2 用 `_mask.png` 量出单个泡芙面积，定 `targetArea` 与 ROI。这步做完 §9.2 的区间才能收窄。
+- **算法配置的承载方式未定**（是否给 `IPuffAlgorithm` 独立的配置命名空间，而非继续往 `vision.*` 追加算法私有键）。**裁定前不要往 `vision.*` 追加算法私有键**。
+- **④ 的技术方案尚未成文**。本节只登记工期与来源；移植步骤、接口扩展、参数表须另开一篇（`doc/` 一份需求一份文档）。
+
+### 9.7 台账与文档同步
+
+- 本批**尚未产生代码改动**，故**不占 TR 编号**。移植段落地时按当日台账最大号分配（现为 TR-123）。
+- 落地后须同步：`TEST_RECORD.md` → 本节 §9.2 状态 → `doc/README.md` 状态列 → `AGENTS.md` 的 Architecture / Current Phase。
