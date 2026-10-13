@@ -1,0 +1,427 @@
+{
+  "generatedAt": "2026-10-09 09:44:14",
+  "projectRoot": "D:\\workspace\\projects\\CreamPuffRobot",
+  "sessionCount": 20,
+  "sessions": [
+    {
+      "sessionId": "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+      "provenance": "cmd-path",
+      "pids": [],
+      "startedAt": "",
+      "updatedAt": "",
+      "version": [],
+      "registryFiles": [],
+      "auditLines": 43,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "f52bed45-4a27-4b45-9c7a-24fa95f02f1a",
+      "provenance": "cmd-path",
+      "pids": [],
+      "startedAt": "",
+      "updatedAt": "",
+      "version": [],
+      "registryFiles": [],
+      "auditLines": 63,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "f26f660c-de3c-409d-ab45-7b73d07c2181",
+      "provenance": "cmd-path",
+      "pids": [],
+      "startedAt": "",
+      "updatedAt": "",
+      "version": [],
+      "registryFiles": [],
+      "auditLines": 61,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "7f1eb765-78f9-40e4-b695-af7990491a94",
+      "provenance": "cmd-path",
+      "pids": [],
+      "startedAt": "",
+      "updatedAt": "",
+      "version": [],
+      "registryFiles": [],
+      "auditLines": 26,
+      "hasFileHistory": false,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "92e1eb18-0fd1-42d5-86da-d3a203f85784",
+      "provenance": "cmd-path",
+      "pids": [],
+      "startedAt": "",
+      "updatedAt": "",
+      "version": [],
+      "registryFiles": [],
+      "auditLines": 18,
+      "hasFileHistory": false,
+      "hasChangesDetail": false,
+      "hasChangesIndex": false,
+      "hasArtifactIndex": false
+    },
+    {
+      "sessionId": "5e954737-cd0d-4016-b03a-4e905a25a9d5",
+      "provenance": "cwd",
+      "pids": [
+        36404
+      ],
+      "startedAt": "2026-09-14 12:30:00",
+      "updatedAt": "2026-09-14 13:04:25",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "36404.json"
+      ],
+      "auditLines": 28,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "94ec62e3-c63e-45fb-bcaa-33540980a47c",
+      "provenance": "cwd",
+      "pids": [
+        36072,
+        41136
+      ],
+      "startedAt": "2026-09-14 13:53:30",
+      "updatedAt": "2026-09-14 16:48:47",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "36072.json",
+        "41136.json"
+      ],
+      "auditLines": 122,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "f8118f24-79fa-4f68-8fff-81564726da82",
+      "provenance": "cwd",
+      "pids": [
+        30428,
+        35428
+      ],
+      "startedAt": "2026-09-14 14:59:10",
+      "updatedAt": "2026-09-14 16:28:52",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "30428.json",
+        "35428.json"
+      ],
+      "auditLines": 35,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "19548fd0-3d0c-4ccb-963c-9737ea4a7175",
+      "provenance": "cwd",
+      "pids": [
+        16988,
+        28772,
+        34572
+      ],
+      "startedAt": "2026-09-15 10:45:21",
+      "updatedAt": "2026-09-16 10:16:34",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "16988.json",
+        "28772.json",
+        "34572.json"
+      ],
+      "auditLines": 95,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "eea03c0d-2b0c-47ef-8f4c-346ed8a564a2",
+      "provenance": "cwd",
+      "pids": [
+        4456
+      ],
+      "startedAt": "2026-09-15 15:19:46",
+      "updatedAt": "2026-09-15 15:53:17",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "4456.json"
+      ],
+      "auditLines": 9,
+      "hasFileHistory": false,
+      "hasChangesDetail": false,
+      "hasChangesIndex": false,
+      "hasArtifactIndex": false
+    },
+    {
+      "sessionId": "8f009c3d-f4db-429b-a0ee-9a8401634f94",
+      "provenance": "cwd",
+      "pids": [
+        14192,
+        3068,
+        8960
+      ],
+      "startedAt": "2026-09-17 13:22:59",
+      "updatedAt": "2026-09-21 09:32:17",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "14192.json",
+        "3068.json",
+        "8960.json"
+      ],
+      "auditLines": 764,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "5cb89b46-605f-46a0-a842-d8e680636ed3",
+      "provenance": "cwd",
+      "pids": [
+        10896,
+        20584,
+        25784,
+        2984,
+        37316,
+        8124
+      ],
+      "startedAt": "2026-09-21 09:47:16",
+      "updatedAt": "2026-09-24 14:28:17",
+      "version": [
+        "2.137.1",
+        "2.147.0"
+      ],
+      "registryFiles": [
+        "10896.json",
+        "20584.json",
+        "25784.json",
+        "2984.json",
+        "37316.json",
+        "8124.json"
+      ],
+      "auditLines": 1109,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "8350915c-d9f3-4dae-9aa5-a3e58a25c21e",
+      "provenance": "cwd",
+      "pids": [
+        31788
+      ],
+      "startedAt": "2026-09-22 09:34:12",
+      "updatedAt": "2026-09-22 11:33:44",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "31788.json"
+      ],
+      "auditLines": 10,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "b7257c95-d4d9-4510-a7c3-5ee25d1ac692",
+      "provenance": "cwd",
+      "pids": [
+        33564
+      ],
+      "startedAt": "2026-09-22 15:46:32",
+      "updatedAt": "2026-09-22 15:50:02",
+      "version": [
+        "2.137.1"
+      ],
+      "registryFiles": [
+        "33564.json"
+      ],
+      "auditLines": 5,
+      "hasFileHistory": false,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "15aa2b1d-cd65-4ecd-8744-26aec8042e7c",
+      "provenance": "cwd",
+      "pids": [
+        37132,
+        40620
+      ],
+      "startedAt": "2026-09-24 14:28:01",
+      "updatedAt": "2026-09-24 15:14:44",
+      "version": [
+        "2.147.0"
+      ],
+      "registryFiles": [
+        "37132.json",
+        "40620.json"
+      ],
+      "auditLines": 28,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "820b28f6-492c-45c3-a595-a4e35d68ec27",
+      "provenance": "cwd",
+      "pids": [
+        12000,
+        25884,
+        34784,
+        35612
+      ],
+      "startedAt": "2026-09-28 10:16:15",
+      "updatedAt": "2026-09-29 17:39:10",
+      "version": [
+        "2.147.0"
+      ],
+      "registryFiles": [
+        "12000.json",
+        "25884.json",
+        "34784.json",
+        "35612.json"
+      ],
+      "auditLines": 467,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "73cd7ad0-69bb-49ce-979b-f3035e267a40",
+      "provenance": "cwd",
+      "pids": [
+        33800
+      ],
+      "startedAt": "2026-09-28 17:40:03",
+      "updatedAt": "2026-09-28 17:42:04",
+      "version": [
+        "2.147.0"
+      ],
+      "registryFiles": [
+        "33800.json"
+      ],
+      "auditLines": 33,
+      "hasFileHistory": false,
+      "hasChangesDetail": false,
+      "hasChangesIndex": false,
+      "hasArtifactIndex": false
+    },
+    {
+      "sessionId": "392bd72e-b730-4d90-8525-f7217cd8a41d",
+      "provenance": "cwd",
+      "pids": [
+        33124
+      ],
+      "startedAt": "2026-09-29 13:14:29",
+      "updatedAt": "2026-09-29 13:15:00",
+      "version": [
+        "2.147.0"
+      ],
+      "registryFiles": [
+        "33124.json"
+      ],
+      "auditLines": 57,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "982bbbf2-6971-489c-8573-8cd8fe07cbf1",
+      "provenance": "cwd",
+      "pids": [
+        36464,
+        8732
+      ],
+      "startedAt": "2026-09-30 11:23:44",
+      "updatedAt": "2026-10-08 17:50:59",
+      "version": [
+        "2.147.0",
+        "2.156.0"
+      ],
+      "registryFiles": [
+        "36464.json",
+        "8732.json"
+      ],
+      "auditLines": 63,
+      "hasFileHistory": true,
+      "hasChangesDetail": true,
+      "hasChangesIndex": true,
+      "hasArtifactIndex": true
+    },
+    {
+      "sessionId": "d8c7a773-7b20-4051-9b4f-d2dc9ff9c398",
+      "provenance": "cwd",
+      "pids": [
+        34172
+      ],
+      "startedAt": "2026-10-09 09:39:04",
+      "updatedAt": "2026-10-09 09:44:04",
+      "version": [
+        "2.156.0"
+      ],
+      "registryFiles": [
+        "34172.json"
+      ],
+      "auditLines": 0,
+      "hasFileHistory": false,
+      "hasChangesDetail": false,
+      "hasChangesIndex": false,
+      "hasArtifactIndex": false
+    }
+  ],
+  "corruptRegistryFiles": [
+    {
+      "file": "21412.json",
+      "src": "workbuddy-ai",
+      "size": 462,
+      "error": "Expecting value: line 1 column 1 (char 0)",
+      "allZero": true
+    }
+  ],
+  "extraSessionIdsByCmdPath": [
+    "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+    "7f1eb765-78f9-40e4-b695-af7990491a94",
+    "92e1eb18-0fd1-42d5-86da-d3a203f85784",
+    "f26f660c-de3c-409d-ab45-7b73d07c2181",
+    "f52bed45-4a27-4b45-9c7a-24fa95f02f1a"
+  ]
+}

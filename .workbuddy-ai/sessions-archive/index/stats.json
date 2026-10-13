@@ -1,0 +1,209 @@
+{
+  "generatedAt": "2026-10-09 09:44:14",
+  "sessionCount": 20,
+  "cwdMatched": 15,
+  "cmdPathExtra": [
+    "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+    "7f1eb765-78f9-40e4-b695-af7990491a94",
+    "92e1eb18-0fd1-42d5-86da-d3a203f85784",
+    "f26f660c-de3c-409d-ab45-7b73d07c2181",
+    "f52bed45-4a27-4b45-9c7a-24fa95f02f1a"
+  ],
+  "auditLines": 3036,
+  "auditFiles": {
+    "2026-09-14.jsonl": {
+      "f26f660c-de3c-409d-ab45-7b73d07c2181": 61,
+      "5e954737-cd0d-4016-b03a-4e905a25a9d5": 28,
+      "94ec62e3-c63e-45fb-bcaa-33540980a47c": 122,
+      "f8118f24-79fa-4f68-8fff-81564726da82": 35
+    },
+    "2026-09-15.jsonl": {
+      "19548fd0-3d0c-4ccb-963c-9737ea4a7175": 95,
+      "eea03c0d-2b0c-47ef-8f4c-346ed8a564a2": 9
+    },
+    "2026-09-16.jsonl": {
+      "f52bed45-4a27-4b45-9c7a-24fa95f02f1a": 63
+    },
+    "2026-09-17.jsonl": {
+      "8f009c3d-f4db-429b-a0ee-9a8401634f94": 60
+    },
+    "2026-09-18.jsonl": {
+      "8f009c3d-f4db-429b-a0ee-9a8401634f94": 129
+    },
+    "2026-09-20.jsonl": {
+      "8f009c3d-f4db-429b-a0ee-9a8401634f94": 575
+    },
+    "2026-09-21.jsonl": {
+      "5cb89b46-605f-46a0-a842-d8e680636ed3": 213,
+      "92e1eb18-0fd1-42d5-86da-d3a203f85784": 18
+    },
+    "2026-09-22.jsonl": {
+      "8350915c-d9f3-4dae-9aa5-a3e58a25c21e": 10,
+      "5cb89b46-605f-46a0-a842-d8e680636ed3": 254,
+      "b7257c95-d4d9-4510-a7c3-5ee25d1ac692": 5
+    },
+    "2026-09-23.jsonl": {
+      "5cb89b46-605f-46a0-a842-d8e680636ed3": 480
+    },
+    "2026-09-24.jsonl": {
+      "5cb89b46-605f-46a0-a842-d8e680636ed3": 162,
+      "15aa2b1d-cd65-4ecd-8744-26aec8042e7c": 28,
+      "68e8fe62-6817-40d0-b788-b54cff7d6da4": 43
+    },
+    "2026-09-28.jsonl": {
+      "820b28f6-492c-45c3-a595-a4e35d68ec27": 383,
+      "73cd7ad0-69bb-49ce-979b-f3035e267a40": 33
+    },
+    "2026-09-29.jsonl": {
+      "392bd72e-b730-4d90-8525-f7217cd8a41d": 57,
+      "820b28f6-492c-45c3-a595-a4e35d68ec27": 84
+    },
+    "2026-09-30.jsonl": {
+      "982bbbf2-6971-489c-8573-8cd8fe07cbf1": 50
+    },
+    "2026-10-08.jsonl": {
+      "7f1eb765-78f9-40e4-b695-af7990491a94": 26,
+      "982bbbf2-6971-489c-8573-8cd8fe07cbf1": 13
+    }
+  },
+  "registryCopied": {
+    "workbuddy-ai": [
+      "10896.json",
+      "12000.json",
+      "14192.json",
+      "16988.json",
+      "20584.json",
+      "25784.json",
+      "25884.json",
+      "28772.json",
+      "2984.json",
+      "30428.json",
+      "3068.json",
+      "31788.json",
+      "33124.json",
+      "33564.json",
+      "33800.json",
+      "34572.json",
+      "34784.json",
+      "35428.json",
+      "35612.json",
+      "36072.json",
+      "36404.json",
+      "36464.json",
+      "37132.json",
+      "37316.json",
+      "40620.json",
+      "41136.json",
+      "4456.json",
+      "8124.json",
+      "8732.json",
+      "8960.json"
+    ],
+    "workbuddy": [
+      "34172.json"
+    ]
+  },
+  "rawStat": {
+    "file-history": {
+      "sessions": 14,
+      "files": 735,
+      "bytes": 32874381,
+      "hit": [
+        "15aa2b1d-cd65-4ecd-8744-26aec8042e7c",
+        "19548fd0-3d0c-4ccb-963c-9737ea4a7175",
+        "392bd72e-b730-4d90-8525-f7217cd8a41d",
+        "5cb89b46-605f-46a0-a842-d8e680636ed3",
+        "5e954737-cd0d-4016-b03a-4e905a25a9d5",
+        "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+        "820b28f6-492c-45c3-a595-a4e35d68ec27",
+        "8350915c-d9f3-4dae-9aa5-a3e58a25c21e",
+        "8f009c3d-f4db-429b-a0ee-9a8401634f94",
+        "94ec62e3-c63e-45fb-bcaa-33540980a47c",
+        "982bbbf2-6971-489c-8573-8cd8fe07cbf1",
+        "f26f660c-de3c-409d-ab45-7b73d07c2181",
+        "f52bed45-4a27-4b45-9c7a-24fa95f02f1a",
+        "f8118f24-79fa-4f68-8fff-81564726da82"
+      ]
+    },
+    "changes-detail": {
+      "sessions": 16,
+      "files": 212,
+      "bytes": 43709466,
+      "hit": [
+        "15aa2b1d-cd65-4ecd-8744-26aec8042e7c",
+        "19548fd0-3d0c-4ccb-963c-9737ea4a7175",
+        "392bd72e-b730-4d90-8525-f7217cd8a41d",
+        "5cb89b46-605f-46a0-a842-d8e680636ed3",
+        "5e954737-cd0d-4016-b03a-4e905a25a9d5",
+        "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+        "7f1eb765-78f9-40e4-b695-af7990491a94",
+        "820b28f6-492c-45c3-a595-a4e35d68ec27",
+        "8350915c-d9f3-4dae-9aa5-a3e58a25c21e",
+        "8f009c3d-f4db-429b-a0ee-9a8401634f94",
+        "94ec62e3-c63e-45fb-bcaa-33540980a47c",
+        "982bbbf2-6971-489c-8573-8cd8fe07cbf1",
+        "b7257c95-d4d9-4510-a7c3-5ee25d1ac692",
+        "f26f660c-de3c-409d-ab45-7b73d07c2181",
+        "f52bed45-4a27-4b45-9c7a-24fa95f02f1a",
+        "f8118f24-79fa-4f68-8fff-81564726da82"
+      ]
+    },
+    "changes-index": {
+      "sessions": 16,
+      "files": 16,
+      "bytes": 959056,
+      "hit": [
+        "15aa2b1d-cd65-4ecd-8744-26aec8042e7c",
+        "19548fd0-3d0c-4ccb-963c-9737ea4a7175",
+        "392bd72e-b730-4d90-8525-f7217cd8a41d",
+        "5cb89b46-605f-46a0-a842-d8e680636ed3",
+        "5e954737-cd0d-4016-b03a-4e905a25a9d5",
+        "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+        "7f1eb765-78f9-40e4-b695-af7990491a94",
+        "820b28f6-492c-45c3-a595-a4e35d68ec27",
+        "8350915c-d9f3-4dae-9aa5-a3e58a25c21e",
+        "8f009c3d-f4db-429b-a0ee-9a8401634f94",
+        "94ec62e3-c63e-45fb-bcaa-33540980a47c",
+        "982bbbf2-6971-489c-8573-8cd8fe07cbf1",
+        "b7257c95-d4d9-4510-a7c3-5ee25d1ac692",
+        "f26f660c-de3c-409d-ab45-7b73d07c2181",
+        "f52bed45-4a27-4b45-9c7a-24fa95f02f1a",
+        "f8118f24-79fa-4f68-8fff-81564726da82"
+      ]
+    },
+    "artifact-index": {
+      "sessions": 16,
+      "files": 16,
+      "bytes": 300092,
+      "hit": [
+        "15aa2b1d-cd65-4ecd-8744-26aec8042e7c",
+        "19548fd0-3d0c-4ccb-963c-9737ea4a7175",
+        "392bd72e-b730-4d90-8525-f7217cd8a41d",
+        "5cb89b46-605f-46a0-a842-d8e680636ed3",
+        "5e954737-cd0d-4016-b03a-4e905a25a9d5",
+        "68e8fe62-6817-40d0-b788-b54cff7d6da4",
+        "7f1eb765-78f9-40e4-b695-af7990491a94",
+        "820b28f6-492c-45c3-a595-a4e35d68ec27",
+        "8350915c-d9f3-4dae-9aa5-a3e58a25c21e",
+        "8f009c3d-f4db-429b-a0ee-9a8401634f94",
+        "94ec62e3-c63e-45fb-bcaa-33540980a47c",
+        "982bbbf2-6971-489c-8573-8cd8fe07cbf1",
+        "b7257c95-d4d9-4510-a7c3-5ee25d1ac692",
+        "f26f660c-de3c-409d-ab45-7b73d07c2181",
+        "f52bed45-4a27-4b45-9c7a-24fa95f02f1a",
+        "f8118f24-79fa-4f68-8fff-81564726da82"
+      ]
+    }
+  },
+  "corrupt": [
+    {
+      "file": "21412.json",
+      "src": "workbuddy-ai",
+      "size": 462,
+      "error": "Expecting value: line 1 column 1 (char 0)",
+      "allZero": true
+    }
+  ],
+  "totalFiles": 1025,
+  "totalBytes": 81816157
+}

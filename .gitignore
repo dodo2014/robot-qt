@@ -46,5 +46,9 @@ vcpkg/
 # 助手侧临时脚本 / 临时文本（一次性的改写脚本、提交信息草稿等），不进仓库
 .workbuddy-ai/tmp_*
 
+# WorkBuddy 会话归档 · 原始快照约 74 MB（源码各时刻的内容快照，与 git 版本历史高度重叠），
+# 整体不入库（2026-10-09 用户裁定）。同目录下 index/ 与 audit-log/（约 3.8 MB）仍入库。
+.workbuddy-ai/sessions-archive/raw/
+
 # Config override
 config/config.local.json

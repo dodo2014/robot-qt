@@ -1,17 +1,18 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-09-11T09:02:49+0800
+最后更新时间：2026-10-08T15:53:43+0800
 
 # 项目概述
 
 - CreamPuffRobot — SCARA 泡芙抓取机器人控制系统（Qt6 HMI + 仿真/真机双模式）。2026-08 重大演进：重构 C++ 运动学与 TCP 核心库（小脑）+ 自动工艺流程执行引擎 SequenceWorker（大脑）。核心库使用 Pose{x,y,z,r}/Joints{j1,j2,z,r}，R 轴独立透传，提供 Forward/Inverse/InverseSmart/SetTCP；TCP 已内化为等效小臂（l2_eff = L2 + tcpForward_），旧 ApplyTCPOffset 已删除。
 - L1 大臂水平投影 2026-08-19 重测：174.35 → 138.83mm，2D SCARA L1=138.83/L2=166.86。
-- 2026-08-28 完成系统目录结构与架构全面梳理，产出 doc/architecture.md（目录职责/分层依赖/三条数据流/门面设计原则/拆分路线/关键不变量）。HardwareManager 已部分拆分（CameraManager、AxisConfigService），对外 API 不变。
-- 2026-09-07 三项重大落地（同一天，单次提交 2be4083）：**TR-073 自动运行页 5 按钮 + SequenceWorker 显式状态机**、**TR-074 全局安全位**、**TR-075 UI 权限与全局互锁**（详见各自专节）。均通过 Debug+Release 双编译 + Sim 冒烟，GUI 交互与真机走位待 2026-09-08 起统一真机验证。
-- 当前基线 = **62ad7d2**（docs: 补工作日志 2026-09-08，2026-09-10）。09-10 提交链十连：`1297c02`（9.9 复测标记）→ `690d225`（TR-082）→ `09a9705`（TR-083）→ `9103f6d`（用例编号去重）→ `f55a7a6`（阶段 9 收口）→ `0e15297`（真机调参）→ `d1d5346`（TR-084）→ `f57a5a6`/`709560d`/`62ad7d2`（worklog 08/09 补记）。此前 72660d1（TR-076/077 + 阶段 8 收口）、50d37cc（真机用例文档）、13762e3（worklog 补记）、功能提交 2be4083。**均未 push**。
-- 真机验证进度：phase3 阶段 8（TR-073，用例 8.1–8.17，汇总 = TR-078）2026-09-08/09 全部 🟢 收口；**阶段 9（TR-074 安全位）2026-09-10 已收口——用例 9.1–9.17 全部 🟢**（用例数 15→17，期间修复 TR-079/080/082/083/084、语义定论 TR-081）；阶段 10（TR-075 互锁 + 急停恢复全链路，10.1–10.23）待执行。后续：奥比中光（Orbbec）真实相机 SDK 实现 ICamera 待同事提供 SDK 后接入。
-- 物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。
+- 2026-08-28 完成系统目录结构与架构全面梳理，产出 `doc/architecture.md`（目录职责/分层依赖/三条数据流/门面设计原则/拆分路线/关键不变量）。HardwareManager 已部分拆分（CameraManager、AxisConfigService），对外 API 不变。
+- 2026-09-07 三项重大落地（同一天，单次提交 `2be4083`）：**TR-073 自动运行页 5 按钮 + SequenceWorker 显式状态机**、**TR-074 全局安全位**、**TR-075 UI 权限与全局互锁**（详见各自专节）。
+- **2026-09 主线：`doc/implementation_roadmap.md` 的 P0~P6 七项全部落地**（P0 = TR-095 J1 偏移 / P1 = TR-097 配置地基 / P2 = TR-098 编号机制 / P3 = TR-099 相机 HAL / P4 = TR-100 视觉页重构 / P5 = TR-101 视觉引导 / P6 = TR-102 动作树与分组并发），2026-09-20 **单次提交 `2be44d3`** 全链路入库。
+- **当前基线 = `5e683d3`**（2026-09-29，`fix: 日志保留改「按个数」+ 阶段 13B 实测记录 (TR-102, TR-122)`）。分支 `main` **领先 `origin/main` 10 个提交，全部未 push**（用户未授权）。工作区未提交：`config/process.json`（用户真机测试数据改动，按 skill 约定不入库）+ 未跟踪 `.workbuddy-ai/process.json.before13`。
+- **瓶颈已从「写代码」转到「真机验收」**：`doc/test/real_machine_plan_phase3.md` 阶段 11（P1~P4，11.1~11.37）/ 12（P5，12.1~12.28）/ 13（P6，13.1~13.34）共 **99 条用例**，分 A 档离线 / B 档 Sim / C 档真机三档执行。**已执行**：阶段 11 全部（11A/11B/11C/11D）、阶段 12 的 12A/12B、阶段 13 的 13A/13B（13.1~13.23）。**阻塞项 = 手眼矩阵标定**（当前矩阵为占位值 ⇒ 12C（12.22~12.26）与 13C（13.30~13.34）无法执行）。
+- 台账当前最大号 **TR-122**。物理蘑菇按钮（初始化/启动/停止/复位/急停）接线方案待设计确认。
 
 # Git 操作规约与用户工作习惯
 
@@ -20,6 +21,119 @@
 - 用户对不满意的实现会手动回滚后要求重做（2026-09-04 曾回滚一次早期修复尝试「这个问题不处理」，随后又提出重新分析修复）；中途指令可能推翻此前指令，以最新为准。
 - **先计划后执行（2026-09-07 强化）**：用户多次打断"直接开干"并明确「我说的是制定计划」——收到架构指令类需求时须先出计划供用户与 Gemini 审核，批准后才实施。计划文件落 C:\Users\11318\.codebuddy\plans\。
 - 提交前必须核查工作区：2026-09-08 提交时发现 `config/config.json`（多余空白行）与 `config/process.json`（speedPercent 统一 50 + 新增 x=600 不可达点，疑为真机测试准备）两处非本轮改动，经询问后用户选择"只提交文档"，config 改动保留工作区。发现意外改动先查来源再问，不擅自暂存或丢弃。
+
+# 阶段 10 收口与「停止滑行」调参（TR-085~TR-090，2026-09-10/11）
+
+- 阶段 10（TR-075 UI 权限互锁 + 急停恢复全链路）2026-09-10 全 🟢 收口（10.1–10.20，汇总 = TR-089；10.12「Paused + Step 点启动/继续放行下一步」**场景不可构造** ⚪ = TR-086）。
+- **TR-085 语义纠正**：点动停止**本来就是减速停**——用户评审问「自动暂停是减速停，点动有必要也做成减速停么」，隐含前提有误，零代码改动。
+- TR-087：急停锁存期间**抑制舵机重连提示**（原「舵机已重连（扭矩已释放）」覆盖急停恢复指导绿字③）。TR-088：回零完成绿字③**锁存** + 安全位会话完成态特判。
+- **TR-090 停止滑行调参**：100% 速度下暂停/停止滑行角度大（J1 高速约 9°）→ 接线 `MC_SetStopDec`（可标定的停止减速度系数，提交 `cae5105`），真机首轮标定 **J1 / Z 的 `stopDecSmooth = 1.0`**（提交 `52a6ccf`），其余轴暂不动。
+- TR-087 遗留排查项定位：舵机短暂离线**根因 = COM 转换器硬件不稳定**（用户 2026-09-11 确认），换稳定型号后再实验。
+
+# WorkBuddy 项目级配置与记忆体系（2026-09-14 建立）
+
+- `.workbuddy-ai/`：`settings.json`（权限 + 5 条 hooks，入库共享）、`settings.local.json`（本机私有，gitignore）、`hooks/`、`memory/`（MEMORY.md + 每日日志，gitignore）、`README.md`。记忆迁移：`.workbuddy/memory/*` → `.workbuddy-ai/memory/`。
+- **git 硬拦截**：用户指令「没有收到提交指令之前，禁止提交」→ `guard-git.sh` 是唯一闸门；提交授权令牌 `.workbuddy-ai/.git-commit-authorized`（30 min TTL）**只能由用户创建**（助手自建即红线）。
+- ⚠ 已知缺陷（未入库）：`settings.json` 的 `permissions.deny` 里 `Bash(git commit:*)`/`push:*` 与令牌机制**互斥**，已从文件移除 3 条 git 条目；`Bash(git rebase:*)` 不可删。
+- ⚠ hook 是**会话启动快照**：当日新建/改动的 hook 在本会话内**不生效**，须重启会话验证。
+- CodeBuddy plan 目录（`d:\dev\.codebuddy\plans\`，**在仓库外**）已纳入记忆体系：已核实 17 篇全部为本项目（2026-09-02~09-11）。`projects/<slug>/<session-id>.jsonl`、`tasks/`、`file-history/` 三者**共用 session UUID** 可互相还原，但 `plans/` 文件名不含 UUID，只能靠内容或 mtime 推断。
+
+# 文档治理与输出规范 v2（2026-09-14）
+
+- 新建 `doc/doc_output_standards_guide.md`（用户先删原第 4 节，助手重写为 v2）：核心术语表、机翻黑名单、语种分工、文件编码规范、多义陷阱表。**写文档 / 代码 / review 前必读**（`AGENTS.md` §2 强制）。
+- 语种分工纠错：原写「代码注释、日志消息、提交信息 → 英文」**与仓库现状不符** → 改为「**注释中文、日志中英混合、提交信息英文前缀 + 中文描述**」。
+- 加固「指南如何到达助手上下文」：`session-brief.sh` 新增一行指向该指南（原四条通道中，指南本体必须助手主动 Read，是唯一软环节）。
+- **`doc/` 不按主题分子目录**：方案文档状态是流动的（待实施→待真机→已验收→归档），且 doc 之外的引用面约 251 处（含源码注释）→ 维持 `doc/README.md` 逻辑索引 + `doc/archive/`。**触发条件**：方案文档 > 30 篇 / 索引表超一屏 / 同主题 ≥ 5 篇需成组。
+- 2026-09-21 归档 5 篇已验收文档（`refactor_plan` / `kinematics_sequenceworker_test` / `global_safe_position` / `ui_interlock_plan` / `kinematics_sequenceworker_plan`），`doc/README.md` 增加「按状态速览」。删除先例：`doc/机械臂参数.md`（L1 值错误，其余参数均已在 config.json，无信息损失）。
+
+# 循环生产 Loop Production（TR-091，2026-09-14 实施）
+
+- 方案 `doc/auto_run_loop_production.md` D1–D19 全定稿后按 S1–S8 实施：`LoopConfig` 值语义 + `cycleChanged` 信号 + `ExecuteActions` 循环外壳（原主体搬迁为 `ExecuteOnce`）+ `RunSafePos` 抽 `BuildSafePosActionFrom` + AutoRunPage 循环控件一行（单轮 / 指定次数 / 无限循环 + 次数 1~9999 + 回安全位）+ `production.loop.*` 持久化 + `main.cpp PurgeOldLogs` 启动清理。`MainWindow`/`ProcessPage`/`ManualControlPage`/`HardwareManager` **零改动**。
+- 关键裁定：**`errorOccurred` 单点化**（D17 方案 A——`ExecuteAction` 子树 8 处 `emit` 改为写 `Impl::lastError`，emit 收敛到会话级出口 2 处，顺带修掉「具体失败原因被 `action.name` 覆盖」）；**严格先抬 Z 加固**（D19——新增 `DispatchPointMove()`，目标与读回差 ≤ 0.01 的轴跳过下发 + `skip axis X (in position)`，跳过前仍过软限位）。
+- 命名偏差：`Impl` 成员定名 **`loopCfg`**（Impl 内有局部 `QEventLoop loop`，同名触发 C4458）。
+- 用例 = phase3 第四批 8.18–8.26（9 条）+ 10.21–10.26（6 条）；真机验证 = TR-094（全 🟢）。
+
+# J1 关节累积偏移（TR-095，2026-09-15 发现 → 2026-09-18 真机收口 🟢）
+
+- 现象：循环生产约 15 轮后回到方案 1 初始位置，关节 2 / 夹爪向 Y+ 偏移、J1 目测逆时针偏移、Z 无偏移。
+- 定位：**软件侧用真机日志实测排除**（J1 当日下发 1333 次、不同目标值仅 4 个、零变化）。根因机制 = **卡内 `lAxisPrfPos` 是指令计数器而非反馈**——开环步进失步对它不可见（故「UI 数值不变 ⇒ 软件无罪」推理**无效**），且下一轮下发同一绝对目标时卡发出 **0 个脉冲**，物理短少永不被纠正；**绝对定位不是安全保证，而是误差只累积不回落的前提**。
+- 收口值（提交 `4c95d14`，2026-09-16）：`maxAccel` **200 → 80 °/s²**、`maxSpeed` **30 → 25 °/s**。逐日日志对照：09-15 下发 200 °/s²（370 次）且观察到漂移；09-18 下发 80 °/s²（1333 次，唯一档位）连续 **247 轮（≈4 h）无可见漂移**。
+- 机理细化：**有效杠杆是加速度而非速度**——巡航段力矩需求仅摩擦与重力，斜坡段 = 转动惯量 × 角加速度 ⇒ 失步主要发生在斜坡段。**降加速度是拿节拍换精度，与 P6 节拍优化直接冲突**。
+- 遗留：判定仍为**目测级**（残余失步是否归零未知，长循环前须做定量读数）；`maxAccel` 上限边界未扫描。
+- 教训（已沉淀）：写问题分析文档前**必须先 `grep TEST_RECORD.md`** 查是否已有 TR——本次 TR-095 早已专记该问题且证据链更细，助手把「软件指令恒定」误当新发现。
+
+# 日志路径便携化与 Release 打包（TR-096，2026-09-16）
+
+- 落地：`src/main.cpp` 日志目录便携化（**不能**做成「exe 旁优先」，否则开发机行为倒挂）+ `build_release.bat` 新增 `:package` 段——复制可部署运行期文件集到 `out\dist\CreamPuffRobot\` 并压成 `out\dist\CreamPuffRobot_x64_Release.zip`，刻意排除构建产物（`CMakeCache.txt`/`CMakeFiles/`/`vcpkg_installed/`/`src/`/`tests/`/`*.pdb`/`*.lib`）。
+- ⚠ `out\dist\` 的旧产物是**手工孤儿**，与 `build_release.bat` 无关且已过期，**勿用于现场部署**。
+
+# P1 配置地基与配置归属（TR-097，2026-09-20）
+
+- 方案 `doc/config_ownership_plan.md`：**结论「现在不分文件」**——真问题不是文件粒度，而是「同一个键有多个写入口、读的时机还不一致」。
+- 核心发现：`SimAlgo::LoadConfig` 曾是**空实现**（算法配置链路无闭环）→ 改为真解析并按阈值过滤；相机设备标识两个键**互不相通**（`communication.camera.sn` 有写入口无读点、`simulation.cameraDeviceId` 有读点无写入且 config 中不存在）→ 收敛为单一键 `communication.camera.sn`；配置查找路径**三套实现**（HardwareManager / ConfigPage / ProcessManager）→ 收敛为 `ConfigPaths`。
+- 两条独立缺陷已修：`ConfigManager::save()` 与 `ProcessManager::save()` **非原子写**（改 `QSaveFile`）。
+- **`config.json` 两条生效路径（通用坑）**：经 UI 页改 → 即时生效；**直接编辑文件 → 需重启**（`ConfigManager::getValue` 读内存 `root_`）。⚠ 用例文档多处按「改文件即生效」写判据，已踩（11.2 / 11.3 / 11.21）。
+- 分文件触发条件 = 要装第二台机器 或 `config.json` 超约 400 行；分法按**生命周期**（machine / site / vision / process），不按模块。
+
+# 动作编号机制与动作树并发（TR-098 + TR-102，P2 + P6，2026-09-20）
+
+- 需求：动作列表由**一维列表**改为**二级树**（节点类型 = 动作 / 分组），分组内子动作**并发执行**以压缩节拍，每个动作含独立编号。
+- **不采纳 Gemini 的 QtConcurrent 多线程路线**（会破坏 `Impl::lastError` 线程独占、池线程脱离 `ShutdownWorker` 管理、`InMainThread` 阻塞往返 ×N、硬件层加锁覆盖不全）→ 改**单线程协作式调度**（「并发分组省的是等待时间而非计算时间，等待不需要线程」）。
+- 5 项补充定义（2026-09-18 裁定）：Q1 并发语义 = **同时下发、统一汇合**；Q2 分组失败 → 置 cancel 并**等所有子动作安全停止后**再报错（禁止立即返回）；Q3 循环生产 `retryCount` 对分组取**整组重试**；Q4 编号 = 方案内唯一正整数、自增、删除不复用、跨方案不唯一、**不用 UUID / 时间戳**、分组也占编号；Q5 **分组不允许嵌套**。
+- 编号机制（P2）：`ActionData::id` 唯一正整数 + `SchemeData::nextActionId` **单调递增不回退**；插入 / 删除 / 移动**不重排**；加载时缺失 / 非正 / 重复按「方案内最大 + 1」补发、**幂等**、**惰性升级**（加载期不回写磁盘）。`VisionGuide = 5` 枚举追加末尾；`Group` **不进 `ActionType` 枚举**（用独立 `nodeType` 字段）。`actions` → `nodes` 改名与 `nodeType` 在 P6 落地（读取兼容旧键 `actions`，非法嵌套在加载时**扁平化**）。
+- ⚠ **校验按「资源」不按「类型」**（VisionGuide 与 Move 共用四轴集合、Delay 空集）；失败归因 = **首个失败者**；子树内**不新增** `errorOccurred` emit。
+- ⚠ 新增动作类型落点 **5 处硬编码**：枚举（只能追加末尾）/ `actionTypeName` / `resourceKeysOf` / `ProcessPage.cpp` 两处下拉 / `SequenceWorker.cpp` 的 `SegmentCountOf` 与 `ExecuteAction` switch。
+- ⚠ `ProcessPage.cpp:917` 详情页索引 = `static_cast<int>(type) + 1`，而 `kGroupPageIndex = 7`；新增 `Capture = 6` 会**与分组页撞号**（`setCurrentIndex` 越界被 Qt **静默忽略** → 错显上一节点面板）→ 必须把 `kGroupPageIndex` 改成 8。
+- 离线自测新增 `tests/test_node_tree_check.cpp`（**会改写 `config/process.json`**，字节级还原；真机调试中勿跑）。
+
+# 相机接入（P3~P5，TR-099~TR-101，2026-09-20 落地）
+
+- **TR-099 P3 相机 HAL**：`OrbbecCamera` 实现 `ICamera`（Orbbec Gemini 336L）；`USE_ORBBEC` 默认 **OFF**，`3rdparty/orbbec/` **不入库**（197 MB）。真机已验：枚举 `CP9KB530005S`、1280×720@30.2fps、RGB888 + 深度 Y16、Release 60 s 长稳 1801 帧 / 30.0 fps / 空帧 0 / 退出码 0。
+- **相机三条硬约束**：① HW 对齐上限只有彩色 640×480@30 MJPG + 深度 848×480@30 Y16，高分辨率**必须**走软件对齐 `ob::Align` 逐帧滤波，**不要**用 `config.set_align_mode(SW_MODE)`；② **SDK 设备插拔回调坚决不用**（底层异常不返回 → 崩溃）；③ 本版**移除曝光控制**。工作档位 = 彩色 1280×720 + 深度 848×480；相机为**眼在手外**（固定安装）。
+- **相机流「持有者集合」模型**：`HardwareManager::AcquireCamera/ReleaseCamera(owner)`，流运行 ⟺ 集合非空，`ReleaseCamera` 幂等；持有者 `"VisionPage"` / `"AutoRun"` / `"AutoRunPreview"`。⚠ **消费 ≠ 持有**（11.26 根因）。
+- **TR-100 P4 视觉检测页重构**：左 320 px `QScrollArea` 控制栏 + 右 2×2 四宫格三格同刷 / 结果表 11 列 / 6 个流参数 combo 由 SDK profile 枚举填充 / 6 项未决项 V4–V9「全部按推荐」落地。
+- **TR-101 P5 视觉引导动作**：**零新运动代码**（两段全复用移动动作执行路径）；`sourceActionId` 指定「识别」动作的编号（**不依赖时序邻近**）；两组坐标（目标上方 + 目标），`offsetZ` 做成动作参数；`r` 一律取 `guideR`，**与 `PuffResult.yaw` 无关**（视觉返回的 yaw 本项目用不上）；识别坐标**不入 `process.json`**（只进日志，会话内内存）；悬垂引用显式列 `#N（已不存在）`。
+- `FrameSaver` 能力边界：只存彩色；视觉页三路存 RGB / **深度伪彩** / Overlay（**伪彩不是原始 Y16 深度**）；异步队列（`kMaxQueueSize = 30`，超限丢最旧）⇒ 「动作完成」≠「图已落盘」。
+
+# 阶段 11 实测：视觉页卡顿、相机契约与链路日志（TR-103~TR-118，2026-09-21 ~ 09-24）
+
+- **TR-103** `SimAlgo` 深度过滤语义：超范围时**只把 `z` 置 0、结果照常入表**（`if (d >= zMin && d <= zMax) z = d;` **无 else**）→ 结果表出现 `x=y=z=0` 的**伪目标**，还会被识别分支 `results.front()` 取走 → 已修。
+- **TR-104** 视觉页按钮悬停高亮：QSS 模板的常态色与悬停色**填了同一个值** → 悬停等于没悬停。⚠ **QSS 失配是静默的**，「启动无解析警告」不足为凭 → 判据 = **离屏渲染像素比对**。
+- **TR-106/107/108 卡顿三连**：`CameraFrame` 是**值类型**（≈14.5 MB）经 queued connection **深拷贝 ×2**；渲染路径**全分辨率浪费**（`AutoRunPage::OnFrameReady` 是**构造期**订阅，页面不可见也照转）；`ManualControlPage::RefreshStatusDot` **20 Hz 无条件** `setStyleSheet` + `setToolTip`（每轴调用）。
+- **TR-109** `FrameSaver::ProcessQueue` 的 `!mkpath` 判据**写反**（存图未分类归档）+ 相机型号下拉框为**无槽死控件**。
+- **TR-110/111 相机拔插恢复**：`streaming_`（真取帧）与 `wantStreaming_`（意图位）**必须分开**；`CaptureFrame()` 守卫必须**进恢复状态机**而非早退（否则永久死锁）。TR-110 的修复**不完整**，TR-111 补分级恢复（`L1 退避 → L2 pipeline 软重启 → L3 全量重建`），真机两轮同构通过。
+- **TR-112/113/114 检测结果通道**：自动运行页默认**只在「识别」动作跑完时出图**（`detectionReady`，**空结果也发**）；「视频流 + 可见性持有」抽成独立函数 `SetupStreamPreview` / `TeardownStreamPreview` 并补配置页入口（原 `SetStreamPreviewEnabled` **全仓无调用点**）；两格空态 / 「0 检出」标识。
+- **TR-116 深度尺寸契约（必崩缺陷）**：⚠ **`CameraFrame` 深度图尺寸独立**——D2C **关**时深度 = **原生分辨率**（如 848×480），而 `width`/`height` 是彩色的（1280×720）⇒ 消费 `depthData` **必须**按 `depthWidth`/`depthHeight`（**0 = 回落 `width`/`height`**）索引**并**校验 `size()`；按彩色 `width` 索引会越界闪退（`0xC0000005`）。
+- **TR-117 构建配置事故**：`USE_ORBBEC` **未 pin 在任何配置** ⇒ CMakeCache 重建即**静默丢相机** → 视觉页「相机型号」下拉框只剩 `SimCamera`。修复 = 硬件开关默认值按 SDK 存在性自动探测。
+- **TR-118** 相机链路状态 `[相机] 断开 / 正在连接/恢复 / 已恢复出图` 原只写 UI 页面日志区（`AppendLog` **不调 spdlog**）→ 已补 `SPDLOG_INFO` 落文件日志。
+- **TR-115** 控制台测试工具**中文乱码**（`SetConsoleOutputCP` 缺位）+ `test_camera_check` 补**分钟级帧率分段**。
+
+# 阶段 12 / 13 实测与「符号漂移」收口（TR-119~TR-122，2026-09-21 ~ 09-29）
+
+- **TR-119** `LoopConfig::Mode::Single` 被渲染成 `循环 1/∞`（`total = (mode == Count) ? count : -1` 让 Single 与 Infinite 同值）→ 文案三态修正。
+- **TR-120** 视觉引导编辑期「未选择引用」入口缺失 → 下拉首项 `（未选择）` + 黄字预览 + 保存拒绝。
+- **TR-121** 分组嵌套**拉平**会吞掉 `normalized` 日志行 → 计数口径修正（拉平与编号规范化日志须**同时出现**且 `K ≥ 1`）。
+- **TR-122** 日志保留判据 **「7 天」→「最近 7 个日期文件」**（用户指出长假场景）：原以 `cutoff = today − keepDays` 判定，假期不产生新日志 ⇒ 复工首次启动把假期前日志**全删**。「N 天」在连续开机的开发机上等价于「N 个文件」，在**间歇开机的现场机器**上不等价。
+- **符号漂移全库收口（2026-09-21，三轮）**：⚠ **本仓注释大量沿用重构前函数名**——`MoveToPoint` / `ExecuteMove` / `ExecuteVisionGuide` / `ExecuteVision` **均已不存在**，P6 后所有动作共用 `PrepareRunnerSegment → ResolveRunnerJoints → DispatchRunnerSegment`，**`grep` 搜到 ≠ 存在**。定性判据：**描述当前实现 → 改现行符号；描述 P6 前形态 → 保留旧名 + 显式标注「P6 前」**。三轮共收口 99 → 53 处（保留项 = 顶部对照表 / 显式 P6 前标注 / worklog / archive / 历史实测）。
+- **`md-table-check` 曾给假绿**（脚本自身缺陷，已修）：Markdown 表格对列数**零容忍且不报错**，渲染器会**静默吞掉整张表**；⚠ 单元格里的 C++ `||` 必须转义成 `\|\|`。
+- **阶段 12 实测（2026-09-28）**：12A（12.1~12.6）全通过；12B（12.7~12.21）全部执行完毕（12.8 定性为**实现缺陷非用例不可达** → TR-120；12.13 节拍判据通过；12.15 / 12.16 / 12.17 / 12.19 / 12.21 通过）；12.27 / 12.28 追加为**真机**用例；**12C（12.22~12.26）阻塞在手眼标定**。
+- **阶段 13 实测（2026-09-28/29）**：13A（13.1~13.9）全执行；13B（13.10~13.23）执行完毕——**13.19 A/B 对照**：A 并发 ≈ 2.0 s、B 顺序 ≈ 4.2~4.6 s（比值 ≈ 2.1）⇒ **并发节拍成立**；13.18 组内 5 个子动作（含两条 1000 ms 延时）实测 **1.133 s** ⇒ 节拍 ≈ **最长子动作**而非求和；13.22 暂停恢复**计时冻结**（5.007 s ≈ 5000 ms）；13.21 **两轮补测**四子项全 🟢。⚠ **13.22 / 13.23 在 Sim 下结构性不可判**（`SimCard` 瞬时到位）→ 归真机。13.24~13.29 未执行；**13C（13.30~13.34）阻塞在手眼标定**。
+- **13.16 形态澄清（非缺陷）**：`OnNewGroup` 把插入位置**硬编码在一级** ⇒ 分组**结构上**只能在一级；判据里那句「分组不能嵌套」属 `validateGroupChildren` 的**保存路径**兜底，两层各管一段。
+
+# 技术路线与行业认知（2026-09-22，纯咨询未落盘）
+
+- **ROS2 路线（三轮咨询）**：本质差异 = **指令式**（上位机只发目标位置 + 速度，卡端自治跑梯形规划，上位机 50 ms 轮询判到位）vs **周期同步式**（`controller_manager` 每周期 read→update→write，`joint_trajectory_controller` 1 kHz 时间插值）。`IMotionCard` 层不会消失（映射为 `hardware_interface::SystemInterface`），被替换的是其上三层。**关键前置可行性问题**：博派卡 `MC_PrfTrap` 是「设参数-启动-跑完」的指令式模式，须先查手册确认是否有 PVT / 连续位置模式，否则 ROS2 控制层无法落地。
+- ROS2 **换不掉**的：`SequenceWorker` 的暂停 / 停止 / 单步 / 循环生产语义（`ros2_control` 不提供，仍须自写）、J1 开环步进失步（根因在开环脉冲丢失，与规划框架无关）。ROS2 **能换来**的：手眼标定工具链（`easy_handeye2`，当前矩阵为**占位值**，是真机验收阻塞项）、RViz2 + rosbag2、MoveIt2 碰撞检测（替掉自研甜甜圈校验）。**风险**：实时性责任从卡端硬件移到上位机（需 PREEMPT_RT，Windows 难达标），对节拍是净增加。
+- 去卡所需组件（硬件：Linux + PREEMPT_RT、EtherCAT 主站、4 台 CiA402 总线伺服、编码器、原点 / 硬限位、安全继电器 + STO；软件：`ros2_control` + 自写 SystemInterface + controller + MoveIt2 + Orbbec ROS2 驱动 + `easy_handeye2`）。**核实**：卡的数字 IO（`SetDO`/`GetDI`）在业务代码中**零调用**；`transmission.encoderResolution` 是「电机每转脉冲数」**而非编码器配置**（J1 换算 25600 / 360 / 0.01 = 7111.1 Pulse/°，与代码一致），**系统无编码器反馈通路、纯开环**。判断：若目标只是解决 J1 失步（TR-095），**换闭环步进驱动器（保留卡发脉冲）成本低一到两个数量级**。
+- 行业认知（用户主动提出）：机器人柜体体积主要由**驱动器 + 电源 + 端子排 + 安全回路**决定，运动控制器只占一小块；主线判断 = **驱动器位置下沉**（柜内 → 控制器盒内 → 关节内）才是柜体缩小的真正原因。本机属 **PC-Based 通用**形态（驱动器柜内 + 脉冲接线），柜体大是该路线固有代价。
+
+# 多相机与第三方集成（方案 / 调研，2026-09-24 / 09-30，未动手）
+
+- `doc/multi_camera_plan.md`（⏳ 计划中）：相机从「单一类型 + 全局配置」升为「设备清单 + 运行时活动相机」；**外参必须随相机走**。分两阶段——**阶段 A「多设备清单 + 单活动相机」复杂度中等 / 风险低，建议本期做**；阶段 B「多相机并发取流」不建议现在做。§十二 有 4 项待裁定。
+- **第三方集成调研（2026-09-30，仅评估未落盘）**：需求 = 第三方软件调用工艺流程执行动作 + 采集工艺流程中拍的照片做模型分析（动作类型要加「拍照」）。核实：**项目零网络 / IPC 能力**（全库无 `QTcpServer` / `QLocalSocket` / `QNetworkAccessManager` / `Qt6::Network`），对接是**从零加一层**；可复用的事件总线已存在（`actionStarted`/`actionFinished`、`groupStarted`/`groupFinished`、`cycleChanged`、`stateChanged`、`detectionReady`、`visionResultReady`、`errorOccurred`）⇒ 接口层只需「订阅转发 + 命令翻译」，**执行引擎不必改**。
+- ⚠ 拍照必须**独立成类型**，不能给「识别」加留存开关：识别未检出目标即 `r.failReason = "视觉未检出目标"; r.failed = true` → **中止整个流程**，第三方场景「图里有没有目标」不该判流程失败。
+- ⚠ 取帧依赖外部持有者：`OrbbecCamera.cpp` 的 `if (!wantStreaming_) return out;` → 未开流时 `CaptureFrame()` 返回**全零空帧**；现有 `Vision` 动作靠 `AutoRunPage` 的 `AcquireCamera("AutoRun")` 兜底，**第三方调用不经 AutoRunPage，这个登记不会发生** ⇒ 接口层必须自己登记持有者。
+- 判断：界面设想**可行但不完整**（留存目录不该做动作级参数；缺元数据 / 失败语义 / 落盘时序 / 容量保留 / 多相机预留）；建议本地 TCP + JSON Lines、图片走**路径引用**而非 base64。待用户裁定 6 项前提后再决定是否落 `doc/third_party_integration_plan.md`。
 
 # 自动运行页 5 按钮与底层状态机重构（TR-073，2026-09-07 已落地）
 
@@ -245,9 +359,13 @@
 
 # 项目历史压缩机制（WorkBuddy 版，2026-08-31 建立）
 
-- automation project-history-compress（每天 08:30）压缩到 .history/history.txt，与 OpenCode 插件同文件同格式互通；NDJSON 最新在前，压缩后顶部插 marker。
-- 双内容源：pending.ndjson + .workbuddy/memory 与 doc/worklog 日志；采集约定：有长期价值的用户提问须当场 prepend 到 pending.ndjson，寒暄/纯命令不记。
-- 注意：marker 行存在两种格式（`"marker":"compacted"` 无空格 与 `"marker": "compacted"` 带空格），定位首个边界须兼容两种写法，否则会误把已归档内容当新批次。
+- automation `project-history-compress`（原定每天 08:30）压缩到 `.history/history.txt`，与 OpenCode 插件**同文件同格式互通**；NDJSON **最新在前**，压缩后在**已处理批次的下方、上一 marker 的上方**插入 marker 行。
+- ⚠ **2026-10-08 核实：该 automation 当前不存在**（automation 列表为空，疑已丢失）→ 目前只有**手动触发**（对 WorkBuddy 说「压缩项目历史」）。要恢复定时压缩须重建 automation。
+- **双内容源不可省**：`pending.ndjson` + `.workbuddy-ai/memory/` 与 `doc/worklog/` 日志。⚠ 实测存在**采集缺口**（2026-09-23 ~ 09-29 的提问未进 NDJSON，只有记忆日志有）→ 只读 NDJSON 会漏掉整段工作。
+- marker 行 `processedPromptCount` = 该批次条数（**含噪声行**）；`reason` 取值历史上有 `auto` / `manual` / `workbuddy-auto` / `workbuddy-manual`。
+- ⚠ marker 行存在两种格式（`"marker":"compacted"` 无空格 与 `"marker": "compacted"` 带空格），定位首个边界须**兼容两种写法**，否则会误把已归档内容当新批次。
+- 采集约定：有长期价值的用户提问 / 需求 / 决策须**当场 prepend** 到 `pending.ndjson`（`{"ts":"ISO","text":"..."}`），寒暄 / 纯命令不记。
+- ⚠ 令牌 `.workbuddy-ai/.git-commit-authorized` **hook 不消费**，提交后仍留在盘上，**助手不代为删除**。
 
 # 持续测试机制与工作规约
 
@@ -260,21 +378,20 @@
 - | 编号 | 模块 | 测试场景 / 动作 | 期望结果 | 测试状态 | 踩坑记录 / 备注 |
 - 测试状态用「🟢 已通过」表示。
 
-# 待确认问题
+# 待确认问题（截至 2026-10-08）
 
-- **真机验证 phase3：阶段 8 已收口 🟢（TR-078）；阶段 9（TR-074 安全位）2026-09-10 已收口 🟢（9.1–9.17 全通过，修复 TR-079~TR-084）；阶段 10（TR-075 互锁 + 急停恢复全链路，10.1–10.23）待执行**（TEST_RECORD 当前最大号 TR-084）。阶段 10 用例 **10.14/10.16/10.17 已按 TR-081 修正为「使能→回零→手动回安全位→切自动」**，10.23 恢复链描述同步。
-- 「循环生产」新需求（2026-09-09 由用例 8.4 引出，现状自动运行仅单轮）：方案 doc/auto_run_loop_production.md 已出，待用户审核后实施。
-- **crash.txt 崩溃处置已完成**（2026-09-10）：A/B/C 三案讨论后用户选定 **C 方案**（观察者指针改 QPointer），已实施入库 `d1d5346`，详见「TR-084」专节；`log/crash.txt` 定位后已清空。
-- **TR-084 真机复现验证待做**：让工艺页单步停在 Paused（或方案连续执行中）→ 关闭软件 → 确认不弹崩溃、`log/crash.txt` 不新增（Sim 难构造 Paused 会话，冒烟只启动即关、无会话不触发原崩溃路径）。
-- **TR-080 行为变更待真机确认**：9.16（Running 时一键回零被拒）为新增拒绝行为，真机复核。
-- 工作区未提交改动待用户处置：`config/config.json` 多余空白行（建议 git checkout 还原）、`config/process.json`（speedPercent 统一 50 + 新增 x=600 不可达点，疑为按用例 8.7 做的测试准备）。
+- **真机验收是当前唯一瓶颈**：阶段 11 已全部执行；阶段 12 的 12A/12B、阶段 13 的 13A/13B（13.1~13.23）已执行。**12C（12.22~12.26）与 13C（13.30~13.34）阻塞在「手眼矩阵标定」**（`easy_handeye2` 路线已评估，当前矩阵为占位值）。阶段 13 余 13.24~13.29 未执行（单步整组算一步 / 执行选中动作 / 同级移动 / 引用校验扩全树 / 删除分组不回退编号 / 循环生产 × 分组）。
+- **J1 偏移遗留**：判定仍为目测级（残余失步是否归零未知，长循环前须做定量读数）；`maxAccel` 上限边界未扫描，与 P6 节拍优化**直接冲突**（D8/D9 建议并入 P6 同批做）。
+- **TR-084 退出悬垂崩溃的真机复现验证待做**（Sim 难构造 Paused 会话，冒烟只启动即关、无会话不触发原崩溃路径）。
+- `doc/implementation_roadmap.md` 的 P0~P6 全 ✅，**下一步待用户裁定**（候选：D8/D9 节拍回收）。
+- 多相机方案 `doc/multi_camera_plan.md` §十二 有 **4 项待用户裁定**（阶段 A 建议本期做）。
+- **第三方集成**：待用户裁定 6 项前提（第三方本机还是跨机、能否接受路径引用、拍照是否需静止、是否要原始深度 / 点云、谁触发拍照、是否允许第三方单步 / 点动）后再决定是否落 `doc/third_party_integration_plan.md`。
+- 识别动作扩展为「缺陷检测 + 尺寸检测」——思路评审已完成，**未落盘**（2026-09-28）。
+- 工作区未提交改动待用户处置：`config/process.json` + 未跟踪 `.workbuddy-ai/process.json.before13`（Phase 13 收尾时删）。**`main` 领先 `origin/main` 10 个提交，全部未 push**。
+- 物理蘑菇按钮接线方案待设计确认（5 按钮重构后屏幕「复位」已删，物理映射需按新语义复核）。
 - 三页操作互斥逻辑补齐（TR-066，主风险已被模式互锁覆盖，手动点动并存场景仍开口）。
-- 真实相机（Orbbec）SDK 接入 ICamera 后，5.9 Vision 用例复测。
-- Z 轴动作待硬件调试完成后测试；J2 点动顿挫专项排查暂缓；J2 回零精度紧固后复测。
-- 物理蘑菇按钮接线方案待设计确认（5 按钮重构后屏幕"复位"已删，物理映射需按新语义复核）。
-- 计划文档中涉及硬件手册的具体信息需带用户确认。
-- 多模型协作下 config.json 等关键文件被覆盖风险长期存在，变更后须真机复测。
-- 用户明确搁置项（勿主动重提）：自动运行页窗口缩小时 R 角换行的样式问题、工艺流程页动作列表 6 按钮 tip 显示问题、TR-038 舵机重连抖动专项验证（观察中）。
-- TR-070 已知开口：skip-reconnect 恢复路径不重写 addr=44 accel 参数，点动顿挫回归再补写。
-- 用例走查三处待确认（§0-A/B/C）：**§0-A 文案不一致（「全部使能」vs「全局轴使能」）经阶段 8 确认待修**；§0-B 安全位提示"可在自动运行页暂停/停止"实际不可达；§0-C 回零自动回安全位时手动页无提示。
-- Axis_R 限位域与角度表示一致性问题（TR-059 已修归一化，域调整待定）。
+- 用例走查三处待确认（§0-A/B/C）：§0-A 文案不一致（「全部使能」vs「全局轴使能」）经阶段 8 确认待修；§0-B 安全位提示「可在自动运行页暂停/停止」实际不可达；§0-C 回零自动回安全位时手动页无提示。
+- Z 轴动作待硬件调试完成后测试；J2 点动顿挫专项排查暂缓；J2 回零精度紧固后复测。TR-070 已知开口：skip-reconnect 恢复路径不重写 `addr=44` accel 参数，点动顿挫回归再补写。
+- Axis_R 限位域与角度表示一致性问题（TR-059 已修归一化，域调整待定）。计划文档中涉及硬件手册的具体信息需带用户确认。
+- **多模型协作下 `config.json` 等关键文件被覆盖风险长期存在**，变更后须真机复测。
+- 用户明确搁置项（**勿主动重提**）：自动运行页窗口缩小时 R 角换行的样式问题、工艺流程页动作列表 6 按钮 tip 显示问题、TR-038 舵机重连抖动专项验证（观察中）。
