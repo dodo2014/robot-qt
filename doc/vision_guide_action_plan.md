@@ -98,7 +98,7 @@ enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide }
 
 ### 5.2 两组坐标（执行时构造）
 
-识别动作产出基座坐标 `P = (x, y, z)`（`CameraToRobot` 的结果），视觉引导据此构造两个路径点：
+识别动作产出基座坐标 `P = (x, y, z)`（`PixelToRobot` 的结果——2026-10-13 TR-124 起由 `CameraToRobot` 改为 `PixelToRobot`：像素 + 深度经**真实内参**反投影再走手眼变换），视觉引导据此构造两个路径点：
 
 | 路径点 | 坐标 | 说明 |
 | :--- | :--- | :--- |

@@ -17,6 +17,10 @@
 #include <algorithm>
 #include <vector>
 
+// C1（2026-10-14）：透传算法子树需要 `nlohmann::json` 作为 `getValue` 的类型参数。
+// 此前本文件不直接用它（`ConfigManager.h` 间接引入），显式包含以免依赖间接链。
+#include <nlohmann/json.hpp>
+
 namespace {
 
 // config 中每个逻辑轴的 key 名（与 config/axes 对象 key 对应）
@@ -155,11 +159,16 @@ bool HardwareManager::Initialize()
     if (!algorithm_) {
         SPDLOG_WARN("[HardwareManager] Algorithm type '{}' not registered", algoType);
     } else {
-        // 把当前阈值作为算法的**兜底默认值**喂进去（C1）。算法侧运行时仍以
-        // config.json 的实时值为准，所以此处喂一次快照即可；改动阈值无需重启。
-        // 原实现喂进去的是死数据 —— `SimAlgo::LoadConfig` 当时从不解析。
-        const std::string jsonCfg = "{\"confidenceThreshold\":" +
-            std::to_string(cfg.getValue<double>("vision.confidenceThreshold", 0.85)) + "}";
+        // 透传**整棵算法子树**（C1，2026-10-14）：`vision.algorithms.<algoType>` 原样交给
+        // 算法，本文件**不再出现任何算法私有键名字面量** —— 新增一个算法实现时此处零改动。
+        //
+        // ⚠ 节点缺失 ⇒ 传 `{}`，**不是失败**（`algorithm_config_plan.md` §十 裁定 1：
+        // 节点缺失是新算法首次运行的正常状态，报错会让人以为软件坏了）。
+        // ⚠ 算法侧运行时仍以 config.json 的实时值为准（`SnapshotParams()`），此处喂的只是
+        // 一次**兜底默认值**，故改动阈值无需重启。
+        const std::string jsonCfg =
+            cfg.getValue<nlohmann::json>("vision.algorithms." + algoType,
+                                         nlohmann::json::object()).dump();
         if (!algorithm_->LoadConfig(jsonCfg)) {
             SPDLOG_WARN("[HardwareManager] Algorithm '{}' rejected its config", algoType);
         }

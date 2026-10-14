@@ -148,8 +148,8 @@
             "autoExposure": true,
             "colorFormat": "MJPG",
             "colorFps": 15.0,
-            "colorHeight": 720,
-            "colorWidth": 1280,
+            "colorHeight": 1080,
+            "colorWidth": 1920,
             "d2cAlign": "SW",
             "depthFormat": "Y16",
             "depthFps": 15.0,
@@ -220,14 +220,14 @@
     },
     "production": {
         "loop": {
-            "count": 3,
-            "mode": 1,
+            "count": 10,
+            "mode": 0,
             "returnToSafePos": true
         }
     },
     "simulation": {
-        "algorithmType": "SimAlgo",
-        "cameraType": "SimCamera",
+        "algorithmType": "DepthPuffAlgo",
+        "cameraType": "OrbbecCamera",
         "enabled": true,
         "motionCardType": "SimCard",
         "servoType": "SimServo"
@@ -260,6 +260,25 @@
     },
     "version": "1.0.0",
     "vision": {
+        "algorithms": {
+            "DepthPuffAlgo": {
+                "edgeMargin": 8,
+                "heightBandMm": 20.0,
+                "maxArea": 250000,
+                "minArea": 120,
+                "morphKernelSize": 7,
+                "nearestPercentile": 0.03,
+                "roi": {
+                    "h": 0,
+                    "w": 0,
+                    "x": 0,
+                    "y": 0
+                },
+                "targetArea": 0,
+                "targetAreaTolerance": 0
+            },
+            "SimAlgo": {}
+        },
         "confidenceThreshold": 0.85,
         "depthZMax": 496.0,
         "depthZMin": 6.0,

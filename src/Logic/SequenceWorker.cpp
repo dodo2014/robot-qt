@@ -1032,7 +1032,27 @@ bool SequenceWorker::StepRunner(RunnerState& r)
             }
 
             const auto& best = results.front();
-            Pose robot = impl_->coord.CameraToRobot(best.x, best.y, best.z);
+            // C1（2026-10-13）：识别分支改走 `PixelToRobot` —— 像素 + 深度 → 内参反投影 →
+            // 手眼变换。改动前直接吃算法给的 `best.x/y/z`，而算法用的是**硬编码内参**
+            // （`SimAlgo.cpp:53-56`：fx=fy=520、cx=w/2、cy=h/2）⇒ `x/y` 带一个乘性误差，
+            // 而手眼平移 `t` 是加性常数，**任何 t 都吸收不掉**（`hand_eye_calibration_plan.md`
+            // §五 前置项 1；`algorithm_config_plan.md` §3.3 / §六 C2）。
+            //
+            // ⚠ 内参必须在**本分支内、每次识别时**取，不能在 `ReloadFromConfig` 里取一次：
+            //   ① `MainWindow.cpp:244` 启动即调 `ReloadFromConfig`，而内参是在
+            //      `pipeline_->start(cfg)` **之后**才赋值（`OrbbecCamera.cpp:387`）⇒ 那一刻
+            //      `fx == 0`，`PixelToRobot` 会因 `fx_ <= 0` 直接返回零位 `Pose`
+            //      （`CoordTransform.cpp:64-69`）——即方案 §5.1 的 C3；
+            //   ② 内参**随流分辨率变**（`OrbbecCamera.cpp:396-397` 连 width/height 一起写入），
+            //      不可启动时缓存一次——即 C4。
+            // 取内参 / 写 coord / 换算**整体在主线程**执行：`coord` 的写者（`ReloadFromConfig`）
+            // 与读者都在主线程，避免与本线程并发访问同一对象（同 `:182` 的约定）。
+            CameraIntrinsics intr{};   // 本次识别实际使用的内参（供下方标定读数行）
+            Pose robot = InMainThread([&] {
+                intr = camera->GetIntrinsics();
+                impl_->coord.SetCameraIntrinsics(intr.fx, intr.fy, intr.cx, intr.cy);
+                return impl_->coord.PixelToRobot(best.pixelU, best.pixelV, best.z);
+            });
             // P5 §5.4：结果落进会话结果表，供「视觉引导」动作按 sourceActionId 取用。
             // 用 action.id 作 key —— 这正是"按稳定编号引用"而非"按时序邻近"的落点：
             // 中间插入/删除/重排节点都不会让引用错位。
@@ -1042,6 +1062,15 @@ bool SequenceWorker::StepRunner(RunnerState& r)
                         "→ robot({:.1f},{:.1f},{:.1f}) [node #{} yaw={:.1f} ignored]",
                         best.x, best.y, best.z, best.confidence, robot.x, robot.y, robot.z,
                         action.id, best.yaw);
+            // C1b（2026-10-13）：标定读数行。`hand_eye_calibration_plan.md` §6.1 的
+            // `x_c / y_c / z_c` 是**相机系**坐标，必须与运行期用**同一组内参**算出
+            // （同篇 §五 的判据）。上一行的 `cam(...)` 是**算法**给的 `best.x/y/z`，用的是
+            // 算法内部内参，真机上不可直接用于标定；本行给出反投影的**全部原始量**
+            // ——像素 + 实际参与换算的内参 + 深度 ⇒ 可离线复算、且与运行期同源：
+            //   x_c = (pixelU − cx) × depth / fx    y_c = (pixelV − cy) × depth / fy    z_c = depth
+            SPDLOG_INFO("[SequenceWorker] Vision calib: pixel({},{}) depth={:.1f} "
+                        "intr(fx={:.1f},fy={:.1f},cx={:.1f},cy={:.1f})",
+                        best.pixelU, best.pixelV, best.z, intr.fx, intr.fy, intr.cx, intr.cy);
             emit visionResultReady(action.id, robot.x, robot.y, robot.z);
             emit logMessage(QStringLiteral("视觉定位：基座 (%1, %2, %3) 置信度 %4")
                                 .arg(robot.x, 0, 'f', 1)

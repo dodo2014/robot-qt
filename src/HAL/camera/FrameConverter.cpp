@@ -129,6 +129,39 @@ QImage DepthToQImage(const CameraFrame& frame, float depthMin, float depthMax, c
     return img;
 }
 
+QImage DepthToQImage16(const CameraFrame& frame)
+{
+    // 尺寸口径与 `DepthToQImage` 逐字一致（含 0 回落与 `size()` 守卫）——两函数必须
+    // 永远对「同一帧该出多大图」给出一致答案，否则存图与预览会错位。
+    const int w = (frame.depthWidth  > 0) ? frame.depthWidth  : frame.width;
+    const int h = (frame.depthHeight > 0) ? frame.depthHeight : frame.height;
+    if (frame.depthData.empty() || w <= 0 || h <= 0)
+        return {};
+    if (frame.depthData.size() < static_cast<size_t>(w) * static_cast<size_t>(h))
+        return {};
+
+    QImage img(w, h, QImage::Format_Grayscale16);
+    if (img.isNull())
+        return {};
+
+    for (int y = 0; y < h; ++y) {
+        const float* row = frame.depthData.data() + static_cast<size_t>(y) * w;
+        // `scanLine` 按 4 字节对齐（Grayscale16 下每行至少 `w * 2` 字节，奇数宽会被补齐），
+        // 故只写前 `w` 个 `quint16`，不整行 `memset`。
+        quint16* out = reinterpret_cast<quint16*>(img.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const float d = row[x];
+            // 无效深度（`<= 0`：无回波 / 超量程 / 未对齐留白）写 0 —— 与参考实现同语义。
+            // 有效值四舍五入到整毫米并夹到 `uint16` 上限：`depthData` 已是 mm
+            // （`OrbbecCamera.cpp:732` 的 `src[i] * scale`），此处**不再**做任何缩放。
+            out[x] = (d > 0.0f)
+                         ? static_cast<quint16>(std::min(d + 0.5f, 65535.0f))
+                         : static_cast<quint16>(0);
+        }
+    }
+    return img;
+}
+
 void DrawOverlays(QImage& image, const QVector<PuffResult>& results, double confidenceThreshold)
 {
     if (image.isNull()) return;

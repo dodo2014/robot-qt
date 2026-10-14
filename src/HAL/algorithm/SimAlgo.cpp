@@ -20,12 +20,20 @@ std::string SimAlgo::Name() const
 
 AlgorithmParams SimAlgo::SnapshotParams() const
 {
-    // ⚠ 主线程专用：这里读 `ConfigManager`（`json` 读写非线程安全）。语义与原实现一致
-    // ——config.json 实时值优先，键缺失时 `getValue` 回落 `LoadConfig` 解析出的兜底值。
+    // ⚠ 主线程专用：这里读 `ConfigManager`（`json` 读写非线程安全）。
+    //
+    // 覆盖语义（C4，2026-10-14）= **算法节点优先、通用域作默认**
+    // （`algorithm_config_plan.md` §十 裁定 3）：先查 `vision.algorithms.SimAlgo.*`，
+    // 缺则回落通用域。`SimAlgo` **没有私有键**，节点里通常什么都没有 ⇒ 行为与改造前一致。
+    const auto& cfg = ConfigManager::instance();
+
     AlgorithmParams p;
-    p.confidenceThreshold = EffectiveThreshold();
-    p.depthZMin = ConfigManager::instance().getValue<double>("vision.depthZMin", 0.0);
-    p.depthZMax = ConfigManager::instance().getValue<double>("vision.depthZMax", 500.0);
+    p.confidenceThreshold = cfg.getValue<double>("vision.algorithms.SimAlgo.confidenceThreshold",
+                                                 EffectiveThreshold());
+    p.depthZMin = cfg.getValue<double>("vision.algorithms.SimAlgo.depthZMin",
+                                       cfg.getValue<double>("vision.depthZMin", 0.0));
+    p.depthZMax = cfg.getValue<double>("vision.algorithms.SimAlgo.depthZMax",
+                                       cfg.getValue<double>("vision.depthZMax", 500.0));
     return p;
 }
 
@@ -191,10 +199,14 @@ bool SimAlgo::LoadConfig(const std::string& jsonConfig)
 {
     config_ = jsonConfig;
 
-    // 真正解析（C1）：原实现只把字符串存进 config_ 并打印字节数，**从不解析**，
+    // 真正解析（C1 / C5）：原实现只把字符串存进 config_ 并打印字节数，**从不解析**，
     // 于是 `HardwareManager` 喂进来的 `confidenceThreshold` 是死数据 ——
-    // 一条「看起来在工作、实际不工作」的通路。现在解析出的值作为**兜底默认值**，
-    // 运行时以 config.json 的实时值为准（见 EffectiveThreshold）。
+    // 一条「看起来在工作、实际不工作」的通路。
+    //
+    // C5（2026-10-14）：调用方（C1）现在透传的是 `vision.algorithms.SimAlgo` **整棵子树**。
+    // `SimAlgo` 没有私有键，子树里唯一有意义的是 `confidenceThreshold`（通用域键在算法
+    // 节点内出现时**优先**，§十 裁定 3）；其余键一律忽略。
+    // 解析出的值只作**兜底默认值**，运行时以 config.json 的实时值为准（见 EffectiveThreshold）。
     try {
         const auto j = nlohmann::json::parse(jsonConfig);
         if (j.is_object() && j.contains("confidenceThreshold") && j["confidenceThreshold"].is_number()) {

@@ -395,6 +395,16 @@ bool OrbbecCamera::ConfigureStreams()
         intrinsics_.p1 = dist.p1;  intrinsics_.p2 = dist.p2;
         intrinsics_.width  = colorW_;
         intrinsics_.height = colorH_;
+
+        // C2（2026-10-13）：内参**必须**打出来。改动前取了但从不打印、UI 也不显示
+        // ⇒ 现场看不到真实 fx/fy/cx/cy，手眼标定（`hand_eye_calibration_plan.md` §5.1）
+        // 所需的相机系 `x_c / y_c` 无法离线复算，也无法核对「标定所用内参 = 运行期内参」
+        // （同篇 §五 的硬判据）。紧邻的 `profiles:` 行只给分辨率，不给焦距/主点。
+        SPDLOG_INFO("[OrbbecCamera] 彩色内参: fx={:.2f} fy={:.2f} cx={:.2f} cy={:.2f} "
+                    "dist(k1={:.5f} k2={:.5f} p1={:.5f} p2={:.5f}) {}x{}",
+                    intrinsics_.fx, intrinsics_.fy, intrinsics_.cx, intrinsics_.cy,
+                    intrinsics_.k1, intrinsics_.k2, intrinsics_.p1, intrinsics_.p2,
+                    intrinsics_.width, intrinsics_.height);
     } catch (const std::exception& e) {
         SPDLOG_WARN("[OrbbecCamera] 读取彩色内参失败（不影响取流）: {}", e.what());
     }

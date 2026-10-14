@@ -33,11 +33,13 @@
 | `motionCardType` | `SimCard` / `Bopai` / `ZMotion` | 运动控制卡实现名 |
 | `servoType` | `SimServo` / `XRServo` | 串口舵机实现名 |
 | `cameraType` | `SimCamera` / `OrbbecCamera` | 相机实现名 |
-| `algorithmType` | `SimAlgo` | 视觉算法实现名（当前仅 `SimAlgo` 一个实现） |
+| `algorithmType` | `SimAlgo` / `DepthPuffAlgo` | 视觉算法实现名（已注册两个实现，见下） |
 
-当前已注册实现（`REGISTER_*` 宏，`HALFactory.h`）：运动卡 `SimCard` / `Bopai`；舵机 `SimServo` / `XRServo`；相机 `SimCamera` / `OrbbecCamera`；算法 `SimAlgo`。`ZMotion` / `Leisai` 为预留品牌（SDK 目录已建）。
+当前已注册实现（`REGISTER_*` 宏，`HALFactory.h`）：运动卡 `SimCard` / `Bopai`；舵机 `SimServo` / `XRServo`；相机 `SimCamera` / `OrbbecCamera`；算法 `SimAlgo` / `DepthPuffAlgo`。`ZMotion` / `Leisai` 为预留品牌（SDK 目录已建）。
 
-**当前配置**（`config/config.json`）：`motionCardType=SimCard`、`servoType=SimServo`、`cameraType=OrbbecCamera`、`algorithmType=SimAlgo`、`enabled=true`——即**执行机构走仿真（`SimCard` + `SimServo`）、相机走真机（`OrbbecCamera`）**。
+**两个算法实现的区别**（2026-10-14，TR-126）：`SimAlgo` = 纯 RGB 色块匹配**占位**算法（**鲁棒性无保证**），无私有参数；`DepthPuffAlgo` = **深度图定位**算法（自研，移植老项目 `CPuffLocator` 的纯深度实现），含 9 项私有参数（见下方 `vision.algorithms`）。切换只需改本键，**零代码改动**。⚠ 仿真下深度法**只检出 1 个**目标（颜色法为 2 个）——属**预期行为变化、非缺陷**，推演见 `depth_puff_algorithm_plan.md` §六。
+
+**当前配置**（`config/config.json`）：`motionCardType=SimCard`、`servoType=SimServo`、`cameraType=OrbbecCamera`、`algorithmType=SimAlgo`、`enabled=true`——即**执行机构走仿真（`SimCard` + `SimServo`）、相机走真机（`OrbbecCamera`）**。⚠ 算法当前仍是 `SimAlgo`；改 `algorithmType=DepthPuffAlgo` 即切深度法（私有参数在 `vision.algorithms.DepthPuffAlgo`，改文件后**须重启**）。
 > ⚠ 该组合下跑 Sim 冒烟会**去抢真实相机**（`simulation.cameraType` 决定 `HardwareManager` 实例化谁，与 `enabled` 无关）。冒烟前须把 `cameraType` 改回 `SimCamera`，否则可能与用户真机调试互抢。
 
 > ⚠ **本段无界面写入口**（2026-09-18 核实，2026-09-20 P1 复核，2026-10-13 补）：全库对 `simulation.*` 的读点只有 `HardwareManager.cpp:105,113,153,168,236`（四类硬件选型 + 重连取卡型）与 `VisionTestPage.cpp:239`（相机型号下拉框回填），**没有任何 `ConfigManager::set()` 调用**。`ConfigPage.cpp` 实际只有 5 个标签页（通信与连接 / 运动学参数 / 视觉与工艺参数 / TCP与标定 / 电控与映射），**不存在「硬件类型选择 (仿真/真机)」标签页**。要切换仿真/真机，只能手改 `config/config.json`。
@@ -141,13 +143,35 @@ vision
 ├── confidenceThreshold  0.85      识别置信度阈值
 ├── depthZMin            6.0       深度过滤 Z 最小值 (mm)
 ├── depthZMax            496.0     深度过滤 Z 最大值 (mm)
-└── templatePath         ""        算法模板配置路径（可选；P4 新增）
+├── templatePath         ""        算法模板配置路径（可选；P4 新增）
+└── algorithms                     按算法名命名空间的**私有参数**（2026-10-14 新增）
+    ├── SimAlgo                   {}      空对象——它没有私有键，参数全在通用域
+    └── DepthPuffAlgo                    深度法私有参数（9 项）
+        ├── nearestPercentile  0.03      最近层分位数（代码内 clamp 到 [0.001, 0.5]）
+        ├── heightBandMm       35.0      最高层带厚 (mm)（代码内取 max(1.0, 值)）
+        ├── minArea            120       连通域面积下限 (px²，**深度系**)
+        ├── maxArea            250000    连通域面积上限 (px²，**深度系**)
+        ├── targetArea         0         目标泡芙面积；**0 = 禁用面积评分**
+        ├── targetAreaTolerance 0        面积容差；**0 = 自动取 max(1, targetArea/2)**
+        ├── morphKernelSize    7         形态学核（开 + 闭）；**偶数自动 +1**
+        ├── edgeMargin         8         边缘过滤距离 (px，**深度系**)
+        └── roi                {0,0,0,0} 感兴趣区域 (px，**深度系**)；w/h ≤ 0 = 全图
 ```
 
+> **`vision.algorithms` 的语义（2026-10-14，`algorithm_config_plan.md` §五 / §十一 落地）**：
+> - **键名 = `simulation.algorithmType` 的取值**——两者必须同一套标识，不另立命名。新增一个算法实现只需加一个同名节点，`HardwareManager` **零改动**（C1 起改为**透传整棵子树**）。
+> - **覆盖关系 = 算法节点优先、通用域作默认**（§十 裁定 3）：`vision.confidenceThreshold` / `depthZMin` / `depthZMax` 是**跨算法通用**的，任何算法都可读；算法节点里出现同名键时**以节点为准**。⚠ **通用三键同样适用本规则**（2026-10-14，TR-126）：两个算法的 `SnapshotParams()` 都按「**先查 `vision.algorithms.<名>.<键>`，缺则回落 `vision.<键>`**」实现——⚠ 顺序写反会**静默失效**（通用键恒存在于 `config.json` ⇒ 节点里的同名覆盖键永远读不到），深度法初版即踩此坑、已修正。
+> - **节点缺失是正常状态**（新算法首次运行）⇒ 传 `{}`、用算法内置默认值，**不报错、不升 WARN**（§十 裁定 1）。
+> - **停用算法的节点保留、不删**——切回旧算法时参数还在，避免调参成果随一次切换丢失。
+> - ⚠ **整数量必须写成整数**（`120` 而非 `120.0`）：`ConfigManager::getValue<int>` 走 `json::get<int>()`，类型不匹配会抛异常并被 `catch` 吞掉、**静默回落默认值**。
+> - ⚠ **`roi` / `minArea` / `maxArea` / `edgeMargin` 的坐标系 = 深度图**（算法在深度域做连通域），而结果里的 `pixelU`/`pixelV` 在**彩色系**。D2C = `SW` 时两分辨率相同、二者等价；D2C 关闭时不等价。
+> - ⚠ **手改本节点后必须重启**（同 `vision.*` 的成因：`getValue` 读内存 `root_`）。
+> - **离线验收（A 档）已过**（2026-10-14，TR-126）：① 节点存在时启动日志出现 `[DepthPuffAlgo] config loaded (… bytes)`；② 删掉节点后重启 → `[DepthPuffAlgo] config empty (2 bytes) → built-in defaults`（**INFO、非 WARN**，印证 §十 裁定 1）；③ 通用域无私有键残留（见上方 schema）。⚠ A4（改 `heightBandMm` 看检出个数变化）与 B 档（仿真检出 1 个目标、`results.front()` 为最优者）**须真正触发一次识别动作**，冒烟只验启动、覆盖不到。
+
 > **写入口与生效状态（2026-09-20，P1 核实 + P4 更新）**：
-> - `confidenceThreshold` — **P1 起真正生效**：`SimAlgo::Detect()` 按该值过滤掉 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。
-> - `depthZMin` / `depthZMax` — 由 `SimAlgo::Detect` **每次检测实时读**并做深度筛选：深度有效但落在 `[zMin, zMax]` 之外的目标**丢弃**（不产生结果，语义与 `confidenceThreshold` 一致）；深度缺失（无深度图或深度值 ≤ 0）时仍报告 2D 位置、`z = 0` → 生效。**（TR-103 修复**：此前超范围只是把 `z` 置 0 而结果照常入表，结果表会出现 `x=y=z=0` 的伪目标）
-> - `templatePath` — **P4 新增**，写入口＝视觉检测页「模板配置」的「浏览…」（`VisionTestPage::OnBrowseTemplate`）。**⚠ 目前无读点**：`IPuffAlgorithm` 只有 `Detect/LocateBest/LoadConfig`，**没有模板参数**，故本键目前只做「入口 + 持久化」，由将来的算法实现消费（需求原文即写「可选填；留空则用算法内置默认值」）。**不要误以为它已在工作**。
+> - `confidenceThreshold` — **P1 起真正生效**：算法在 `Detect()` 末尾按该值剔除 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。⚠ **两套算法的 `confidence` 语义不同**（2026-10-14，TR-126）：`SimAlgo` 存**面积覆盖率**（`coverage × 1.08`）；`DepthPuffAlgo` 存**三权重综合 `score`**（`EstimateConfidence × 0.60 + nearScore × 0.25 + areaScore × 0.15`，**不是** `EstimateConfidence` 本身）⇒ **同一个 `0.85` 在两者上松紧不等价**。⚠ **2026-10-14 真机实测已把该风险坐实（M1 成立）**：`DepthPuffAlgo` 真机上 `filtered 8~11 of 10~12 detection(s)`，且两次运行 `best score = 0.833 < 0.85` ⇒ **候选全部被剔除**、视觉页报「未找到目标」⇒ **该默认值对深度法过严**，调参时第一优先处理（可加 `vision.algorithms.DepthPuffAlgo.confidenceThreshold` 私有覆盖键，覆盖顺序见上）。
+> - `depthZMin` / `depthZMax` — **两套算法都实时读**，但用法不同：`SimAlgo` 把深度有效但落在 `[zMin, zMax]` 之外的目标**丢弃**（不产生结果，语义与 `confidenceThreshold` 一致），深度缺失（无深度图或深度值 ≤ 0）时仍报告 2D 位置、`z = 0`；`DepthPuffAlgo` 用它在**深度域**建有效掩膜（`BuildValidMask`）⇒ 背景（如仿真 `600 mm`）直接不进连通域，是**检测的前置条件**而非事后过滤。**（TR-103 修复**：`SimAlgo` 此前超范围只是把 `z` 置 0 而结果照常入表，结果表会出现 `x=y=z=0` 的伪目标）
+> - `templatePath` — **P4 新增**，写入口＝视觉检测页「模板配置」的「浏览…」（`VisionTestPage::OnBrowseTemplate`）。⚠ **「无读点」的说法不准确（2026-10-14 核实更正）**：准确表述是「**算法侧不消费**」——`IPuffAlgorithm` 的 `Detect/LocateBest` 不接模板参数，故本键目前只做「入口 + 持久化」，由将来的算法实现消费（需求原文即写「可选填；留空则用算法内置默认值」）。**但 UI 侧确有读写点**：`VisionTestPage.cpp:839` **读**、`:1313` **写** ⇒ 删掉本键会让该页输入框读到空。⚠ `algorithm_config_plan.md` §七 M1 原写它「至今无读点」并计划迁入 `vision.algorithms.<名>.templatePath`——因迁键须同批改上述两处 UI 路径，**已移出该批（TR-126 未做）**。
 > - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。⚠ **手改本文件后必须重启程序**——三个键在检测时都是「实时读」（`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()`），但读的是 `ConfigManager` 的**内存** `root_`，而 `root_` 只在启动时由 `load()` 填充（`ConfigManager.cpp:49`）→ 不重启不会刷新。设备配置页的「视觉与工艺参数」标签页仍保留写入口，**经该页改则即时生效**（走 `set()` 更新内存 `root_`）。
 > - **`exposure` 键已随 P4 删除**（决策 4：本版固定自动曝光）。它此前唯一的写入口是视觉页的「曝光」输入框，该控件移除后**全库无任何读点**，属「看起来在工作、实际不工作」的死键。相机曝光由 SDK 自动曝光控制（`communication.camera.autoExposure`，见 `camera_integration_plan.md` §六）。注意与**动作级 `ActionData.exposure`**（挤出动作的参数，`doc/process.md`）区分——那是另一个东西。
 > - 上述键**均无全局参数与动作级参数的覆盖关系实现**，动作级覆盖规则的落地属 P5。

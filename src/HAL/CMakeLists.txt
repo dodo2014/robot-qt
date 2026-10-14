@@ -68,6 +68,7 @@ set(HAL_SOURCES
     servo/SimServo.cpp
     camera/SimCamera.cpp
     algorithm/SimAlgo.cpp
+    algorithm/DepthPuffAlgo.cpp
     camera/CameraManager.cpp
     camera/CameraCaptureWorker.cpp
     camera/FrameSaver.cpp
@@ -87,6 +88,7 @@ set(HAL_HEADERS
     servo/SimServo.h
     camera/SimCamera.h
     algorithm/SimAlgo.h
+    algorithm/DepthPuffAlgo.h
     camera/SimVision.h
     camera/CameraManager.h
     camera/CameraCaptureWorker.h
@@ -140,6 +142,15 @@ target_link_libraries(HAL PUBLIC
     Config
     spdlog::spdlog
 )
+
+# OpenCV（2026-10-14，深度法算法移植）。
+#
+# `DepthPuffAlgo` 需要 `cv::connectedComponentsWithStats` / `morphologyEx` /
+# `getStructuringElement`。⚠ 此前 HAL **不链接 OpenCV**（只有 Core 与主程序链），
+# 是本仓一条隐性边界——移植前必须补上，否则链接期报未解析符号。
+# 运行时 DLL 已由根 `CMakeLists.txt` 的 POST_BUILD 拷进 exe 目录，
+# `build_release.bat` 的 `copy *.dll` 会带走 ⇒ **部署无新增动作**。
+target_link_libraries(HAL PRIVATE ${OpenCV_LIBS})
 
 if(USE_BOPAI)
     target_compile_definitions(HAL PRIVATE USE_BOPAI)

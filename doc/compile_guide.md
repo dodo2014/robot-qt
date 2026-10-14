@@ -150,6 +150,44 @@ CMake Error at vcpkg/scripts/buildsystems/vcpkg.cmake:984 (message):
   ⇒ **沙箱内每次 Release 编译前都先跑一遍本节绕法**，别指望它自愈；开发机（无沙箱）无此问题。
 - **Debug 与 Release 各自独立**：两边都改过 `CMakeLists.txt` 时，两个 build 目录都要各来一次。
 
+### 3.6 临时离线自测工具：**手工 `cl.exe` 直链已构建 obj**（2026-10-14 实测，TR-126）
+
+要在**不改任何受版本控制的文件**的前提下跑一段「直接调某模块」的自测程序（例：验 `DepthPuffAlgo::Detect()`），
+**不要**往 `tests/CMakeLists.txt` 加 target——新增源文件必然触发 CMake reconfigure ⇒ 沙箱内 vcpkg 必失败（§3.5），
+而且会牵动打包面。**改完还要还原**也没必要：本做法根本不改。
+
+**做法**：① 临时 `.cpp` 放 **`out/smoke/`**（构建目录，已被 git 忽略）；② 用 §3.3 同一套 `INCLUDE`/`LIB`/`PATH`；
+③ 编译 flag **从 `ninja -t commands` 抄**（保证与主程序同配置，勿凭记忆写）：
+
+```bash
+ninja -C out/build/x64-Debug -t commands | grep -i "<目标源文件名>"
+```
+
+④ 只链接**需要的那一个 `.obj`** + 其依赖的静态库，**不必** `/WHOLEARCHIVE:HAL.lib`（那会把 Orbbec / BoPai / QtGui 全拉进来）。
+实测可用的一行（`DepthPuffAlgo`，Debug）：
+
+```bash
+cl.exe <§3.3 的 INCLUDE 系 flag + -Isrc/HAL -Isrc/HAL/interfaces -Isrc/HAL/algorithm -Isrc/Config> \
+  /Foout/smoke/tmp_xxx.obj out/smoke/tmp_xxx.cpp
+link.exe /nologo /OUT:out/smoke/tmp_xxx.exe out/smoke/tmp_xxx.obj \
+  out/build/x64-Debug/src/HAL/CMakeFiles/HAL.dir/algorithm/DepthPuffAlgo.cpp.obj \
+  out/build/x64-Debug/src/Config/Config.lib \
+  out/build/x64-Debug/vcpkg_installed/x64-windows/debug/lib/opencv_imgproc4d.lib \
+  out/build/x64-Debug/vcpkg_installed/x64-windows/debug/lib/opencv_core4d.lib \
+  out/build/x64-Debug/vcpkg_installed/x64-windows/debug/lib/spdlogd.lib \
+  out/build/x64-Debug/vcpkg_installed/x64-windows/debug/lib/fmtd.lib \
+  D:/Qt/6.11.1/msvc2022_64/lib/Qt6Cored.lib \
+  kernel32.lib user32.lib advapi32.lib mpr.lib userenv.lib ws2_32.lib
+```
+
+⑤ **运行**时把构建目录加进 `PATH`（OpenCV / spdlog / Qt 的 DLL 都在那）：
+`PATH=out/build/x64-Debug:$PATH ./out/smoke/tmp_xxx.exe`
+
+- ⚠ 若被测函数**不读 `ConfigManager`**（如 `Detect(frame, params)` 这类纯函数），把参数**显式传进去**即可 ⇒
+  测试结果**不受当前 `config.json` 调参状态影响**、可复现（与真机调试并行也安全）。
+- ⚠ 控制台中文乱码同 TR-115：临时程序也要 `SetConsoleOutputCP(CP_UTF8)`。
+- **先例**：TR-125 的 `tmp_depth16_check.cpp`、TR-126 的 `tmp_puff_algo_check.cpp`（后者 11 项全 PASS，见 `doc/depth_puff_algorithm_plan.md` §八）。
+
 ## 4. Sim 冒烟验证（编译后必跑）
 
 标准脚本 `out\smoke\sim_smoke.ps1` 默认跑 **Debug** exe。冒烟 Release 时临时改 exe 路径

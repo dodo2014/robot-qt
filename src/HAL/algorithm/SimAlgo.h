@@ -33,7 +33,7 @@ private:
     mutable std::mutex mutex_;
     std::string lastError_;
     std::string config_;
-    /// `LoadConfig` 解析出的兜底阈值（C1）。默认值与 config.json 现状一致。
+    /// `LoadConfig` 解析出的兜底阈值（C1 / C5）。默认值与 config.json 现状一致。
     double confidenceThreshold_ = 0.85;
     /// 「深度分辨率 ≠ 彩色分辨率（D2C 关闭）」的告警去重位（TR-116，2026-09-23）。
     /// 该情形下 `Detect` 的深度取样只能做**比例近似**，需提示一次以免被当成精确对应。

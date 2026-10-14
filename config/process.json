@@ -1,7 +1,7 @@
 {
     "schemes": [
         {
-            "nextActionId": 15,
+            "nextActionId": 27,
             "nodes": [
                 {
                     "delayMs": 0,
@@ -59,6 +59,12 @@
                     "visionType": ""
                 },
                 {
+                    "children": [],
+                    "id": 23,
+                    "name": "并发组_10",
+                    "nodeType": "group"
+                },
+                {
                     "delayMs": 0,
                     "exposure": 0.0,
                     "extrudeAmount": 0.0,
@@ -79,6 +85,163 @@
                     "threshold": 0.0,
                     "type": 4,
                     "visionType": ""
+                },
+                {
+                    "children": [
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": -1.0,
+                            "guideR": 179.9,
+                            "id": 17,
+                            "isGripperOpen": true,
+                            "name": "夹爪微动",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 4,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 18,
+                            "isGripperOpen": false,
+                            "name": "并发位置1",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [
+                                {
+                                    "coord": {
+                                        "r": 179.9,
+                                        "x": 311.58,
+                                        "y": -177.7,
+                                        "z": 165.0
+                                    },
+                                    "name": "point_1",
+                                    "posture": "elbow_up"
+                                }
+                            ],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 0,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 16,
+                            "isGripperOpen": false,
+                            "name": "初始位识别",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 1,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 5000,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 19,
+                            "isGripperOpen": false,
+                            "name": "延时1",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 3,
+                            "visionType": ""
+                        }
+                    ],
+                    "id": 15,
+                    "name": "并发组_9",
+                    "nodeType": "group"
+                },
+                {
+                    "children": [
+                        {
+                            "delayMs": 2000,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 25,
+                            "isGripperOpen": false,
+                            "name": "2000",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 3,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 2000,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 26,
+                            "isGripperOpen": false,
+                            "name": "2000",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 3,
+                            "visionType": ""
+                        }
+                    ],
+                    "id": 24,
+                    "name": "并发组_11",
+                    "nodeType": "group"
                 },
                 {
                     "delayMs": 0,
@@ -292,63 +455,8 @@
             "schemeName": "方案_1"
         },
         {
-            "nextActionId": 11,
+            "nextActionId": 21,
             "nodes": [
-                {
-                    "delayMs": 0,
-                    "exposure": 0.0,
-                    "extrudeAmount": 0.0,
-                    "extrudeSpeed": 0.0,
-                    "gripperTarget": 0.0,
-                    "guideR": 179.9,
-                    "id": 1,
-                    "isGripperOpen": false,
-                    "name": "回原点",
-                    "nodeType": "action",
-                    "offsetZ": 0.0,
-                    "points": [
-                        {
-                            "coord": {
-                                "r": 0.0,
-                                "x": 0.0,
-                                "y": 0.0,
-                                "z": 0.0
-                            },
-                            "joints": {
-                                "j1": 0.0,
-                                "j2": 0.0,
-                                "j3": 0.0,
-                                "j4": 0.0
-                            },
-                            "name": "point_1",
-                            "posture": "elbow_up"
-                        },
-                        {
-                            "coord": {
-                                "r": 0.0,
-                                "x": 2.0,
-                                "y": 0.0,
-                                "z": 0.0
-                            },
-                            "joints": {
-                                "j1": 0.0,
-                                "j2": 0.0,
-                                "j3": 0.0,
-                                "j4": 0.0
-                            },
-                            "name": "point_2",
-                            "posture": "elbow_up"
-                        }
-                    ],
-                    "sourceActionId": 0,
-                    "speedPercent": 100,
-                    "suckBackAmount": 0.0,
-                    "suckBackSpeed": 0.0,
-                    "templateName": "",
-                    "threshold": 0.0,
-                    "type": 0,
-                    "visionType": ""
-                },
                 {
                     "delayMs": 25,
                     "exposure": 0.0,
@@ -458,6 +566,134 @@
                     "threshold": 0.0,
                     "type": 4,
                     "visionType": ""
+                },
+                {
+                    "children": [
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 15,
+                            "isGripperOpen": false,
+                            "name": "识别1",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 1,
+                            "visionType": "CCD"
+                        },
+                        {
+                            "delayMs": 5000,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 19,
+                            "isGripperOpen": false,
+                            "name": "延时5秒",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 3,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 16,
+                            "isGripperOpen": false,
+                            "name": "夹",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 4,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 18,
+                            "isGripperOpen": false,
+                            "name": "移动1",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [
+                                {
+                                    "coord": {
+                                        "r": 0.0,
+                                        "x": 0.0,
+                                        "y": 0.0,
+                                        "z": 0.0
+                                    },
+                                    "name": "point_1",
+                                    "posture": "elbow_up"
+                                }
+                            ],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 0,
+                            "visionType": ""
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 20,
+                            "isGripperOpen": false,
+                            "name": "移动",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 2,
+                            "visionType": ""
+                        }
+                    ],
+                    "id": 14,
+                    "name": "并发组_8",
+                    "nodeType": "group"
                 }
             ],
             "schemeName": "方案_2"

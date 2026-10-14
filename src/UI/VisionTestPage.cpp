@@ -1110,7 +1110,8 @@ QImage VisionTestPage::BuildDepthImage(const QSize& target)
 {
     if (!hasFrame_) return {};
     // P3-2：`target` 非空 → 直接产出该尺寸（最近邻采样），不生成 1920×1080 中间图。
-    // 预览路径传显示尺寸；存图路径不传，保持全分辨率。
+    // 本函数**只服务预览格**（伪彩可视化）。存图路径走 `FrameConverter::DepthToQImage16`
+    // （原始 16-bit 灰度），**不得**再回落到这里——见 `QueueSaveDepth` 与 TR-125。
     return FrameConverter::DepthToQImage(*latestFrame_, 0.0f, 500.0f, target);
 }
 
@@ -1330,8 +1331,13 @@ void VisionTestPage::QueueSaveRgb()
 void VisionTestPage::QueueSaveDepth()
 {
     if (!hasFrame_) return;
+    // ⚠ 存的是**原始 16-bit 深度值（mm）**，不是伪彩图（TR-125，2026-10-14）。
+    // 改造前这里调 `BuildDepthImage()`（= `DepthToQImage` 伪彩），落盘的是 8-bit RGB：
+    // 深度查看器（如 `DepthViewer.exe`）按 16-bit 灰度读，得到全 0 ⇒ 「保存的深度图没有深度值」。
+    // 伪彩渐变不可逆（8-bit 三通道 + 受 depthMin/depthMax 影响），无法从中还原 mm。
+    // 预览格仍走 `BuildDepthImage()`——那是给人看的，语义与落盘**刻意不同**。
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
-                              Q_ARG(QImage, BuildDepthImage()),
+                              Q_ARG(QImage, FrameConverter::DepthToQImage16(*latestFrame_)),
                               Q_ARG(QString, QStringLiteral("depth")));
 }
 

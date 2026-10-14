@@ -61,7 +61,7 @@
 | 8 | 保留现有 `CameraManager` 的 `QTimer` 拉模型，`OrbbecCamera` 内部用「最新帧槽」适配 | 本文评审 E2 |
 | 9 | **相机流改「持有者集合」模型**：流是全局共享资源，持有者 = `{VisionPage, AutoRun}`，**流运行 ⟺ 集合非空**；页面启停 = acquire / release | 用户裁定（§2.1） |
 | 10 | **自动运行期间，视觉页的「相机开关 / 启停采集」置灰**；检测、截图、视图切换等只读操作保留可用 | 用户裁定（修正 TR-075 的既有约定） |
-| 11 | **相机为眼在手外（Eye-to-Hand，固定安装）**；相机安装参数与基座标的关系标定**待实现**（现行 `tcpCalibration.handEyeMatrix` 为占位值） | 用户裁定 |
+| 11 | **相机为眼在手外（Eye-to-Hand，固定安装）**；相机安装参数与基座标的关系标定**待实现**（现行 `tcpCalibration.handEyeMatrix` 为占位值；**代码前置已于 2026-10-13 完成**——真实内参已接入识别分支，见 TR-124 / `hand_eye_calibration_plan.md` §5.1） | 用户裁定 |
 
 ### 2.1 相机流生命周期：持有者集合模型
 
@@ -104,7 +104,7 @@
 - **`ICamera` 已存在**，9 个纯虚方法（`src/HAL/interfaces/ICamera.h:26-45`）；`CameraFrame{timestamp, width, height, colorData, depthData, pointCloud}`（`:16-24`），深度为 `float`（mm）。
 - **取帧链路**：`CameraManager`（`QThread` + `CameraCaptureWorker`）→ `CameraCaptureWorker::CaptureTick` 每 tick 调 `camera_->CaptureFrame()`（`CameraCaptureWorker.cpp:56-62`）→ `HardwareManager::frameReady` 转发（`HardwareManager.cpp:89`）。
 - **工厂注册范式**：`REGISTER_CAMERA("SimCamera", SimCamera)`（`SimCamera.cpp:10`），由 `CameraFactory::Instance().Create(typeName)` 创建（`HALFactory.h:104-115,61`）。
-- **帧转换**：`FrameConverter::ColorToQImage` 只认 **RGB888**（`FrameConverter.cpp:14-18`）——**所有非 RGB 输入必须在相机实现内归一化，否则 UI 花屏**。`DepthToQImage` 接受 `float` mm 并按伪彩渐变渲染（`:54-81`）。
+- **帧转换**：`FrameConverter::ColorToQImage` 只认 **RGB888**（`FrameConverter.cpp:14-18`）——**所有非 RGB 输入必须在相机实现内归一化，否则 UI 花屏**。`DepthToQImage` 接受 `float` mm 并按伪彩渐变渲染（`:54-81`）。⚠ **另有一个 `DepthToQImage16`**（TR-125，2026-10-14）：同源同尺寸口径，但产出 `QImage::Format_Grayscale16` 的**原始 mm 值**、供存图落盘（伪彩不可逆，16-bit 深度查看器读伪彩图只会得到全 0）。
 - **`HardwareManager::Initialize` 相机段**（`:187-197`）：读 `simulation.cameraType` → `Create` → `SetCamera` → `CameraOpen(w, h, fps)`。
 - **`FrameSaver`** 已实现异步存图（独立 `QThread`，`VisionTestPage.cpp:125-133`）——需求要的「保存 RGB / Depth / 叠加图」可直接复用，只需加三路开关。
 

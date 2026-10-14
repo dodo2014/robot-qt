@@ -39,6 +39,22 @@ QImage ColorToQImageView(const CameraFrame& frame);
 QImage DepthToQImage(const CameraFrame& frame, float depthMin = 0.0f, float depthMax = 500.0f,
                      const QSize& targetSize = QSize());
 
+// 深度**原始值**（16-bit 灰度，单位 mm）。
+//
+// 与 `DepthToQImage` 的分工是**语义**上的，不是画质上的：
+//   `DepthToQImage` = 给人看的**伪彩可视化**（8-bit RGB，`0` 值画深色、有效值映射到渐变）；
+//   本函数 = 给工具/算法吃的**物理量**（每像素一个 `uint16` 毫米值，不缩放、不归一化）。
+//
+// ⚠ 伪彩图**不可逆**：渐变把 [0,500] mm 压到 8-bit 三通道，既丢了绝对刻度、又受
+// `depthMin/depthMax` 影响，无法从中还原 mm。因此**凡是要「深度值」的落盘都必须走本函数**
+// ——存图路径曾误用 `DepthToQImage`，落盘的是伪彩图，`DepthViewer` 一类的 16-bit 深度
+// 查看器读到的全是 0（2026-10-14 用户实测；TR-125）。参考实现
+// （`robot-single-thread` 的 `cv2.imwrite(depth_uint16)`）存的是原生 16-bit 灰度，本函数与之对齐。
+//
+// 尺寸口径与 `DepthToQImage` **完全一致**（`depthWidth/depthHeight`，0 回落 `width/height`，
+// 并按 `depthData.size()` 守卫）；无效深度（`<= 0`，即无回波/超量程）写 0。
+QImage DepthToQImage16(const CameraFrame& frame);
+
 void   DrawOverlays(QImage& image, const QVector<PuffResult>& results, double confidenceThreshold = 0.0);
 
 }
