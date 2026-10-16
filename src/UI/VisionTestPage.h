@@ -88,8 +88,10 @@ private:
     // `target` 非空 → 直接产出该尺寸（最近邻采样，跳过全分辨率中间图，P3-2）；
     // 留空 = 全分辨率，供存图路径使用。
     QImage BuildDepthImage(const QSize& target = QSize());
-    // Overlay = 同一张彩图 + 识别框。`base` 传入调用方已转好的彩图可省掉一次
-    // `ColorToQImage`（6.2 MB 拷贝 + `QImage::copy()`）；传空则由本函数自行转换。
+    // Overlay = 同一张彩图 + 识别框 + ROI 检测区域框（TR-128，2026-10-15 二次追加：
+    // ROI 框与「未找到目标」标签改为**无条件画**，预览与存图画面一致）。
+    // `base` 传入调用方已转好的彩图可省掉一次 `ColorToQImage`（6.2 MB 拷贝 + `QImage::copy()`）；
+    // 传空则由本函数自行转换。⚠ 无结果时不再走「浅拷贝短路」——落笔 ROI 框必然 detach。
     QImage BuildOverlayImage(const QImage& base = QImage());
 
     // 检测调度（P1，2026-09-22）。`ScheduleDetection` 在主线程做两件事：取参数快照、
@@ -101,9 +103,15 @@ private:
     void ShowResults(const QVector<PuffResult>& results, double elapsedMs);
     // 三路存图入队（异步，走 FrameSaver 线程）。抽成函数是因为「单次检测自动存图」
     // 与「保存当前帧」两处都要按同一组开关各存一路。
-    void QueueSaveRgb();
-    void QueueSaveDepth();
-    void QueueSaveOverlay();
+    // ⚠ `tsMs`：本拍存图的统一时间戳（epoch ms）——同一拍的三路必须共用同一个值，
+    // 落盘名 `类型_时间戳_编号.png` 的时间戳才严格一致（rgb/depth 对比的前提，TR-130）。
+    // 由调用方（ApplyDetectionResult / OnSnapshot）取一次、传三处。
+    void QueueSaveRgb(qint64 tsMs);
+    void QueueSaveDepth(qint64 tsMs);
+    void QueueSaveOverlay(qint64 tsMs);
+    // ROI / 「未找到目标」标注只进 overlay 路（`BuildOverlayImage` 内，预览与存图
+    // 同源）；RGB 存图保原始彩图语义（用户 2026-10-15 裁定），深度 16-bit 保物理量
+    // 语义（TR-125），两路均不打标注。
     void SetStatus(const QString& text);
     void AppendLog(const QString& text);
 
@@ -176,6 +184,16 @@ private:
     // 最新帧（P2：共享只读指针——缓存动作只是持有同一份，不再深拷贝 14.5 MB/帧）
     CameraFramePtr      latestFrame_;
     QVector<PuffResult> lastResults_;
+    // 最近一次检测用的 ROI 快照（TR-128）：`ScheduleDetection` 在主线程取参数时顺手记下，
+    // 与 `lastResults_` 严格同源——存图标注（`AnnotateRoiOnImage`）据此画检测区域框。
+    // 默认全 0 = 未配置 ROI（全图），此时画整幅图内缩边框。
+    RoiRect             lastRoi_;
+    // 最近一次检测用的**有效**置信度阈值（TR-133）：同样取自 `SnapshotParams()`，与
+    // `lastResults_` 严格同源。⚠ 不可改读 `vision.confidenceThreshold`——那是**通用域**
+    // 默认值（`SimAlgo` 语义，0.85），而深度法实际用的是**节点域**覆盖值（0.65）；
+    // 拿通用域去过滤节点域产出的结果 ⇒ 真机 `score`（0.70~0.84）全被滤掉 ⇒ overlay
+    // 图**一个框都不画**（2026-10-16 用户实测报障）。
+    double              lastThreshold_ = 0.0;
     double              lastDetectMs_ = 0.0;
     // 上一拍**真正画过**的帧时间戳（-1 = 从未画过）。`RenderTiles` 去重依据，
     // 与三格目标尺寸共同构成「这一拍有没有必要重算位图」的判据。

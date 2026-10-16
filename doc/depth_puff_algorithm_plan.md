@@ -2,7 +2,7 @@
 
 > **需求来源**：`implementation_roadmap.md` §9.6 要求「④ 的技术方案尚未成文……移植步骤、接口扩展、参数表须另开一篇」；用户 2026-10-13 指令「把移植步骤与参数初值表那篇补上」。
 > **结论**：**移植优先于重写**——老项目 `D:/workspace/projects/robot-puff/Framework/VisionModule/` 的 `CPuffLocator` 是纯深度法实现，核心 6 个函数**零 MFC 依赖**（只用 OpenCV + std）。本文给出**符号映射、参数初值、分阶段步骤与验收判据**，落地形态为 `src/HAL/algorithm/DepthPuffAlgo.{h,cpp}`。
-> **状态**：🟡 **阶段 0 + 阶段 1 已实施（2026-10-14，TR-126）**——`DepthPuffAlgo` 已落地并注册，C1 / C3 / C4 / C5 同批完成，Debug + Release 全清重建均链接成功、零新增警告。**阶段 2（Sim 冒烟）与阶段 3（真机调参）未做**——`simulation.cameraType = OrbbecCamera` 且真实相机在线，跑冒烟会**抢真相机**（`AGENTS.md` 冒烟纪律），待确认时机。⚠ **C6 / M1 已移出本批**——`vision.templatePath` 并非「无读点」，见 §七 M1。本文只定**怎么移植**；**接口契约**见 `algorithm_config_plan.md` §十一，**参数归属**见同篇 §四 / §五。
+> **状态**：🟢 **阶段 0~2 已实施（TR-126 / TR-127 / TR-131 / TR-132 / TR-135，2026-10-14 ~ 10-16）**——`DepthPuffAlgo` 已落地并注册，C1 / C3 / C4 / C5 同批完成；Sim 冒烟 + A 档离线验收通过（TR-127）；**2026-10-16 真机落盘帧离线复跑 11/11 PASS**（TR-131），并收口两处：**M1 阈值**（节点级 `confidenceThreshold = 0.65`）与**排序键**（改**深度优先** ⇒ `results.front()` = 最高，落实用户「取最高泡芙」需求）；**TR-132 定死输出语义 = 球顶**（`apexPercentile = 0.02`，`pixelU/pixelV` 由质心改球顶 + 新增 `bboxX/bboxY`）；**TR-135 解决「多目标合并」**（三球挤在一起被 `MORPH_CLOSE` 桥接成单连通域 ⇒ 距离变换峰 + 尺度自适应 NMS + Voronoi 切分，当日 8 帧离线 **8/8 PASS**、合并帧 1 → 3 个目标）。**阶段 3（真机调参）未做**——`targetArea` / `roi` / `depthZMin` / `depthZMax` 仍待按最终安装高度重定。⚠ **C6 已移出本批**——`vision.templatePath` 并非「无读点」，见 §七 M1。本文只定**怎么移植**；**接口契约**见 `algorithm_config_plan.md` §十一，**参数归属**见同篇 §四 / §五。
 > **关联**：`algorithm_config_plan.md`（§十一 接口契约、§十 已裁定项、§六 C1/C3/C4/C5）、`implementation_roadmap.md` §9.2 / §9.4 / §9.5（工期、来源、既有约束）、`hand_eye_calibration_plan.md`（真机标定；本算法**不做**坐标转换）、`doc/config.md`（键的 schema 落点）。
 
 ## 一、目标与范围
@@ -81,6 +81,7 @@
 | `vision.confidenceThreshold` | 通用域 | double | `0.85` | 0~1 | 置信度过滤阈值。⚠ **老实现从不过滤**（只输出 `confidence`）；本仓契约要求消费该键（§七 M1 说明风险） |
 | `…nearestPercentile` | 私有域 | double | `0.03` | — | 最近层分位数；代码内 `clamp(值, 0.001, 0.5)`。**调参重点** |
 | `…heightBandMm` | 私有域 | double | `35.0` | mm | 最高层带厚；代码内实际用 `max(1.0, 值)`。**调参重点** |
+| `…apexPercentile` | 私有域 | double | `0.02` | — | **球顶面片比例**（TR-132，2026-10-16）：取连通域内**深度最小的这一比例**像素，其质心 ⇒ `pixelU`/`pixelV`、其均值深度 ⇒ `z`。代码内 `clamp(值, 0.005, 0.5)` 且面片至少 8 px。**调参重点**（取小 ⇒ 更贴真实最高点但 `z` 抖动大；取大 ⇒ 更稳但球顶被球面下拉）。真机 15 帧标定见 §八 14 |
 | `…minArea` | 私有域 | int | `120` | px² | 连通域面积下限（滤噪声） |
 | `…maxArea` | 私有域 | int | `250000` | px² | 连通域面积上限（排除非单目标） |
 | `…targetArea` | 私有域 | int | `0` | px² | 目标泡芙面积；**0 = 禁用面积评分**。真机标定后设（§七） |
@@ -97,10 +98,18 @@
 | 量 | 值 | 位置 |
 | :--- | :--- | :--- |
 | 最高层阈值 | `nearestDepthMm + max(1.0, heightBandMm)` | `BuildTopRegionMask` |
-| 连通域最少有效像素 | `max(10, minArea / 4)` | `SelectBestRegion` |
-| `score` 权重 | `confidence × 0.60 + nearScore × 0.25 + areaScore × 0.15` | `SelectBestRegion` |
+| 球顶面片最少像素数 | `8`（`kApexMinPixels`，与 `apexPercentile` 取较大者） | `ComputeApex` |
+| 连通域最少有效像素 | `max(10, minArea / 4)` | `SelectRegions` |
+| `score` 权重 | `confidence × 0.60 + nearScore × 0.25 + areaScore × 0.15` | `SelectRegions` |
 | `confidence` 权重 | `areaScore × 0.45 + stabilityScore × 0.35 + centerScore × 0.20` | `EstimateConfidence` |
-| `nearScore` | `1.0 / (1.0 + max(0.0, meanDepth − nearestDepthMm))` | `SelectBestRegion` |
+| `nearScore` | `1.0 / (1.0 + max(0.0, meanDepth − nearestDepthMm))` | `SelectRegions` |
+| 峰间最小间距 | `1.0 × dist.max()`（`kSplitSepRatio`，TR-135） | `FindMarkers` |
+| 峰最小强度 | `0.55 × dist.max()`（`kSplitPeakRatio`，TR-135） | `FindMarkers` |
+| 局部极大比较核 / 容差 | `7×7` 椭圆 / `0.5 px`（`kSplitLocalKernel` / `kSplitLocalEps`） | `FindMarkers` |
+| 候选峰预筛 | `dist > 0.25 × dist.max()`（`kSplitPlateauFloorRatio`） | `FindMarkers` |
+| 触发切分的最低峰数 | `2`（`kSplitMinMarkers`；同样用作「切分成功」的最低合格子目标数） | `SelectRegions` |
+
+> ⚠ 上表 TR-135 的 5 项**刻意做成相对量**（除以 `dist.max()`）⇒ 与球径、安装高度、相机距离**无关**，换工位**无需重标定**；仅当改用**非球形**目标时才需重新审视。
 
 ## 五、移植步骤
 
@@ -126,7 +135,7 @@
 | 1.6 | ⚠ **坐标系归一：深度图 → 彩色图** | 算法在**深度域**做连通域 ⇒ `center` / `boundingBox` 都是**深度像素**。契约 §11.3 要求 `pixelU/pixelV` 在**彩色系**（因为 `PixelToRobot` 用的是 `OrbbecCamera` 的**彩色**内参）。故输出前按比例映射：`u_color = u_depth × width / depthWidth`、`v_color = v_depth × height / depthHeight`。**D2C = SW 时两分辨率相同，映射退化为恒等**（本仓 `config.json` 现为 `SW`）；D2C 关闭时必须生效，否则像素喂错内参 |
 | 1.7 | **`SelectBestRegion` 改为遍历全部连通域** | 老实现只返回 `argmax` 一个（`PuffLocator.cpp:330-341`），而 `IPuffAlgorithm::Detect` 返回 `vector<PuffResult>`（`implementation_roadmap.md` §9.5 项 5）。改为**全部通过硬过滤的连通域**都产出结果 |
 | 1.8 | ⚠ **按 `score` 降序排序** | 契约 §11.3 约定 1：`results.front()` = 最佳目标（`SequenceWorker.cpp:1034` 直接取 `front()`）。老实现靠「边扫边比」天然得到最优，改成 `vector` 后**必须显式排序**，否则静默抓错目标 |
-| 1.9 | **`z` 取最高点** | `PuffResult.z = minDepthMm`（不是 `depthMm` 均值）——契约 §11.3。均值仍可留给日志 |
+| 1.9 | **`z` 取最高点** | `PuffResult.z = minDepthMm`（不是 `depthMm` 均值）——契约 §11.3。均值仍可留给日志。⚠ **2026-10-16 修订（TR-132）**：`z` 改取**球顶面片均值**（`apexDepthMm`），`minDepthMm` 保留原始极小值 ⇒ 二者不再恒等。原做法直接用单像素极小值，实测被 flying pixel 伪影牵引（某帧 `rawMin = 513.0` vs 球顶均值 `522.6`），帧间抖动 ±3 mm |
 | 1.10 | `LoadConfig` 认整棵子树（C5） | 从 `SimAlgo` 的写法复制结构：解析出的值作**兜底默认值** |
 | 1.11 | `SnapshotParams` 补齐（C4） | 私有键读 `vision.algorithms.DepthPuffAlgo.*`；通用域读 `vision.depthZMin` / `depthZMax` / `confidenceThreshold`。⚠ **主线程专用**（读 `ConfigManager`） |
 | 1.12 | `Detect` 串行化 | 视觉页检测线程与 `SequenceWorker` 识别动作可能共用同一实例 ⇒ `lastError_` 用 `mutex_` 保护（照 `SimAlgo.cpp:36`） |
@@ -140,7 +149,7 @@
 | 2.2 | 验证「通路通」而非「算法准」 | `SimCamera` 深度是**平盘 + 无噪声**（`SimCamera.cpp:120`、`:140-161`），只验数据流 |
 | 2.3 | 记录**预期行为变化** | 仿真下深度法**只检出 1 个**目标（颜色法为 2 个）——见 §六，**属预期、非缺陷**，验收判据须写明 |
 
-> **进度（2026-10-14）**：2.1 已做（`algorithmType` 切 `DepthPuffAlgo` 启动正常）；2.2 的**通路**已验（`[DepthPuffAlgo] config loaded`、无 `not registered` 警告、无 `[SimAlgo]` 前缀，TR-127）；**2.3 的「仿真检出 1 个目标」与 A4 已由离线自测坐实**（TR-126，合成帧 `heightBandMm=35` ⇒ 1 个、`35→60` ⇒ 2 个）；**真机亦实测出结果**（视觉页「单次检测」发现 1 / 2 / 3 个目标）。⚠ 仍缺两项：`SequenceWorker`「识别」动作路径（B 档 5，本轮真机走的是视觉页单次检测）与真机调参（阶段 3）。
+> **进度（2026-10-14）**：2.1 已做（`algorithmType` 切 `DepthPuffAlgo` 启动正常）；2.2 的**通路**已验（`[DepthPuffAlgo] config loaded`、无 `not registered` 警告、无 `[SimAlgo]` 前缀，TR-127）；**2.3 的「仿真检出 1 个目标」与 A4 已由离线自测坐实**（TR-126，合成帧 `heightBandMm=35` ⇒ 1 个、`35→60` ⇒ 2 个）；**真机亦实测出结果**（视觉页「单次检测」发现 1 / 2 / 3 个目标）。⚠ 仍缺两项：`SequenceWorker`「识别」动作路径（B 档 5，本轮真机走的是视觉页单次检测）与真机调参（阶段 3）。⚠ **2026-10-16 补（TR-131）**：真机落盘帧离线复跑 **11/11 PASS**；同批修正**排序键为深度优先**（`results.front()` = 最高）与**节点级阈值 0.65**（M1 收口）。
 
 ### 阶段 3 — 真机调参（待相机装好）
 
@@ -149,7 +158,7 @@
 | 3.1 | 在**最终安装高度**采一组真泡芙 RGB + 深度图 | `implementation_roadmap.md` §9.6「相机装好后第一件事」 |
 | 3.2 | 按 `_mask.png` 量出单个泡芙面积 | 定 `targetArea` / `targetAreaTolerance` |
 | 3.3 | 定 `roi`（托盘区域）与 `depthZMin` / `depthZMax` | 老项目用 `[100, 3000]`；本仓须按实际安装高度重定 |
-| 3.4 | 复核 `confidenceThreshold` | ⚠ 见 §七 M1 |
+| 3.4 | 复核 `confidenceThreshold` | ⚠ 见 §七 M1。✅ **2026-10-16 已收口（TR-131）**：节点级 `confidenceThreshold = 0.65`（真机 11 帧标定：真球 `score` ≥ 0.697、垃圾候选 ≤ 0.611）。⚠ 真机复测待用户确认 |
 
 ### 阶段 4 — 文档与台账
 
@@ -183,7 +192,7 @@
 
 | # | 项 | 说明 | 处理 |
 | :--- | :--- | :--- | :--- |
-| **M1** | ⚠ **`confidenceThreshold = 0.85` 对深度法可能过严** | 两套算法的 `confidence` **语义不同**：`SimAlgo` 是**面积覆盖率**（`SimAlgo.cpp:146-147`，`coverage × 1.08`）；深度法存入结果的是**三权重综合 `score`**（`EstimateConfidence × 0.60 + nearScore × 0.25 + areaScore × 0.15`，⚠ **不是** `EstimateConfidence` 本身——见 §三 更正）。同一个 `0.85` 在深度法上可能把有效目标滤掉。⚠ 但**必须消费该键**——否则又是「看起来在工作、实际不工作」的死键 | 先按 `0.85` 落地并消费（**已落地 TR-126**）；⚠ **2026-10-14 真机实测把该风险坐实**：`filtered 8~11 of 10~12 detection(s)`，且两次 `best score = 0.833 < 0.85` ⇒ **全部滤掉**、视觉页报「未找到目标」⇒ **真机调参（阶段 3）第一优先处理**；处理手段＝在 `vision.algorithms.DepthPuffAlgo` 加私有覆盖键（按 §十 裁定 3 的「私有优先」语义；⚠ 该路径**已可用**——通用三键的覆盖顺序已由 **TR-127** 修正） |
+| **M1** | ⚠ **`confidenceThreshold = 0.85` 对深度法可能过严** | 两套算法的 `confidence` **语义不同**：`SimAlgo` 是**面积覆盖率**（`SimAlgo.cpp:146-147`，`coverage × 1.08`）；深度法存入结果的是**三权重综合 `score`**（`EstimateConfidence × 0.60 + nearScore × 0.25 + areaScore × 0.15`，⚠ **不是** `EstimateConfidence` 本身——见 §三 更正）。同一个 `0.85` 在深度法上可能把有效目标滤掉。⚠ 但**必须消费该键**——否则又是「看起来在工作、实际不工作」的死键 | 先按 `0.85` 落地并消费（**已落地 TR-126**）；⚠ **2026-10-14 真机实测把该风险坐实**：`filtered 8~11 of 10~12 detection(s)`，且两次 `best score = 0.833 < 0.85` ⇒ **全部滤掉**、视觉页报「未找到目标」⇒ **真机调参（阶段 3）第一优先处理**；处理手段＝在 `vision.algorithms.DepthPuffAlgo` 加私有覆盖键（按 §十 裁定 3 的「私有优先」语义；⚠ 该路径**已可用**——通用三键的覆盖顺序已由 **TR-127** 修正）。✅ **2026-10-16 已处理（TR-131）**：加节点级 `confidenceThreshold = 0.65`（通用域 `0.85` 不动 ⇒ `SimAlgo` 行为零变化）。**标定依据 = 真机 11 帧实测扫描**：两球 `score` ∈ [0.697, 0.803]；把 `heightBandMm` 加大拉入盒面「垃圾候选」后其 `score` ≤ **0.611** ⇒ 分界中点 ≈ 0.654，取 **0.65**。⚠ **同批发现第二处缺陷（非 M1，属潜在）**：排序键原为 `score` 降序，而 `score` 含 `centerScore`（偏好**画面中心**）⇒ 「最佳目标」≠「最高目标」；真机两球中较低者 `centerScore` 反而更高（0.756 > 0.718）⇒ 已改为**深度优先**排序（见 §八 11~13） |
 | **M2** | `area` 的坐标系未在契约中写明 | 算法在**深度域**做连通域 ⇒ `area` 单位是**深度图**像素²，而 `pixelU/pixelV` / `width` / `height` 归一到**彩色系**。D2C = `SW` 时两者等价；D2C 关闭时不等价 | 在 `algorithm_config_plan.md` §11.3 补注 `area` 的坐标系（本次已同步） |
 | **M3** | ⚠ **`targetArea = 0` ⇒ 面积评分退化** | 老实现从未在真实泡芙上标定（交接文档 §九.4）⇒ `CalculateAreaScore` 走「够大就满分」分支（`area / (minArea × 8)`），**无法区分「单个泡芙」与「一堆泡芙」**——而后者恰恰是抓取最需要避免的 | 真机标定后**必须**设 `targetArea` / `targetAreaTolerance`；在此之前不要相信面积维度 |
 | **M4** | 老实现的**已知限制**随移植带入 | 交接文档 §九：① 非语义级识别，只是深度高点区域定位；② RGB 未参与评分；③ 过近物体有深度孔洞 / 噪声；④ demo 会多帧择优 | **如实保留**，在 `doc/algorithm_config_plan.md` §十一 契约边界内属正常；不承诺鲁棒性 |
@@ -207,15 +216,44 @@
 
 > **离线自测工具（2026-10-14，TR-126）**：`out/smoke/tmp_puff_algo_check.cpp`（**临时、非交付物**；手工 `cl.exe` + `link.exe` 链接已构建的 `DepthPuffAlgo.cpp.obj` + `Config.lib`，**未改任何受版本控制的文件**——故**不需要**动 `tests/CMakeLists.txt`，也就绕开了 `compile_guide.md` §3.5 的 vcpkg 陷阱）。**11 项全 PASS**，覆盖 A4 / B5 / B6 + 坐标归一 + TR-116 守卫 + 阈值过滤。重跑：`bash out/smoke/tmp_puff_build.sh && PATH=out/build/x64-Debug:$PATH ./out/smoke/tmp_puff_algo_check.exe`。
 
+> **真实帧离线自测工具（2026-10-16，TR-131）**：`out/smoke/tmp_real_frame_check.cpp`（同为**临时、非交付物**；手工 `cl.exe` + `link.exe` 直链 `DepthPuffAlgo.cpp.obj` + `Config.lib`）。与上一个工具的区别：**喂真机落盘的 16-bit 深度帧**（`saves/depth/*.png` → `out/smoke/png_to_raw.py` 转 raw float32），且**走完整配置链路**（`ConfigManager::load` → `SnapshotParams` → `Detect`）⇒ 同时验证「节点级覆盖键真被读到」。**11 帧全 PASS**。重跑：`python out/smoke/png_to_raw.py <png> out/smoke/f.f32 && bash out/smoke/tmp_real_build.sh && PATH=out/build/x64-Debug:$PATH ./out/smoke/tmp_real_frame_check.exe out/smoke/f.f32 1920 1080`。
+
 **C 档（真机）**：
 
 8. 真机采图 → 视觉页结果表出现 `area` / `minDepthMm` 有意义的非零值。✅ **已验（2026-10-14 用户真机实测，TR-126）**：算法日志 `best area=675~917 meanDepth=161.5~213.6mm topDepth=161.0~211.0mm score=0.833~0.931`，视觉页 `检测完成：发现 1 / 2 / 3 个目标`。⚠ 走的是视觉页「单次检测」；⚠ **同批暴露 M1**：`confidenceThreshold = 0.85` 把 10~12 个候选滤到 1~3 个，两次运行 `best score < 0.85` ⇒ **全部滤掉**、报「未找到目标」。
 9. 抓取落点与 `PixelToRobot` 结果自洽（须先完成 `hand_eye_calibration_plan.md` 的标定）。⏳ **未验**——待标定。
 10. 按 `_mask.png` 量出的单泡芙面积与结果表 `area` 同量级（验证坐标系与单位）。⏳ **未验**——待真机量测。
 
+**TR-132 追加（2026-10-16，球顶语义；驱动＝用户裁定「目标中心取**球顶**」）**：
+
+14. `pixelU`/`pixelV` = **球顶**（连通域内深度最小 `apexPercentile` 比例像素的质心），`z` = 该面片**均值**深度，二者同源。✅ **已验（离线真机帧）**：`out/smoke/tmp_real_frame_check.exe` 在 **15 帧** `saves/depth/*.png` 上 **15/15 PASS**，每帧检出 2 个、`front()` 恒为较高的球、**球顶恒落在自身包围框上半部**。
+15. `z` 取**面片均值**而非单像素极小值的必要性（抗 flying pixel）。✅ **已验（15 帧扫描）**：某帧 `rawMin = 513.0 mm` 而 `z = 522.6 mm`（差 9.6 mm 全属噪点，且该极小值像素落在掩膜轮廓边缘）；帧间 `z` 抖动由 `apexPercentile=0.002` 的 **±3.01 mm** 降到 `0.02` 的 **±1.00 mm**（`0.05` ⇒ ±0.69 mm）。
+16. `apexPercentile` 取值标定。✅ **已验（15 帧扫描，`out/smoke/apex_sweep.py`）**：
+
+    | `apexPercentile` | `front()` 球顶 (u,v) | `z` | `z` 帧间抖动 | 距原始 min 像素 |
+    | :--- | :--- | :--- | :--- | :--- |
+    | `0.002` | (1244.2±2.8, 357.0±8.4) | 516.18±3.01 | **±3.01** | 6.8 px |
+    | `0.005` | (1244.8±4.3, 362.4±10.4) | 518.12±3.03 | ±3.03 | 11.4 px |
+    | `0.010` | (1242.6±4.5, 372.4±7.2) | 520.78±1.81 | ±1.81 | 21.5 px |
+    | **`0.020`（定稿）** | (1241.7±4.4, **375.6±3.6**) | 521.49±1.00 | **±1.00** | 24.8 px |
+    | `0.050` | (1241.2±3.3, 378.5±3.2) | 522.11±0.69 | ±0.69 | 27.6 px |
+
+    （参照：`front()` 的连通域质心 = (1238.2±0.4, 400.0±1.1)——**质心帧间极稳但系统性偏低**。）
+    **定稿理由 = 稳定性**：取小虽更贴原始 min 像素，但该像素位于掩膜轮廓边缘（flying pixel 伪影），`z` 抖动 ±3 mm；`0.02` 的 `z` 抖动仅 ±1 mm、位置抖动 ±3.6 px，代价是球顶沿球面下移约 25 px（≈13 mm）。⚠ **本扫描受落盘 PNG 的整数毫米量化限制**——`0.005` 与 `0.02` 在部分帧上取到同一分位值、结果相同；真机 float 深度下的分辨力更强，故该表只作**相对比较**依据，不作绝对真值。
+
+**TR-131 追加（2026-10-16，真机落盘帧离线复跑；驱动＝用户需求「找到最高/最上面的那个纸团(泡芙)，即深度最小的纸团」）**：
+
+11. 真机落盘深度帧上 `results.front()` = **深度最小（最高）**的球。✅ **已验**：`out/smoke/tmp_real_frame_check.exe` 在 **11 帧** `saves/depth/*.png` 上 **11/11 PASS**——每帧检出 **2 个**，`front()` 恒为较高的球（`z` 513~522、`u` ≈ 1238），次位为较低的球（`z` 524~528、`u` ≈ 1100）。改造前同帧 `filtered 2 of 2` ⇒ 返回空 ⇒ 视觉页报「未找到目标」。
+12. 节点级 `confidenceThreshold = 0.65` 经 `SnapshotParams` **真被读到**（不是通用域 `0.85`）。✅ **已验**：harness 打印 `confidenceThreshold = 0.650`；同帧算法日志 `2 candidate(s); best area=7285 meanDepth=531.4mm topDepth=516.0mm score=0.759` 与 Python 复刻**逐项一致**。
+13. ⚠ **`heightBandMm` 不可调大**（参数边界，实测得出——本次扫描的硬结论）。✅ **已验**：`25` ⇒ 盒面出现 124~365px 垃圾小块（score 0.355~0.456）；**`30` ⇒ 两球并成一个连通域**（area 30734、bbox 250×228）；`40+` ⇒ 整盒淹没（area 13 万+）。当前 ROI 下球仅占有效像素 ~6.7%，`nearestPercentile = 0.03` 恰好取到球顶（nearest = 530mm）。
+
 ## 九、台账与文档同步
 
 - **已落地**：阶段 0 + 阶段 1 记 **TR-126**（2026-10-14，C1 / C3 / C4 / C5 与本算法本体同批）；阶段 2 的 Sim 冒烟 + A 档离线验收（①②③）+ 一处**配置覆盖顺序缺陷**修复记 **TR-127**（2026-10-14）。
+- **2026-10-16 追加（TR-131）**：① 节点级 `confidenceThreshold = 0.65`（**M1 收口**）；② `SelectRegions` 排序键改**深度优先**（`results.front()` = 最高，落实用户「取最高泡芙」需求）；③ `LocateBest` 改为与 `Detect().front()` 同源；④ 真实落盘帧离线自测 **11 帧全 PASS**。同步文档：`TEST_RECORD.md`（TR-131）→ 本文（§七 M1 / §八 11~13 / §九）→ `doc/config.md`（节点 schema 加 `confidenceThreshold` + `confidenceThreshold` 条目）→ `AGENTS.md`。
+- **2026-10-16 追加（TR-132）**：① `PuffResult` 的 `pixelU`/`pixelV` 语义由**连通域质心**改为**球顶**、`z` 改取球顶**面片均值**、新增 `bboxX`/`bboxY`；② `AlgorithmParams` 新增 `apexPercentile`（球顶面片比例，默认 `0.02`）；③ 排序键由 `minDepthMm` 改为 `apexDepthMm`；④ `overlay` 标注改为**精确包围框 + 球顶十字 + u/v/宽/高 文字**；⑤ 视觉页补机器可读的坐标日志。同步文档：`TEST_RECORD.md`（TR-132）→ 本文（§四 / §五 1.9 / §八 14~16 / §九）→ `algorithm_config_plan.md`（§六 C3、§11.2、§11.3、§11.4 示例）→ `doc/config.md`（节点 schema 加 `apexPercentile`）→ `AGENTS.md`。
+- **2026-10-16 追加（TR-133 / TR-134，overlay 消费侧）**：① **TR-133**——`VisionTestPage::BuildOverlayImage` 画框阈值误读**通用域** `vision.confidenceThreshold`（0.85）去过滤**节点域**（0.65）产出的结果 ⇒ 真机 overlay **无绿框、无球顶十字**（ROI 黄框不过滤，故表现为「有黄框、无绿框」）；修为「复用**同一次检测**的 `SnapshotParams().confidenceThreshold`」。② **TR-134**——`DrawOverlays` 末尾新增**左上角 HUD**（= 排序后第一个目标的**同款两行文本**，画在最上层，锚点内缩 6 px，底色 alpha 190），落实用户需求「overlay 左上角需要打上排序后第一个目标的检测值」；边界 = 图像左上角 / 字段与框上文字一致 / **保留**框上文字。⚠ 两项均**同时影响 `AutoRunPage`**（两页共用 `DrawOverlays`）。同步文档：`TEST_RECORD.md`（TR-133 / TR-134）→ `doc/config.md`（「消费侧读阈值必须与检测同源」条目）→ `AGENTS.md`（Current Phase）。
+- **2026-10-16 追加（TR-135，多目标合并的解切分）**：**问题**——三球挤在一起（接触/重叠）时 `BuildTopRegionMask` 末尾的 `MORPH_CLOSE` 把三球**桥接成单个连通域**，组件级循环只产出 1 个 `Candidate`（真机日志 `1 candidate(s); best area=18458 … bbox 160×177`，而三球分开时是 `3 candidate(s); best area=6453`，各 `bbox ≈ 96×92`）⇒ 用户报障「三个纸团只检测出一个」。**修法**——新增 `FindMarkers`（组件掩码欧氏距离变换 → 局部极大 → 平台归并 → **尺度自适应 NMS**，`minSep = 1.0×dist.max()`、`minPeak = 0.55×dist.max()`，两者都相对 `dist.max()` ⇒ **尺度无关、换球径/安装高度无需重标定**）、`VoronoiSplit`（按「最近峰归属」把组件像素切成 n 份子区域，无参数、确定性）；把原组件级测量抽成 `MeasureRegion(regionMask, …)` 供「整连通域」与「子区域」**共用同一条路径**（`ComputeApex` 入参由 `(labels, label)` 改为 `regionMask`）；`SelectRegions` 切出 ≥ 2 个合格子目标才逐个产出，否则**回退**组件级单目标（⇒ 单球行为**逐位不变**）。**⚠ 判据可证安全（非拟合）**：理想圆盘上 `dist ≥ 0.55r` ⟺ 点在圆心 `0.45r` 内 ⇒ 两峰间距 ≤ `0.9r` < `r = minSep` ⇒ **单球几何上不可能产出 2 个峰**。**⚠ 被否备选**：深度域局部极小值做标记（单球给 0/1/2/3 个，不可靠）、仅按比值阈值（需 ratio 到 0.70 才够分 3 个，区分度不足）。**验证**：当日 **8 帧真机落盘深度图 8/8 PASS**（合并帧 1 → 3 个目标，三子区域面积和 `6740+5499+6034 = 18273` **恰等于组件面积** ⇒ 划分完整互斥；其余 7 帧目标数 == 预言机连通域数 ⇒ 零过切；`depth_20261016153224_0` 三目标 area `6480/5870/4928` 与改造前 `6458/5909/5025` 逐位一致）；Sim 冒烟 `Initialize complete` 14 → 15。同步文档：`TEST_RECORD.md`（TR-135）→ 本文（§九 + 状态行）→ `doc/README.md`（状态列）→ `AGENTS.md`。
 - 落地后须同步：`TEST_RECORD.md` → 本文状态 → `algorithm_config_plan.md`（§六 各 C 项状态、§九 顺序）→ `doc/config.md`（新键 schema）→ `doc/README.md` 状态列 → `AGENTS.md` 的 Config / Current Phase。
 - **无新增配置文件** ⇒ `build_release.bat` **无需改动**（与 `inspection_result_panel_plan.md` 的 `inspection.json` 情形不同——那个必须改打包脚本，此处只是 `config.json` 内加节点）。
 

@@ -1121,17 +1121,23 @@ QImage VisionTestPage::BuildOverlayImage(const QImage& base)
     // `base` 为空表示调用方没现成彩图（如存图路径），自己转一次。
     const QImage src = base.isNull() ? FrameConverter::ColorToQImage(*latestFrame_) : base;
     if (src.isNull()) return src;
-    // 阈值在这里只决定**画哪些框**；检测阶段的过滤已在 `SimAlgo::Detect` 内按
-    // `EffectiveThreshold()` 完成（P1 / C1）。
-    const double thr = ConfigManager::instance().getValue<double>("vision.confidenceThreshold", 0.0);
-    // P3（2026-09-22）：无结果可画时直接返回浅拷贝——`DrawOverlays` 里的 `QPainter`
-    // 会对图像 `detach()`，那是一次 6.2 MB 深拷贝，白付。
-    if (showOverlay_ && !lastResults_.isEmpty()) {
-        QImage img = src;   // QImage 隐式共享：此处只是浅拷贝
+    // 阈值在这里只决定**画哪些框**；检测阶段的过滤已在算法内按 `EffectiveThreshold()`
+    // 完成（P1 / C1）。
+    // ⚠ TR-133：必须用**上次检测的同一个有效阈值**（`lastThreshold_`，取自 `SnapshotParams()`），
+    //   **不可**再读通用域 `vision.confidenceThreshold`——深度法下两者不等
+    //   （节点域 0.65 vs 通用域 0.85），用后者会把已检出的目标全部滤掉 ⇒ overlay 无框。
+    const double thr = lastThreshold_;
+    // TR-128（2026-10-15 二次追加）：ROI 检测区域框改为**无条件画**（预览与存图画面
+    // 一致，排查时所见即所存）；「未找到目标」标签随之进预览。
+    // ⚠ 原 P3 优化（无结果直接返回浅拷贝、省 6.2 MB detach）就此失效——`QPainter`
+    // 落笔必然 detach，深拷贝从「白付」变成「有偿但必要」。代价评估：仅渲染帧
+    // （时间戳去重门控，≤15 fps）多一次 ~6 MB memcpy（约 1~2 ms）+ 矩形绘制，
+    // 与同帧 `scaled()` 采样同量级，UI 无感；静止画面 / 停流仍零开销。
+    QImage img = src;   // QImage 隐式共享：此处只是浅拷贝，落笔才 detach
+    if (showOverlay_ && !lastResults_.isEmpty())
         FrameConverter::DrawOverlays(img, lastResults_, thr);
-        return img;
-    }
-    return src;
+    FrameConverter::DrawRoiAnnotation(img, lastRoi_, /*targetFound=*/!lastResults_.isEmpty());
+    return img;
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,6 +1177,13 @@ void VisionTestPage::ScheduleDetection(const CameraFramePtr& frame, bool allowAu
     // 线程安全），工作线程绝不读 ConfigManager 是本项目的既有硬约束
     // （见 `SequenceWorker.cpp:106` 的同名约定）。
     const AlgorithmParams params = algo->SnapshotParams();
+    // TR-128（2026-10-15）：记下本次检测用的 ROI，供落盘标注（`AnnotateRoiOnImage`）
+    // 画检测区域框。与本页 UI 线程读写、与 `lastResults_` 严格同源（同一次快照）。
+    lastRoi_ = params.roi;
+    // TR-133（2026-10-16）：同理记下本次检测的**有效**阈值，供 overlay 画框过滤。
+    // 必须与检测阶段用的完全一致——否则真机上「节点域 0.65 检出、通用域 0.85 画框」
+    // 会把已检出的目标二次滤掉，overlay 图无框（用户实测报障）。
+    lastThreshold_ = params.confidenceThreshold;
 
     detectBusy_ = true;
     QMetaObject::invokeMethod(detectCtx_, [this, frame, params, algo, allowAutoSave]() {
@@ -1210,14 +1223,30 @@ void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, do
         AppendLog(QStringLiteral("[检测] 目标 %1 个，耗时 %2 ms")
                       .arg(results.size())
                       .arg(QString::number(lastDetectMs_, 'f', 1)));
+
+        // TR-132（2026-10-16）：逐目标打**机器可读**的像素坐标。overlay 图上的标注只供人眼
+        // 核对——要「输出目标坐标」必须有文本出口（改造前本页只打「发现 N 个目标」，不落
+        // 任何数值，坐标只能靠人从图上抄）。同理放在 `countChanged` 门控内，避免连续检测刷屏。
+        // ⚠ `u`/`v` = **球顶**（`pixelU`/`pixelV`，即 `PixelToRobot` 的输入点，与 `z` 同源）；
+        //   `box` = 包围框左上角，配 `w`/`h` 即完整框；`rawMin` = 连通域原始最小深度
+        //   （与 `z` 之差 = 该目标上的深度噪点幅度，调参时看这一项）。
+        for (int i = 0; i < results.size(); ++i) {
+            const auto& r = results[i];
+            SPDLOG_INFO("[VisionTest] target #{}: u={} v={} w={} h={} box=({},{}) "
+                        "z={:.1f}mm rawMin={:.1f}mm conf={:.3f}",
+                        i + 1, r.pixelU, r.pixelV, r.width, r.height,
+                        r.bboxX, r.bboxY, r.z, r.minDepthMm, r.confidence);
+        }
     }
 
     // V8 裁定：三开关只在**单次检测**（含离线图检测）时生效；连续检测期间忽略自动存图。
     // 否则 30 fps × 3 路 = 90 张/秒 → 秒级爆盘，且必然命中 FrameSaver 的 D4/D5。
     if (allowAutoSave) {
-        if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb();
-        if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth();
-        if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay();
+        // TR-130：本拍取一次时间戳、三路共用——落盘名时间戳严格一致（rgb/depth 对比前提）。
+        const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
+        if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb(tsMs);
+        if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth(tsMs);
+        if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay(tsMs);
     }
 
     if (results.empty())
@@ -1320,15 +1349,18 @@ void VisionTestPage::OnBrowseTemplate()
 // 存图
 // ---------------------------------------------------------------------------
 
-void VisionTestPage::QueueSaveRgb()
+void VisionTestPage::QueueSaveRgb(qint64 tsMs)
 {
     if (!hasFrame_) return;
+    // TR-128（2026-10-15 三次追加，用户裁定）：RGB 存图**不打** ROI 框——保持原始
+    // 彩图语义，ROI / 失败标注只进 overlay 路（预览 + 存图同在 `BuildOverlayImage` 内）。
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
                               Q_ARG(QImage, BuildRgbImage()),
-                              Q_ARG(QString, QStringLiteral("rgb")));
+                              Q_ARG(QString, QStringLiteral("rgb")),
+                              Q_ARG(qint64, tsMs));
 }
 
-void VisionTestPage::QueueSaveDepth()
+void VisionTestPage::QueueSaveDepth(qint64 tsMs)
 {
     if (!hasFrame_) return;
     // ⚠ 存的是**原始 16-bit 深度值（mm）**，不是伪彩图（TR-125，2026-10-14）。
@@ -1336,17 +1368,23 @@ void VisionTestPage::QueueSaveDepth()
     // 深度查看器（如 `DepthViewer.exe`）按 16-bit 灰度读，得到全 0 ⇒ 「保存的深度图没有深度值」。
     // 伪彩渐变不可逆（8-bit 三通道 + 受 depthMin/depthMax 影响），无法从中还原 mm。
     // 预览格仍走 `BuildDepthImage()`——那是给人看的，语义与落盘**刻意不同**。
+    // ⚠ 同理（TR-128）本路**不做** ROI / 「未找到目标」标注——标注会毁掉物理量语义。
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
                               Q_ARG(QImage, FrameConverter::DepthToQImage16(*latestFrame_)),
-                              Q_ARG(QString, QStringLiteral("depth")));
+                              Q_ARG(QString, QStringLiteral("depth")),
+                              Q_ARG(qint64, tsMs));
 }
 
-void VisionTestPage::QueueSaveOverlay()
+void VisionTestPage::QueueSaveOverlay(qint64 tsMs)
 {
     if (!hasFrame_) return;
+    // TR-128：ROI 框 / 「未找到目标」标签已并入 `BuildOverlayImage`（预览与存图
+    // 同一函数产出，天然一致；RGB / 深度两路均不打标注——RGB 保原始彩图语义
+    // （用户裁定），深度 16-bit 保物理量语义（TR-125））。
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
                               Q_ARG(QImage, BuildOverlayImage()),
-                              Q_ARG(QString, QStringLiteral("overlay")));
+                              Q_ARG(QString, QStringLiteral("overlay")),
+                              Q_ARG(qint64, tsMs));
 }
 
 void VisionTestPage::OnSnapshot()
@@ -1362,13 +1400,16 @@ void VisionTestPage::OnSnapshot()
                   || (saveDepthCheck_ && saveDepthCheck_->isChecked())
                   || (saveOverlayCheck_ && saveOverlayCheck_->isChecked());
     if (!any) {
-        QueueSaveRgb();
+        // TR-130：本拍取一次时间戳、三路（此处一路）共用，语义同 ApplyDetectionResult。
+        const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
+        QueueSaveRgb(tsMs);
         SetStatus(QStringLiteral("三路存图开关均未勾选，已按 RGB 保存当前帧"));
         return;
     }
-    if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb();
-    if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth();
-    if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay();
+    const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();   // TR-130：三路共用一个时间戳
+    if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb(tsMs);
+    if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth(tsMs);
+    if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay(tsMs);
     SetStatus(QStringLiteral("当前帧已加入保存队列"));
 }
 

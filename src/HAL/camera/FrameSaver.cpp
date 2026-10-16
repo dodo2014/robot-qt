@@ -53,7 +53,7 @@ void FrameSaver::Stop()
     SPDLOG_INFO("[FrameSaver] stopped (queue discarded)");
 }
 
-void FrameSaver::SaveImage(const QImage& image, const QString& subdir)
+void FrameSaver::SaveImage(const QImage& image, const QString& subdir, qint64 timestampMs)
 {
     if (image.isNull()) return;
 
@@ -66,7 +66,12 @@ void FrameSaver::SaveImage(const QImage& image, const QString& subdir)
             queue_.pop_front();
             dropped = QStringLiteral("保存队列已满（上限 %1 张），已丢弃最旧一张").arg(kMaxQueueSize);
         }
-        queue_.push_back({ image, subdir });
+        // TR-130（2026-10-15）：时间戳在**入队时刻**定死（0 = 取当前时间）。
+        // 同一拍的三路存图由调用方传**同一个** ts——用户拿 rgb / depth 落盘名做
+        // 对比的前提是两者时间戳严格一致；若在处理阶段逐 job 现取，tick 边界
+        // （kMaxPerTick 分批）或积压都会让时间戳漂移到不同秒。
+        queue_.push_back({ image, subdir,
+                           timestampMs == 0 ? QDateTime::currentMSecsSinceEpoch() : timestampMs });
     }
     // 锁外发信号（本函数在存图线程执行，emit 经队列投递到 UI 线程）
     if (!dropped.isEmpty()) emit saveError(dropped);
@@ -110,11 +115,21 @@ void FrameSaver::ProcessQueue()
             base.setPath(outputDir_ + QLatin1Char('/') + job.subdir);
         }
 
-        const QString name = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
-        QString path = base.filePath(name + QStringLiteral(".png"));
-        // 同一 tick 内连存多张时毫秒戳可能相同 → 加序号后缀，避免静默覆盖
-        for (int k = 1; QFile::exists(path); ++k)
-            path = base.filePath(QStringLiteral("%1_%2.png").arg(name).arg(k));
+        // 文件名规则（TR-129 / TR-130）：`类型_时间戳_编号.png`。
+        // 类型 = 子目录名（rgb / depth / overlay）；时间戳 = **入队时刻定死的
+        // job.tsMs**（同一拍三路一致，见 SaveImage 注释）；14 位**无分隔**
+        // （yyyyMMddHHmmss，对齐需求示例 depth_20261015164203_0.png）。
+        // 编号按「类型 × 秒」独立、从 0 自增——键含秒字符串，跨秒自然归零。
+        // ⚠ `nameSeqs_` 只在本函数（saver 线程）访问，无需加锁。
+        const QString type  = job.subdir.isEmpty() ? QStringLiteral("frame") : job.subdir;
+        const QString stamp = QDateTime::fromMSecsSinceEpoch(job.tsMs).toString(QStringLiteral("yyyyMMddHHmmss"));
+        const QString seqKey = type + QLatin1Char('/') + stamp;
+        int& nextIdx = nameSeqs_[seqKey];
+        QString path;
+        do {
+            path = base.filePath(QStringLiteral("%1_%2_%3.png").arg(type, stamp).arg(nextIdx));
+            ++nextIdx;
+        } while (QFile::exists(path));   // 兜底：同名残留（如上次运行恰在同一秒落过文件）时顺延，计数器同步前进
 
         if (job.image.save(path, "PNG")) {
             lastSaved = path;   // 只记最后一次 → 下面合并成一次通知

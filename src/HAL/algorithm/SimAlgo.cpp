@@ -108,6 +108,11 @@ std::vector<PuffResult> SimAlgo::Detect(const CameraFrame& frame, const Algorith
         PuffResult res;
         res.pixelU = static_cast<int>(std::lround(a.sumX / static_cast<double>(a.count)));
         res.pixelV = static_cast<int>(std::lround(a.sumY / static_cast<double>(a.count)));
+        // 包围框原点（TR-132，2026-10-16）：契约要求「原点 + 尺寸」独立给出，画框才不依赖
+        // 「以某点为中心」的假设。本算法的 `pixelU/pixelV` 是连通域质心，与框中心本就只差
+        // 几 px；新字段填上后与 `DepthPuffAlgo`（球顶 ≠ 框中心）走同一条绘制路径。
+        res.bboxX  = a.minX;
+        res.bboxY  = a.minY;
         res.width  = a.maxX - a.minX + 1;
         res.height = a.maxY - a.minY + 1;
 

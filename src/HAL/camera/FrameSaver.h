@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
 #include <QImage>
 #include <QString>
 
@@ -37,7 +38,11 @@ public:
 public slots:
     void Start();
     void Stop();
-    void SaveImage(const QImage& image, const QString& subdir = QStringLiteral("snapshots"));
+    // `timestampMs`：入队时刻定死的文件名时间戳（epoch ms）；**0 = 取当前时间**。
+    // 同一拍的多路存图（rgb / depth / overlay）必须传同一个值——落盘名的时间戳
+    // 一致是用户做深度图 / RGB 对比的前提（TR-130）。
+    void SaveImage(const QImage& image, const QString& subdir = QStringLiteral("snapshots"),
+                   qint64 timestampMs = 0);
 
 signals:
     void imageSaved(const QString& path);
@@ -50,7 +55,14 @@ private:
     struct Job {
         QImage  image;
         QString subdir;
+        qint64  tsMs = 0;   // 入队时刻定死的文件名时间戳（epoch ms，TR-130）
     };
+
+    // 文件名编号状态（TR-129 / TR-130）：`类型_时间戳_编号.png` 规则下，
+    // 按「类型 × 秒」（键 = `类型/时间戳串`）记住下一个可用编号，同一秒内从 0 自增、
+    // 跨秒自然归零（键不同即新计数）。
+    // ⚠ 仅 `ProcessQueue`（saver 线程单线程执行）访问，无需加锁。
+    QHash<QString, int> nameSeqs_;   // 键 = "类型/时间戳串"，值 = 下一个可用编号
 
     QTimer*             timer_  = nullptr;
     std::deque<Job>     queue_;

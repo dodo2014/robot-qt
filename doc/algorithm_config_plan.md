@@ -146,7 +146,7 @@
 | :--- | :--- | :--- | :--- |
 | **C1** | 调用方改为**透传整棵子树** ✅ **已实施 2026-10-14（TR-126）** | `HardwareManager.cpp:161-163` | 由手工拼 `{"confidenceThreshold": …}` 改为取 `vision.algorithms.<algoType>` 整块 `.dump()` 后喂 `LoadConfig()`；节点缺失时传 `{}`（**不是失败**，**已裁定 ①**，见 §十） |
 | **C2** | **识别分支改走 `PixelToRobot`** ✅ **已实施 2026-10-13（TR-124）** | `SequenceWorker.cpp:1050-1055` | 由 `CameraToRobot(best.x, best.y, best.z)` 改为「`InMainThread` 取 `camera->GetIntrinsics()` → `coord.SetCameraIntrinsics(fx, fy, cx, cy)` → `coord.PixelToRobot(best.pixelU, best.pixelV, best.z)`」。⚠ **与 `hand_eye_calibration_plan.md` §5.1 C1 是同一处改动**——已合并执行一次。同批附带 C1b（日志补 `Vision calib: pixel(u,v) depth intr(fx,fy,cx,cy)` 读数行）与 C2'（`OrbbecCamera.cpp:407` 打印彩色内参），见该篇 §5.1 |
-| **C3** | `AlgorithmParams` 加**算法私有调参量**；`PuffResult` 加 `area` / `minDepthMm` ✅ **已实施 2026-10-14（TR-126）** | `IPuffAlgorithm.h:28-33`、`:8-19` | 深度法所需 8 项 + `roi`。⚠ **字段清单与语义以 §十一 的接口契约为准**（`z` 定为「区域最高点」、`results.front()` = 最佳目标）。⚠ **不加内参字段**（§3.3、§十 裁定 5）。⚠ 只加**当前已注册实现**的量；这是接口结构体，改它要走全清重建 |
+| **C3** | `AlgorithmParams` 加**算法私有调参量**；`PuffResult` 加 `area` / `minDepthMm` ✅ **已实施 2026-10-14（TR-126）**；`PuffResult` 再加 `bboxX` / `bboxY`、`AlgorithmParams` 再加 `apexPercentile` ✅ **已实施 2026-10-16（TR-132）** | `IPuffAlgorithm.h:28-33`、`:8-19` | 深度法所需 8 项 + `roi`。⚠ **字段清单与语义以 §十一 的接口契约为准**（`z` 定为「区域最高点」、`results.front()` = 最佳目标）。⚠ **不加内参字段**（§3.3、§十 裁定 5）。⚠ 只加**当前已注册实现**的量；这是接口结构体，改它要走全清重建 |
 | **C4** | `SnapshotParams()` 补齐新字段 ✅ **已实施 2026-10-14（TR-126）** | `SimAlgo.cpp:21-30`、`DepthPuffAlgo.cpp:268-300` | 私有量从 `vision.algorithms.<名>` 读；**通用三键（`confidenceThreshold` / `depthZMin` / `depthZMax`）也按「节点优先、缺则回落 `vision.*`」读**（§十 裁定 3）。⚠ 原文「通用量维持现读法」与裁定 3 **冲突**，深度法初版照此实现 ⇒ 节点级同名覆盖键**静默失效**（**2026-10-14 TR-127 已修**，两算法现同一形态） |
 | **C5** | `LoadConfig` 解析自己的整棵子树 ✅ **已实施 2026-10-14（TR-126）** | `SimAlgo.cpp:190-211` | 从「只认 `confidenceThreshold`」改为「认整棵子树」，兜底值语义不变 |
 | **C6** | `vision.templatePath` 迁到算法节点 ⏳ **已移出本批（2026-10-14）** | `config.json` + `doc/config.md:137,143` | 见 §七 M1。⚠ **原文「且无读点」不成立**——`VisionTestPage.cpp:839` **读**、`:1313` **写**（视觉页「模板配置」的「浏览…」）。迁键须同批改这两处路径（还要跟随该页的算法选择状态）⇒ 属独立一处改动，**另开**；本批**只新增 `vision.algorithms` 节点、未删任何既有键** |
@@ -197,6 +197,8 @@
 6. **C7**（动作级覆盖）—— 独立可选项，欠账来自 C6。
 
 **台账**：C2 单独落地记 **TR-124**（2026-10-13）；**C1 + C3 + C4 + C5 + 深度法算法本体（移植 `CPuffLocator`）合并落地记 TR-126（2026-10-14）**。**仍未落地**：**C6 / M1**（迁 `templatePath`——已确认会牵动 `VisionTestPage` 的读写点，见 §六 C6）、**C7**（动作级覆盖）、**C8**（`x/y` 去留）。落地时按当日台账最大号分配，并同步：`TEST_RECORD.md` → 本文状态 → `doc/config.md`（schema 权威落点）→ `doc/README.md` 状态列 → `AGENTS.md` 的 Config 节。
+
+> **⚠ 2026-10-16 追加：TR-131 / TR-132 / TR-135 均属「算法内部改动」，本文**无 C 项变化**。** 三者分别：**TR-131** 节点级 `confidenceThreshold = 0.65`（**用既有私有键**，非新增键）+ 排序键改深度优先；**TR-132** `PuffResult` 加 `bboxX`/`bboxY`、`AlgorithmParams` 加 `apexPercentile`（**C3 的延伸**，已回填 §六 C3 行）；**TR-135** 一个连通域 → 多目标的解切分（距离变换峰 + 尺度自适应 NMS + Voronoi）——**刻意不设配置键**（判据全为相对量、尺度无关），故**本文与 `config.json` 的键表均无变化**。⇒ **若将来有人找「多目标切分的配置项」，答案是「没有，也不该有」**；理由与判据见 `depth_puff_algorithm_plan.md` §四（代码内硬编码量表）。
 
 **2026-10-13 裁定后的实施计划**：§十 5 项已全部裁定（按「建议」列），且算法本体改由**我方**实现 ⇒ **下一批代码 = 第 1~4 步合并落地**：C1 + C5（命名空间 / 透传 / `LoadConfig` 认整棵子树）+ C6/M1（迁 `templatePath`）+ C3/C4（私有调参量，原写「随算法本体」——现在**算法本体就是这批**）+ **深度法算法本体（移植 `CPuffLocator`）**。**C7（动作级覆盖）与 C8（`x/y` 去留）另开**（§十 裁定 4；C8 虽已可做，但与本批 schema 决策正交）。移植段的**代码步骤与参数初值表另开一篇**（`implementation_roadmap.md` §9.6）。
 
@@ -251,7 +253,7 @@
 | 分组 | 键 | 归属层 |
 | :--- | :--- | :--- |
 | **通用（跨算法）** | `confidenceThreshold` / `depthZMin` / `depthZMax` | `vision.*`（§四） |
-| **算法私有** | `vision.algorithms.<algoType>.*`——如 `roi` / `nearestPercentile` / `heightBandMm` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` / `templatePath` | 算法节点（§四 / §五） |
+| **算法私有** | `vision.algorithms.<algoType>.*`——如 `roi` / `nearestPercentile` / `heightBandMm` / `apexPercentile` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` / `templatePath` | 算法节点（§四 / §五） |
 
 ⚠ **参数只以「快照」形式进入算法**：调用方在**主线程**调 `SnapshotParams()` 取一份值语义结构，算法**不回头读任何全局状态**（§二）。覆盖关系 = 算法节点优先、通用域作默认（§十 裁定 3）。
 
@@ -263,11 +265,12 @@
 
 | 字段 | 类型 | 单位 | 语义（冻结） |
 | :--- | :--- | :--- | :--- |
-| `pixelU` / `pixelV` | `int` | px | 目标中心在**彩色图**的像素坐标（原点左上，x 右、y 下） |
-| `z` | `double` | mm | 目标深度。**语义定为「区域内最高点」**——抓取应取最高点（`implementation_roadmap.md` §9.5 待定项 4 由此关闭） |
+| `pixelU` / `pixelV` | `int` | px | 目标**球顶**在**彩色图**的像素坐标（原点左上，x 右、y 下）。⚠ **语义已定死为「球顶」**（TR-132，2026-10-16）——即连通域内最高点所在面片的质心，**不是**连通域质心：真机帧实测二者相距 **18~33 px**（球顶面片）／原始最高点与质心相距 **~47 px**（≈23 mm）。定死的理由 = 与 `z` 必须指向**同一个物理点**，否则 `PixelToRobot(u, v, z)` 反投影出一个**不在目标表面上**的点 |
+| `z` | `double` | mm | 目标深度 = **球顶面片均值深度**。⚠ 语义 = 「区域内最高点」（`implementation_roadmap.md` §9.5 待定项 4 由此关闭），但取**面片均值**而非单像素极小值（TR-132）：深度传感器在轮廓处会产生 flying pixel 伪影——实测某球 `min = 513 mm` 而球顶面片均值 `= 522.6 mm`（差 9.6 mm 全属噪点），且**帧间抖动**由 ±3.0 mm 降到 ±1.0 mm |
+| `bboxX` / `bboxY` | `int` | px | **新增**（TR-132）：包围框**左上角**（**彩色系**）。与 `width` / `height` 合起来即完整包围框。⚠ 独立给出原点而非「以某点为中心」：球顶 ≠ 框中心，只给「中心 + 尺寸」无法还原包围框 |
 | `area` | `double` | px² | **新增**（C3）：目标像素面积，供调参 / 判定。⚠ **坐标系 = 深度图**（算法在深度域做连通域），与 `pixelU` / `pixelV` 的**彩色系**不同；D2C = `SW` 时两分辨率相同、二者等价（`depth_puff_algorithm_plan.md` §七 M2） |
-| `minDepthMm` | `double` | mm | **新增**（C3）：区域最小深度（= 最高点深度，与 `z` 同源，可交叉校验） |
-| `width` / `height` | `int` | px | 目标包围框尺寸（图像域） |
+| `minDepthMm` | `double` | mm | **新增**（C3）：连通域内**原始**最小深度。⚠ **TR-132 起与 `z` 不再恒等**——`z` 取球顶面片均值（抗噪），本字段保留原始极值 ⇒ 二者之差即该目标上的**深度噪点 / 尖点幅度**，供交叉校验与调参（原记「= 最高点深度，与 `z` 同源」已被本次改动取代） |
+| `width` / `height` | `int` | px | 目标包围框尺寸（图像域）。⚠ 与 `bboxX` / `bboxY` 配对使用（TR-132） |
 | `confidence` | `double` | 0~1 | 置信度，越大越可信 |
 | `x` / `y` | `double` | — | ⚠ **弃用**（§十 裁定 2）：字段保留，**算法侧不再填**（恒 0）。基座坐标由下游 `PixelToRobot` 算 |
 | `yaw` | `double` | ° | 图像平面内偏航角；**本项目无工艺意义**（`vision_guide_action_plan.md` §七），`r` 一律取动作的 `guideR` |
@@ -313,9 +316,9 @@
   "protocolVersion": 1,
   "error": "",
   "results": [
-    { "pixelU": 640, "pixelV": 360, "z": 412.5,
-      "area": 24500, "minDepthMm": 405.0,
-      "width": 180, "height": 175, "confidence": 0.93 }
+    { "pixelU": 640, "pixelV": 336, "z": 412.5,
+      "bboxX": 552, "bboxY": 300, "width": 180, "height": 175,
+      "area": 24500, "minDepthMm": 405.0, "confidence": 0.93 }
   ]
 }
 ```

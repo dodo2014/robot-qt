@@ -229,23 +229,23 @@
         "algorithmType": "DepthPuffAlgo",
         "cameraType": "OrbbecCamera",
         "enabled": true,
-        "motionCardType": "SimCard",
-        "servoType": "SimServo"
+        "motionCardType": "Bopai",
+        "servoType": "XRServo"
     },
     "tcpCalibration": {
         "handEyeMatrix": [
-            1,
+            0,
+            -1,
+            0,
+            200,
+            -1,
             0,
             0,
-            180,
-            0,
-            1,
-            0,
-            -5.7,
+            141,
             0,
             0,
-            1,
-            38.1,
+            -1,
+            623,
             0,
             0,
             0,
@@ -262,6 +262,8 @@
     "vision": {
         "algorithms": {
             "DepthPuffAlgo": {
+                "apexPercentile": 0.02,
+                "confidenceThreshold": 0.65,
                 "edgeMargin": 8,
                 "heightBandMm": 20.0,
                 "maxArea": 250000,
@@ -269,10 +271,10 @@
                 "morphKernelSize": 7,
                 "nearestPercentile": 0.03,
                 "roi": {
-                    "h": 0,
-                    "w": 0,
-                    "x": 0,
-                    "y": 0
+                    "h": 610,
+                    "w": 900,
+                    "x": 900,
+                    "y": 70
                 },
                 "targetArea": 0,
                 "targetAreaTolerance": 0
@@ -280,8 +282,8 @@
             "SimAlgo": {}
         },
         "confidenceThreshold": 0.85,
-        "depthZMax": 496.0,
-        "depthZMin": 6.0,
+        "depthZMax": 618.0,
+        "depthZMin": 458.0,
         "templatePath": ""
     }
 }

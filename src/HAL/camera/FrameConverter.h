@@ -55,6 +55,32 @@ QImage DepthToQImage(const CameraFrame& frame, float depthMin = 0.0f, float dept
 // 并按 `depthData.size()` 守卫）；无效深度（`<= 0`，即无回波/超量程）写 0。
 QImage DepthToQImage16(const CameraFrame& frame);
 
+// 检测结果叠加（TR-132，2026-10-16 改版）：每个通过阈值的 `PuffResult` 画
+//   ① 绿色包围框 = `(bboxX, bboxY, width, height)`（**精确**，不再假设「以某点为中心」）；
+//   ② 青色十字 = `(pixelU, pixelV)`，语义为**球顶**——与 `z` 同源，即 `PixelToRobot` 的输入点；
+//   ③ 文字 = 序号 + `u/v/w/h` + `z` + `conf`（随各自的框走）。
+//   ④ **左上角 HUD**（2026-10-16）= 排序后第一个（= 最高）目标的**同款两行文本**，固定在
+//      图像左上角内缩 6 px 处、画在最上层。动机：框上文字随框走（框贴顶还会被上推），
+//      缩放 / 裁图后不便定位；角上 HUD 位置固定、一眼可读。`results` 为空时无 HUD。
+//
+// ⚠ 改造前文字打的是 `x`/`y`（机器人坐标）：契约 §十 裁定 2 已弃用、算法侧**恒为 0**，
+//   属无效信息；且框以 `(pixelU, pixelV)` 为框心——`pixelU/pixelV` 改为球顶后，
+//   与框中心相差 ~47 px，照旧画会罩不住目标。
+// ⚠ 坐标口径 = **彩色系**（`PuffResult` 契约）；字号随图宽自适应（存图是全分辨率）。
 void   DrawOverlays(QImage& image, const QVector<PuffResult>& results, double confidenceThreshold = 0.0);
+
+/// 存图标注（TR-128，2026-10-15）：画出 ROI 检测区域框；`targetFound=false` 时在框
+/// 左上角叠加「未找到目标」文案标签。
+///
+/// ⚠ 只用于**落盘彩图**（RGB / Overlay）。16-bit 深度图存的是算法吃的物理量，
+/// 画上标注就毁了数据语义，**不得**调用本函数（与 TR-125 的落盘格式裁定同理）。
+///
+/// ⚠ 坐标口径：`RoiRect` 的坐标系 = **深度图**（`IPuffAlgorithm.h` 契约）。D2C = SW
+/// 对齐时两系分辨率相同、直接可用；D2C 关闭时按**数值**直绘到彩图坐标并裁到图内
+/// ——这是已知的口径差异，本函数不做任何坐标变换（与预览叠加框同一口径）。
+///
+/// `roi.w` / `roi.h` ≤ 0（未配置 ROI = 全图）或 ROI 与图像完全不相交时，回落为
+/// 整幅图内缩一圈的边框——保证「未找到目标」标签在任何情况下都有锚点。
+void   DrawRoiAnnotation(QImage& image, const RoiRect& roi, bool targetFound);
 
 }

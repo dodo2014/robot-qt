@@ -37,7 +37,7 @@
 
 当前已注册实现（`REGISTER_*` 宏，`HALFactory.h`）：运动卡 `SimCard` / `Bopai`；舵机 `SimServo` / `XRServo`；相机 `SimCamera` / `OrbbecCamera`；算法 `SimAlgo` / `DepthPuffAlgo`。`ZMotion` / `Leisai` 为预留品牌（SDK 目录已建）。
 
-**两个算法实现的区别**（2026-10-14，TR-126）：`SimAlgo` = 纯 RGB 色块匹配**占位**算法（**鲁棒性无保证**），无私有参数；`DepthPuffAlgo` = **深度图定位**算法（自研，移植老项目 `CPuffLocator` 的纯深度实现），含 9 项私有参数（见下方 `vision.algorithms`）。切换只需改本键，**零代码改动**。⚠ 仿真下深度法**只检出 1 个**目标（颜色法为 2 个）——属**预期行为变化、非缺陷**，推演见 `depth_puff_algorithm_plan.md` §六。
+**两个算法实现的区别**（2026-10-14，TR-126）：`SimAlgo` = 纯 RGB 色块匹配**占位**算法（**鲁棒性无保证**），无私有参数；`DepthPuffAlgo` = **深度图定位**算法（自研，移植老项目 `CPuffLocator` 的纯深度实现），含 11 项私有参数（见下方 `vision.algorithms`）。切换只需改本键，**零代码改动**。⚠ 仿真下深度法**只检出 1 个**目标（颜色法为 2 个）——属**预期行为变化、非缺陷**，推演见 `depth_puff_algorithm_plan.md` §六。⚠ **深度法支持「多目标挤在一起」的解切分**（2026-10-16，TR-135）：`MORPH_CLOSE` 会把**接触/重叠**的目标桥接成单个连通域，故在组件内部再做「距离变换峰 + 尺度自适应 NMS + Voronoi 切分」，切出 ≥ 2 个合格子目标才逐个产出、否则回退组件级 ⇒ **一个连通域可产出多个 `PuffResult`**（详见下方 `vision` 段的「一个连通域 ≠ 一个目标」条目）。仿真下最高层面板只连成 1 个区域且内部只有 1 个峰 ⇒ **仍只检出 1 个**，与上句不矛盾。
 
 **当前配置**（`config/config.json`）：`motionCardType=SimCard`、`servoType=SimServo`、`cameraType=OrbbecCamera`、`algorithmType=SimAlgo`、`enabled=true`——即**执行机构走仿真（`SimCard` + `SimServo`）、相机走真机（`OrbbecCamera`）**。⚠ 算法当前仍是 `SimAlgo`；改 `algorithmType=DepthPuffAlgo` 即切深度法（私有参数在 `vision.algorithms.DepthPuffAlgo`，改文件后**须重启**）。
 > ⚠ 该组合下跑 Sim 冒烟会**去抢真实相机**（`simulation.cameraType` 决定 `HardwareManager` 实例化谁，与 `enabled` 无关）。冒烟前须把 `cameraType` 改回 `SimCamera`，否则可能与用户真机调试互抢。
@@ -115,6 +115,10 @@ kinematics
 | J2 | 0.008 | -90 | 90 |
 | Z  | 0.025 | 0 | 200 |
 
+> ⚠ **`z0` / `h1` 的基准（2026-10-15 澄清）**：两者与 `Pose.z` **同基准**——基准面 = **机器人底座所坐落的地面**（`Pose.z = 0` 即该面；TR-031 真机实测 `Go −165` 时夹爪尖端触到该面、读数 `0.0 mm`；照片 `doc/robot-pictures/h1标定.png` 的红标注「轴1上表面到地面的距离」量到它）。
+> `z0 = 470` 是**法兰上表面到该地面**的距离；`h1 = 175` 是**大臂向下倾斜的落差**（腕点比 Z 电机低 175 mm），**不是**「台面离地高度」——`src/Core/Kinematics.cpp:59-60` 的注释即此定义。
+> 故 `Pose.z = joints.z + 470 − 175 − 130 = joints.z + 165`（TR-043 真机实测 `z = 165.000`）。手眼标定量 `Oz`（`hand_eye_calibration_plan.md` §3.3）时直接从该面量到相机光心，**不需要**再折算 `z0`。
+
 ### safePos — 全局安全位（2026-09-07 新增）
 
 ```
@@ -146,9 +150,11 @@ vision
 ├── templatePath         ""        算法模板配置路径（可选；P4 新增）
 └── algorithms                     按算法名命名空间的**私有参数**（2026-10-14 新增）
     ├── SimAlgo                   {}      空对象——它没有私有键，参数全在通用域
-    └── DepthPuffAlgo                    深度法私有参数（9 项）
+    └── DepthPuffAlgo                    深度法私有参数（11 项）
+        ├── confidenceThreshold 0.65     **覆盖**通用域 0.85（2026-10-16，TR-131：真机标定）
         ├── nearestPercentile  0.03      最近层分位数（代码内 clamp 到 [0.001, 0.5]）
         ├── heightBandMm       35.0      最高层带厚 (mm)（代码内取 max(1.0, 值)）
+        ├── apexPercentile     0.02      **球顶面片比例**（2026-10-16，TR-132；代码内 clamp 到 [0.005, 0.5] 且面片 ≥ 8 px）
         ├── minArea            120       连通域面积下限 (px²，**深度系**)
         ├── maxArea            250000    连通域面积上限 (px²，**深度系**)
         ├── targetArea         0         目标泡芙面积；**0 = 禁用面积评分**
@@ -166,11 +172,15 @@ vision
 > - ⚠ **整数量必须写成整数**（`120` 而非 `120.0`）：`ConfigManager::getValue<int>` 走 `json::get<int>()`，类型不匹配会抛异常并被 `catch` 吞掉、**静默回落默认值**。
 > - ⚠ **`roi` / `minArea` / `maxArea` / `edgeMargin` 的坐标系 = 深度图**（算法在深度域做连通域），而结果里的 `pixelU`/`pixelV` 在**彩色系**。D2C = `SW` 时两分辨率相同、二者等价；D2C 关闭时不等价。
 > - ⚠ **手改本节点后必须重启**（同 `vision.*` 的成因：`getValue` 读内存 `root_`）。
-> - **离线验收（A 档）已过**（2026-10-14，TR-126）：① 节点存在时启动日志出现 `[DepthPuffAlgo] config loaded (… bytes)`；② 删掉节点后重启 → `[DepthPuffAlgo] config empty (2 bytes) → built-in defaults`（**INFO、非 WARN**，印证 §十 裁定 1）；③ 通用域无私有键残留（见上方 schema）。⚠ A4（改 `heightBandMm` 看检出个数变化）与 B 档（仿真检出 1 个目标、`results.front()` 为最优者）**须真正触发一次识别动作**，冒烟只验启动、覆盖不到。
+> - **离线验收（A 档）已过**（2026-10-14，TR-126）：① 节点存在时启动日志出现 `[DepthPuffAlgo] config loaded (… bytes)`；② 删掉节点后重启 → `[DepthPuffAlgo] config empty (2 bytes) → built-in defaults`（**INFO、非 WARN**，印证 §十 裁定 1）；③ 通用域无私有键残留（见上方 schema）。⚠ A4（改 `heightBandMm` 看检出个数变化）与 B 档（仿真检出 1 个目标、`results.front()` 为最优者）**须真正触发一次识别动作**，冒烟只验启动、覆盖不到。**2026-10-16 补（TR-135）**：当日 **8 帧真机落盘深度图**经离线 harness（真实 `DepthPuffAlgo.cpp.obj` + 完整 `ConfigManager → SnapshotParams → Detect` 链路）**8/8 PASS**——含「三球挤在一起」帧由 1 个目标切为 **3** 个（三子区域面积和 `6740+5499+6034` **恰等于组件面积 18273**），其余 7 帧目标数与「连通域预言机」一致 ⇒ **零过切**。
 
 > **写入口与生效状态（2026-09-20，P1 核实 + P4 更新）**：
-> - `confidenceThreshold` — **P1 起真正生效**：算法在 `Detect()` 末尾按该值剔除 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。⚠ **两套算法的 `confidence` 语义不同**（2026-10-14，TR-126）：`SimAlgo` 存**面积覆盖率**（`coverage × 1.08`）；`DepthPuffAlgo` 存**三权重综合 `score`**（`EstimateConfidence × 0.60 + nearScore × 0.25 + areaScore × 0.15`，**不是** `EstimateConfidence` 本身）⇒ **同一个 `0.85` 在两者上松紧不等价**。⚠ **2026-10-14 真机实测已把该风险坐实（M1 成立）**：`DepthPuffAlgo` 真机上 `filtered 8~11 of 10~12 detection(s)`，且两次运行 `best score = 0.833 < 0.85` ⇒ **候选全部被剔除**、视觉页报「未找到目标」⇒ **该默认值对深度法过严**，调参时第一优先处理（可加 `vision.algorithms.DepthPuffAlgo.confidenceThreshold` 私有覆盖键，覆盖顺序见上）。
+> - `confidenceThreshold` — **P1 起真正生效**：算法在 `Detect()` 末尾按该值剔除 `confidence` 低于阈值的识别结果（此前只显示、不过滤）。⚠ **两套算法的 `confidence` 语义不同**（2026-10-14，TR-126）：`SimAlgo` 存**面积覆盖率**（`coverage × 1.08`）；`DepthPuffAlgo` 存**三权重综合 `score`**（`EstimateConfidence × 0.60 + nearScore × 0.25 + areaScore × 0.15`，**不是** `EstimateConfidence` 本身）⇒ **同一个 `0.85` 在两者上松紧不等价**。⚠ **2026-10-14 真机实测已把该风险坐实（M1 成立）**：`DepthPuffAlgo` 真机上 `filtered 8~11 of 10~12 detection(s)`，且两次运行 `best score = 0.833 < 0.85` ⇒ **候选全部被剔除**、视觉页报「未找到目标」⇒ **该默认值对深度法过严**。✅ **2026-10-16 已处理（TR-131）**：在 `vision.algorithms.DepthPuffAlgo` 加**节点级** `confidenceThreshold = 0.65`，**通用域 0.85 不动**（`SimAlgo` 行为零变化）——依赖 TR-127 修好的「节点优先」读法。**0.65 的标定依据**（真机 11 帧实测扫描，非拍脑袋）：两球 `score` ∈ [0.697, 0.803]；把 `heightBandMm` 加大以拉入盒面「垃圾候选」后其 `score` ≤ **0.611** ⇒ **真球下限与垃圾上限的分界中点 ≈ 0.654**，取 0.65。⚠ 同批把 `DepthPuffAlgo::SelectRegions` 的排序键由 `score` 降序改为**深度优先**（`minDepthMm` 升序，`score` 作并列次级键）——抓取语义下「最佳目标」＝**最高**（夹爪自上方下探、最高者可达），而 `score` 里的 `centerScore` 偏好**画面中心**、与「最高」无关（真机实测：两球中较低的那个 `centerScore` 反而更高 0.756 > 0.718，仅被 `nearScore` 权重盖过）。
 > - `depthZMin` / `depthZMax` — **两套算法都实时读**，但用法不同：`SimAlgo` 把深度有效但落在 `[zMin, zMax]` 之外的目标**丢弃**（不产生结果，语义与 `confidenceThreshold` 一致），深度缺失（无深度图或深度值 ≤ 0）时仍报告 2D 位置、`z = 0`；`DepthPuffAlgo` 用它在**深度域**建有效掩膜（`BuildValidMask`）⇒ 背景（如仿真 `600 mm`）直接不进连通域，是**检测的前置条件**而非事后过滤。**（TR-103 修复**：`SimAlgo` 此前超范围只是把 `z` 置 0 而结果照常入表，结果表会出现 `x=y=z=0` 的伪目标）
+> - `apexPercentile` — **仅 `DepthPuffAlgo` 消费**（2026-10-16，TR-132）：决定「**球顶**」怎么取——连通域内**深度最小的这一比例**像素的质心 ⇒ `PuffResult.pixelU`/`pixelV`，其**均值**深度 ⇒ `PuffResult.z`。⚠ 这是**输出语义的旋钮**，不是检测旋钮：调它不改变检出/不检出，只改变「目标中心落在球的哪个位置」。**默认 `0.02` 的依据 = 真机 15 帧稳定性扫描**（`apexPercentile` `0.002` ⇒ `z` 帧间抖动 ±3.01 mm、球顶 (1244.2, 357.0)±8.4；`0.02` ⇒ ±1.00 mm、(1241.7, 375.6)±3.6；`0.05` ⇒ ±0.69 mm、(1241.2, 378.5)±3.2）——取小更贴原始最高点，但该像素常落在掩膜轮廓边缘（深度传感器 flying pixel 伪影），抖动大；取大更稳但球顶沿球面下移。**15 帧实测 `front()` 的 `z` 抖动 ±1.0 mm、球顶恒在包围框上半部。** ⚠ 参照：连通域质心 = (1238.2±0.4, 400.0±1.1)，帧间极稳但**系统性偏低约 25 px**（≈13 mm）⇒ 这正是「质心 ≠ 球顶」的量化证据。
+> - **输出语义（TR-132 定死）**：`pixelU`/`pixelV` = **球顶**（与 `z` 同源，`SequenceWorker` 正是拿这一点喂 `PixelToRobot`）；`bboxX`/`bboxY` + `width`/`height` = **包围框**（overlay 用它精确画框，因为球顶 ≠ 框中心）；`minDepthMm` = 连通域**原始**最小深度（与 `z` 之差 = 该目标上的噪点幅度，调参时看这一项）。
+> - ⚠ **一个连通域 ≠ 一个目标**（2026-10-16，TR-135）：`BuildTopRegionMask` 末尾的 `MORPH_CLOSE` 会把**接触/重叠**的目标**桥接成单个连通域**（真机实测三球 `area = 18458` ≈ 三球之和、`bbox = 160×177`），故 `SelectRegions` 在组件内部再做一次**峰切分**：距离变换局部极大 → **尺度自适应 NMS** → 按「**最近峰归属**」（Voronoi）切子区域。**判据刻意不设配置键**（`DepthPuffAlgo.cpp` 的 `kSplitSepRatio` / `kSplitPeakRatio`）：`minSep = 1.0 × dist.max()`、`minPeak = 0.55 × dist.max()`，两者都**相对 `dist.max()`（≈ 球半径）**⇒ **尺度无关**，换球径 / 换安装高度 / 换相机距离**无需重标定**；仅当目标**非球形**时才需改代码。⚠ **子目标同样受 `minArea` 约束**（切出的子区域面积 < `minArea` 即丢弃）；切分后**合格子目标 < 2 个则整块回退**为组件级单目标 ⇒ **单球行为与改造前逐位一致**（当日 8 帧离线实测零过切）。⚠ **合并域各子目标的 `bbox` 是「可见 footprint」**（重叠部分归「更近的那个峰」），不是球的完整外接框 ⇒ overlay 上多框会有少量重叠，**属预期**。
+> - ⚠ **消费侧读阈值必须与检测同源**（2026-10-16，TR-133）：`vision.confidenceThreshold`（**通用域** 0.85）与 `vision.algorithms.<名>.confidenceThreshold`（**节点域** 0.65）在深度法下**不等**，而 `Detect()` 用的是**节点优先**的有效值。任何**下游**「按阈值过滤结果」的地方（如视觉页 `BuildOverlayImage` 决定「画哪些框」）都必须复用**同一次检测的**有效阈值（`SnapshotParams().confidenceThreshold`），**不可另读配置键**——否则真机上「节点域检出、通用域画框」会把已检出的目标**全部滤掉**，表现为 **overlay 存图无绿框、无球顶十字**（用户实测报障；ROI 黄框不经该过滤，故图上「有黄框、无绿框」）。⚠ 仿真下两域同源（`SimAlgo` 的 `confidence` 与 0.85 同基线）⇒ **该缺陷只在真机显形**。`AutoRunPage` 无此问题（用 `SequenceWorker` 填的 `dr.threshold`）。
 > - `templatePath` — **P4 新增**，写入口＝视觉检测页「模板配置」的「浏览…」（`VisionTestPage::OnBrowseTemplate`）。⚠ **「无读点」的说法不准确（2026-10-14 核实更正）**：准确表述是「**算法侧不消费**」——`IPuffAlgorithm` 的 `Detect/LocateBest` 不接模板参数，故本键目前只做「入口 + 持久化」，由将来的算法实现消费（需求原文即写「可选填；留空则用算法内置默认值」）。**但 UI 侧确有读写点**：`VisionTestPage.cpp:839` **读**、`:1313` **写** ⇒ 删掉本键会让该页输入框读到空。⚠ `algorithm_config_plan.md` §七 M1 原写它「至今无读点」并计划迁入 `vision.algorithms.<名>.templatePath`——因迁键须同批改上述两处 UI 路径，**已移出该批（TR-126 未做）**。
 > - **P4 起这三个检测参数的 UI 写入口已从视觉页移除**（方案 `vision_test_page_redesign_plan.md` 的 V5 裁定：贴合「算法参数不上面」）→ **调参一律手改本文件**。⚠ **手改本文件后必须重启程序**——三个键在检测时都是「实时读」（`confidenceThreshold` 经 `EffectiveThreshold()`、`depthZMin/depthZMax` 经 `Detect()`），但读的是 `ConfigManager` 的**内存** `root_`，而 `root_` 只在启动时由 `load()` 填充（`ConfigManager.cpp:49`）→ 不重启不会刷新。设备配置页的「视觉与工艺参数」标签页仍保留写入口，**经该页改则即时生效**（走 `set()` 更新内存 `root_`）。
 > - **`exposure` 键已随 P4 删除**（决策 4：本版固定自动曝光）。它此前唯一的写入口是视觉页的「曝光」输入框，该控件移除后**全库无任何读点**，属「看起来在工作、实际不工作」的死键。相机曝光由 SDK 自动曝光控制（`communication.camera.autoExposure`，见 `camera_integration_plan.md` §六）。注意与**动作级 `ActionData.exposure`**（挤出动作的参数，`doc/process.md`）区分——那是另一个东西。
