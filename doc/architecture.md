@@ -65,7 +65,7 @@ UI  →  Logic  →  Core  →  HAL
 ```
 
 - **include 约定**：HAL 内部互 include 用平铺文件名（靠 CMake include dir 追加子目录解析）；外部引用 HAL 用 `HAL/<子目录>/Xxx.h`
-- **线程边界**：UI 主线程（PollTick 50ms 定时器、串口事务）、采集线程（CameraCaptureWorker）、存储线程（FrameSaver）、SequenceWorker 线程。跨线程只经信号槽（值类型需 qRegisterMetaType）
+- **线程边界**：UI 主线程（PollTick 50ms 定时器、串口事务）、采集线程（CameraCaptureWorker）、存储线程（`FrameSaver` **×2**：视觉页手动存图 / 自动运行存图，各自独立实例与队列，见 §5 生命周期铁律）、视觉页检测线程（`detectCtx_` 承载 `SimAlgo`/`DepthPuffAlgo` 逐像素扫描）、SequenceWorker 线程。跨线程只经信号槽（值类型需 qRegisterMetaType）
 
 ## 3. 三条核心数据流
 
@@ -134,6 +134,8 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
 
 视觉链路：CameraCaptureWorker(采集线程) `frameReady` → UI 渲染（FrameConverter 叠加）+ FrameSaver(存储线程) 落盘；SimAlgo 检测 → CoordTransform::CameraToRobot → InverseSmart。**相机流的启停由持有者集合驱动**（`HardwareManager::AcquireCamera/ReleaseCamera`，持有者 `{"VisionPage", "AutoRun", "AutoRunPreview"}`）——页面与自动流程只声明「我要用相机」，不自己启停流。⚠ `"AutoRun"` = 自动运行页**方案运行期**持有（启动 acquire / Idle·Fault 释放）；`"AutoRunPreview"` = 同页的**视频流预览**路径持有（S6 决策 6 的保留能力，由 `SetStreamPreviewEnabled(true)` 启用，默认关闭，见 `AutoRunPage.h`）；两者生命周期不同，刻意分开。⚠ 自动运行页**默认不消费 `frameReady`**——它改订阅 `SequenceWorker::detectionReady`（S6 决策 6，TR-112）。
 
+**存图三路的标注口径（TR-128 / TR-142，视觉页与自动运行页一致）**：`rgb/` 存**原始彩图、不打任何标注**（保原始语义）；`depth/` 存 **16-bit 原始 mm、不打任何标注**（标注会毁掉物理量语义，TR-125）；**只有 `overlay/` 带标注**——绿色目标框 + 青色球顶十字 + 信息条（`DrawOverlays`）**再加黄色 ROI 框**（`DrawRoiAnnotation`，未检出时附「未找到目标」红底标签）。⚠ **ROI 与阈值都必须与本次检测同源**：`SequenceWorker` 把 `algoParams.roi` / `algoParams.confidenceThreshold` 一起塞进 `DetectionResult` 下发，消费者**不得**再读 `config.json`——否则改完配置回头看旧图会被标上错误区域 / 框被错误过滤（TR-133 的教训）。⚠ `RoiRect` 坐标系 = **深度图**；D2C=SW 对齐时与彩图同尺寸可直接用，D2C 关闭时按数值直绘会有偏移（已知限制，两侧一致）。
+
 ## 4. HardwareManager 门面设计原则（不可再拆的核心）
 
 1. **单点门禁**：使能/报警/回零/软限位门禁只在 `MoveAbs/MoveJog/HomeAxis/HomeAll` 入口拦一道，UI 与自动流程共用——拆散门禁会破坏"先使能再运动"安全模型
@@ -153,6 +155,8 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
 - StopJog 门禁：仅 `jogInProgress_ && jogAxis_==axis` 放行（回零中松点动键不得打断回零）
 - 舵机重连：两实例共享句柄必须一起断开；重连后使能复位（门禁要求人工重新使能）
 - **观察者指针（TR-084）**：跨线程 / 长生命周期 QObject（如 `SequenceWorker`）的持有方一律用 `QPointer`，**禁用裸指针长期持有**——所有权方（`deleteLater` / 父对象）负责销毁，观察者只持弱引用。原因：观察者无法感知对象失效，一旦"对象先于观察者析构"即悬垂访问（实例：退出时 `ShutdownWorker` 的 `processEvents` 派发已排队信号，命中已被 `deleteLater` 的 worker → `0xc0000005`）。当前 4 处：`MainWindow::sequenceWorker_`、`AutoRunPage::m_worker`、`ManualControlPage::worker_`、`ProcessPage::m_worker`。
+- **跨线程对象生命周期（TR-139/140/141）**：`new` 出的 QObject 移入独立 `QThread` 后，**禁止**用 `connect(thread, &QThread::finished, obj, &QObject::deleteLater)` 回收——线程事件循环停止后 `DeferredDelete` 不保证被处理，对象无 parent ⇒ 静默泄漏。统一模式：**参数配好 → `moveToThread` → 析构里 `quit()` + `wait()`，成功则显式 `delete`，超时则 `thread->setParent(nullptr)` 并 WARN**。超时分支两条都不能做：跨线程 `delete` 会崩；放任 `~QWidget` 连带 `delete` 一个仍在运行的 `QThread`，Qt 会打 "Destroyed while thread is still running" 并可能直接 abort——宁可泄漏也不要在退出路径上崩。同理**禁止**用 `Qt::BlockingQueuedConnection` 调 worker 槽作为「停止」手段（事件循环已退出 ⇒ 永久阻塞）。当前 3 处跨线程对象（`VisionTestPage::frameSaver_`、`AutoRunPage::m_saver`、`VisionTestPage::detectCtx_`）与 3 个 `QThread` 均按此模式。
+  - **与上一条的关系**：QPointer 管的是**观察者**（不拥有，析构自动置空）；本条管的是**拥有者**（显式回收 + 可判失败）。`SequenceWorker` 的 `finished → deleteLater` 属另一条退出时序（有 `ShutdownWorker` 的 `processEvents` 兜底），**不要照本条的结论去改它**。
 - **停止曲线（TR-085/TR-090）**：全工程所有业务停止——自动 ⏸ 暂停 / ■ 停止 / 点动松键 / 点动停止按钮——卡轴共用 `MC_Stop(mask,0)` 平滑减速档（`BoPaiCard::StopAxis:334` 与 `StopJog:462` 同指令同实参）、舵机共用 CMD24 停止+锁力——**禁止断脉冲**（开环丢步红线，仅 EmergencyStop 允许断使能）。滑行距离 = 停止瞬间速度 × 卡端停止减速。**TR-090 已接线 `MC_SetStopDec`**：config 每轴 `stopDecSmooth`（无量纲系数，手册 0.1~2、卡默认 0.5；0=不下发），`MoveAbs/MoveJog` 前实时读 config 经 `BoPaiCard::SetStopDec` 去重下发（decAbrupt 档读卡端现值保留不暴露）；**标定从 1.0 起逐步调大，过陡开环丢步**。点动"快停"诉求走**降点动速度**；不再有"运行时改档并发"问题（系数是持久设置非运行时切换）。
 - **`errorOccurred` 单点化（TR-091 / D17 方案 A）**：`SequenceWorker::ExecuteAction` 及其子树（`ExecuteNode` / `ExecuteGroup` / `RunScheduler` / `StepRunner` / `PrepareRunnerSegment`）**一律不 emit `errorOccurred`**，失败原因写入 `Impl::lastError`；emit 只允许出现在**会话级出口 2 处**——`ExecuteOnce` 失败分支与 `StartSingleExecution` 兜底（均 `lastError.isEmpty() ? action.name : lastError`）。原因：动作级重试（`production.loop.retryCount > 0`）期间若子树照旧 emit，UI 会在重试还没开始就跳「⛔ 错误」；顺带修掉"具体失败原因被 `action.name` 覆盖"的既有瑕疵。**新增动作类型时勿在子函数里 emit**。**P6 补充分组语义**：分组并发下同样不新增 emit——失败原因仍只写 `Impl::lastError`，上报规则为**首个失败者**；调度器另用独立的 `aborting` 标记区分「内部失败中止」与 `cancel`（用户停止 / 急停），避免把动作失败误报成「用户停止」。单线程路线下**不需要加锁**。
 - **分组并发的不变量（P6，TR-102）**：① **组内冲突按资源、不按类型**——`resourceKeysOf(ActionType)` 给出资源集合，校验用**两两求交**（`Move` 与 `VisionGuide` **共用四轴**集合；`Delay` 为**空集**，多个延时同组合法）；② **数据依赖单独一类**——同组内不允许「`Vision` + 引用该 `Vision` 编号的 `VisionGuide`」（并发时移动目标尚未算出），它与资源抢占是两回事，须分开拦；③ **分组不能嵌套**（`nodeType` 独立于 `ActionType`，`Group` 不进枚举）；④ **失败归因 = 首个失败者**，其余子动作的失败仅记日志，`Impl::lastError` 只承载首个原因；⑤ **停止 / 内部失败必须先安全停下全部子动作再返回**（`stopAndWaitAll`，最长等 3000 ms 后 WARN `group stop: axes still busy after 3000 ms`）——提前返回会让硬件仍在运动时退出执行循环；⑥ **单步以整组为一步**——组内**一律不调用** `WaitForStep`（否则多个子状态机争抢同一个 `stepGo`，放行顺序不确定）。

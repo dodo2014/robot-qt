@@ -6,6 +6,7 @@
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -114,6 +115,10 @@ private:
     QLineEdit* m_exposureEdit = nullptr;
     QLineEdit* m_templateEdit = nullptr;
     QLineEdit* m_thresholdEdit = nullptr;
+    // 自动运行存图开关（TR-138）：三路独立，语义同视觉检测页的三个存图勾选框。
+    QCheckBox* m_saveRgbCheck = nullptr;
+    QCheckBox* m_saveDepthCheck = nullptr;
+    QCheckBox* m_saveOverlayCheck = nullptr;
 
     QLineEdit* m_extrudeAmountEdit = nullptr;
     QLineEdit* m_extrudeSpeedEdit = nullptr;

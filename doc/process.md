@@ -42,6 +42,9 @@
 | `exposure` | double | 曝光时间（仅 type=1，当前默认 30.0） |
 | `templateName` | string | 匹配模板（仅 type=1） |
 | `threshold` | double | 置信度阈值（仅 type=1，当前 0.85）。**当前仅打印日志**，实际生效的是全局 `vision.confidenceThreshold` —— 见下文「全局参数与动作级参数的优先级」 |
+| `saveRgb` | bool | **运行存图：RGB 原始彩图**（仅 type=1，TR-138 新增）。自动运行执行到本识别动作时落盘到 `saves/autorun/rgb/`。**缺键 = false**（旧 `process.json` 升级后不会突然写盘）；UI 新建识别动作默认 `true` |
+| `saveDepth` | bool | **运行存图：16-bit 原始深度（mm）**（仅 type=1）。落盘到 `saves/autorun/depth/`，**不是**伪彩图（TR-125） |
+| `saveOverlay` | bool | **运行存图：带检测框的叠加图**（仅 type=1）。落盘到 `saves/autorun/overlay/`，阈值与本次检测同源（`SnapshotParams`） |
 | `extrudeAmount` | double | 挤出量（仅 type=2，当前 5.0） |
 | `extrudeSpeed` | double | 挤出速度（仅 type=2，当前 2.0） |
 | `suckBackAmount` | double | 回抽量（仅 type=2，当前 1.0） |
@@ -204,6 +207,7 @@ SchemeData
     │   └── hasJoints + joints j1..j4 (序列化为 joints 子对象；示教落真实关节角，
     │                                  手改坐标保存时删字段；见上文注意事项)
     ├── visionType, exposure, templateName, threshold  (仅 Vision)
+    ├── saveRgb, saveDepth, saveOverlay                (仅 Vision，TR-138 运行存图开关)
     ├── extrudeAmount, extrudeSpeed, suckBackAmount, suckBackSpeed  (仅 Extrude)
     ├── delayMs  (仅 Delay)
     └── isGripperOpen, gripperTarget  (仅 Gripper)

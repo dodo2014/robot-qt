@@ -135,7 +135,7 @@
 | :--- | :--- | :--- | :--- |
 | **V1** | 彩色流格式预置含 `Y16` | **`Y16` 是深度 / 红外格式，彩色流没有 Y16**；高分辨率彩色实际多为 MJPG（参考实现注释：「1280×720 不支持 RGB，优先使用 MJPG」） | 彩色格式列表**按 SDK 实际枚举结果**填充，不照抄预置项（同 `camera_integration_plan.md` E7） |
 | **V2** | 分辨率预置 `640x480 / 848x480 / 960x540 / 1280x720 / 1920x1080` | 预置项是**假设**，该机型实际支持集未知；硬编码选到不支持的组合直接开流失败 | 从 `pipeline->getStreamProfileList(OB_SENSOR_COLOR/DEPTH)` **枚举后填充**（同 E8） |
-| **V3** | 右下结果表列：`序号, X, Y, Z, R, 耗时ms`（6 列） | 现有表为 **10 列**（`序号/置信度/X/Y/Z/偏航/U/V/宽/高`，`.cpp:292-298`）。进算法阶段仍需 置信度 / U / V / 宽 / 高 做调参定位 | **保留 10 列 + 追加「耗时 ms」= 11 列**（同 E10） |
+| **V3** | 右下结果表列：`序号, X, Y, Z, R, 耗时ms`（6 列） | 现有表为 **10 列**（`序号/置信度/X/Y/Z/偏航/U/V/宽/高`，`.cpp:292-298`）。进算法阶段仍需 置信度 / U / V / 宽 / 高 做调参定位 | **保留 10 列 + 追加「耗时 ms」= 11 列**（同 E10）。**2026-10-19 追加（TR-136）**：再补「基座X/基座Y/基座Z」3 列 = **14 列**，且排在序号/置信度之后（默认视口内可见）；换算走 `CoordTransform::PixelToRobot`，与识别动作同一实现 |
 | **V4** | 相机控制组只有「开始采集 / 停止采集」 | 现状有**两对**语义：`CameraOpen`/`CameraClose`（设备）与 `StartCameraStream`/`StopCameraStream`（流）。`OnStartStream` 内部已自动补 `CameraOpen`（`:491-497`）→ 只留一对是合理的；但 `CameraClose` 将**无 UI 入口**，相机打开后不采集就一直占着设备 | **需裁定**：① 停止采集后自动 `CameraClose`（推荐，简单）；② 保留一个「关闭相机」按钮；③ 停止采集只停流、设备保持打开（切流参数时免重连，但拔线前必须先关） |
 | **V5** | 「算法参数不上面」 | 现有 `confSpin_` / `zminSpin_` / `zmaxSpin_` 是**直写 `ConfigManager`** 的（`:329-346`），移除后这 3 个参数**只剩手改 `config.json`** 一条路。**更关键的是这三个参数的生效情况完全不同**（2026-09-18 核实）：`depthZMin` / `depthZMax` 由 `SimAlgo::Detect`（`SimAlgo.cpp:30-32`）**每次检测实时读**并在 `:92` 做深度筛选 → **生效**；`confidenceThreshold` 唯一真实消费者是 `VisionTestPage.cpp:645` 的叠加框绘制 → **仅影响显示**；`HardwareManager.cpp:183` 在 `Initialize` 时把它喂给 `algo->LoadConfig()`，而 **`SimAlgo::LoadConfig`（`SimAlgo.cpp:122-126`）是空实现**（只把 json 存入成员 `config_` 并打印字节数，从不解析）→ **该通路未生效** | **需裁定**：① 一并移除，调参走 `config.json`（最贴合需求原意）；② 保留但收进可折叠区；③ 迁到配置页。**无论选哪个，都应先处理「有一条看起来在工作、实际不工作的配置通路」**——要么让 `LoadConfig` 真正生效，要么删掉该通路并说明本版不生效 |
 | **V6** | 右下格内容「数据 + 日志」 | **「日志」在本项目没有 UI 落点**——日志走 spdlog 落 `log/creampuff_YYYY-MM-DD.log`，页面里只有 `statusLabel_` 单行文本。日志的来源与范围需求未定义 | **需裁定**（建议方案见 §7.3）：① 页面级环形缓冲（`SetStatus` + 检测耗时 + 帧率，上限 N 行）；② 接 spdlog Qt sink 全量回显（需改 logger 配置，跨线程）；③ 只给「打开日志目录」按钮 |
@@ -378,6 +378,7 @@ HardwareManager::frameReady(CameraFrame)
 | 单 tick 预算 | `while(true)` 全排空（`:62`） | 每次 tick 最多处理 `kMaxPerTick = 3` 张，余量留到下 tick |
 | 信号风暴 | 每张 `emit imageSaved`（`:78`） | 连续存图时**合并通知**（如每 tick 只发最后一次 / 或改发计数） |
 | `Stop()` 阻塞 | 同步 `ProcessQueue()` 排空（`:40-45`） | `Stop()` 只置标志 + 丢弃队列，不做全量落盘 |
+| 析构回收（TR-140） | `connect(saverThread_, finished, frameSaver_, deleteLater)`；`Stop` 用 `Qt::BlockingQueuedConnection` | 去掉 `deleteLater`，改「`wait()` 成功后显式 `delete`，超时 `saverThread_->setParent(nullptr)` 并 WARN」；`Stop` 改 `Qt::QueuedConnection`。判据见 `architecture.md` §5 生命周期铁律 |
 
 ## 八、改动清单
 

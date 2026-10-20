@@ -27,6 +27,8 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 
 #include <spdlog/spdlog.h>
@@ -230,6 +232,22 @@ VisionTestPage::VisionTestPage(QWidget* parent)
 
     ConfigPaths::ensureConfigLoaded();   // 本页构造早于 config 加载（MainWindow 先 SetupUI 后 Initialize）
 
+    // 手眼矩阵（2026-10-19）：读法与 `SequenceWorker::ReloadFromConfig`（:201-206）逐条一致
+    // ——`getValue<std::vector<double>>` + 长度必须正好 16，否则整块跳过。
+    // 不读的话本页的「基座 X/Y/Z」三列只能显示 `--`。
+    {
+        auto m = ConfigManager::instance().getValue<std::vector<double>>(
+            "tcpCalibration.handEyeMatrix", std::vector<double>{});
+        if (m.size() == 16) {
+            std::array<double, 16> arr{};
+            for (size_t i = 0; i < 16; ++i) arr[i] = m[i];
+            coord_.SetHandEyeMatrix(arr);
+            coordMatrixLoaded_ = true;
+        } else {
+            SPDLOG_WARN("[VisionTest] handEyeMatrix 长度 {} != 16，基座坐标列不可用", m.size());
+        }
+    }
+
     auto camTypes = CameraFactory::Instance().AvailableTypes();
     if (camTypes.empty()) camTypes.push_back("SimCamera");
     for (const auto& t : camTypes)
@@ -255,12 +273,17 @@ VisionTestPage::VisionTestPage(QWidget* parent)
     connect(&hw, &HardwareManager::cameraStateChanged, this, &VisionTestPage::OnCameraStateChanged);
 
     frameSaver_ = new FrameSaver();
+    // ⚠ 配置必须在 `moveToThread` **之前**做完（2026-10-20，同 `AutoRunPage`）：
+    //   之后对象已归属 saver 线程，从 UI 线程直接调非 slot 成员属跨线程访问
+    //   （Qt 只保证事件投递，不保证直接调用安全）。线程启动前调用则无并发。
+    frameSaver_->SetOutputDir(QCoreApplication::applicationDirPath() + QStringLiteral("/saves"));
     saverThread_ = new QThread(this);
     frameSaver_->moveToThread(saverThread_);
-    connect(saverThread_, &QThread::finished, frameSaver_, &QObject::deleteLater);
+    // ⚠ **不接** `finished → deleteLater`（2026-10-20 修正，同 `AutoRunPage`）：
+    //   线程事件循环停止后 `DeferredDelete` 不保证被处理，`frameSaver_` 无 parent
+    //   ⇒ 静默泄漏一个对象。改为「析构函数在 `wait()` 成功后显式 delete」。
     connect(frameSaver_, &FrameSaver::imageSaved, this, &VisionTestPage::OnImageSaved);
     connect(frameSaver_, &FrameSaver::saveError, this, &VisionTestPage::OnSaveError);
-    frameSaver_->SetOutputDir(QCoreApplication::applicationDirPath() + QStringLiteral("/saves"));
     saverThread_->start();
     QMetaObject::invokeMethod(frameSaver_, "Start", Qt::QueuedConnection);
 
@@ -283,7 +306,9 @@ VisionTestPage::VisionTestPage(QWidget* parent)
     detectThread_ = new QThread(this);
     detectCtx_    = new QObject();
     detectCtx_->moveToThread(detectThread_);
-    connect(detectThread_, &QThread::finished, detectCtx_, &QObject::deleteLater);
+    // ⚠ **不接** `finished → deleteLater`（2026-10-20 修正，与 saver 线程同一处理）：
+    //   线程事件循环停止后 `DeferredDelete` 不保证被处理，`detectCtx_` 无 parent
+    //   ⇒ 静默泄漏一个对象。改为「析构函数在 `wait()` 成功后显式 delete」。
     detectThread_->start();
 
     RefreshStreamParamsFromConfig();
@@ -297,14 +322,54 @@ VisionTestPage::~VisionTestPage()
     // 检测线程先停：`quit()` 会等当前这一拍检测跑完（10 ms 级），`wait` 之后
     // 不可能再有 worker 侧回调访问本对象。回 UI 线程的结果事件以 `this` 为 context，
     // 页面析构时会被 Qt 自动撤销，不会悬垂。
+    //
+    // ⚠ `detectCtx_` 无 parent，**不接** `finished → deleteLater`（原因见构造函数），
+    //   故这里必须显式 delete；但只在 `wait()` 成功后才删 —— 超时说明线程仍可能
+    //   在跑（例如卡在算法），此时跨线程 delete 会崩，宁可泄漏一个对象。
     if (detectThread_) {
-        detectThread_->quit();
-        detectThread_->wait(2000);
+        if (detectThread_->isRunning()) {
+            detectThread_->quit();
+        }
+        if (detectThread_->wait(2000)) {
+            delete detectCtx_;
+            detectCtx_ = nullptr;
+        } else {
+            // ⚠ 线程 2s 内没退出。此时两件事都不能做：
+            //   ① `delete detectCtx_` —— 对象仍归检测线程，跨线程析构；
+            //   ② 放任 `~QWidget` 连带 `delete detectThread_` —— QThread 仍在跑，
+            //      Qt 会打 "Destroyed while thread is still running" 并可能直接 abort。
+            //   故显式断开父子关系：宁可泄漏这两个对象，也不要在退出路径上崩。
+            detectThread_->setParent(nullptr);
+            SPDLOG_WARN("[VisionTestPage] 检测线程 2s 内未退出，跳过 detectCtx_ 回收（避免跨线程 delete）");
+        }
     }
+    // 存图线程收尾（2026-10-20 修正，同 `AutoRunPage`）。
+    //
+    // ⚠ 原实现用 `Qt::BlockingQueuedConnection` 调 `Stop`：一旦 saver 线程的事件循环
+    //   已经退出（或正在退出），该调用**永远等不到执行** ⇒ 析构永久阻塞。
+    //   改为 QueuedConnection 投递 + `quit()` + `wait()`：`Stop` 只是停定时器、丢队列，
+    //   不需要「确认执行完」——线程退出本身已保证它不会再跑。
+    //
+    // ⚠ `frameSaver_` 无 parent，**不接** `finished → deleteLater`（原因见构造函数），
+    //   故这里必须显式 delete；但只在 `wait()` 成功后才删 —— 超时说明线程仍可能
+    //   在跑（例如卡在磁盘 IO），此时跨线程 delete 会崩，宁可泄漏一个对象。
     if (saverThread_) {
-        QMetaObject::invokeMethod(frameSaver_, "Stop", Qt::BlockingQueuedConnection);
-        saverThread_->quit();
-        saverThread_->wait(2000);
+        if (saverThread_->isRunning()) {
+            QMetaObject::invokeMethod(frameSaver_, "Stop", Qt::QueuedConnection);
+            saverThread_->quit();
+        }
+        if (saverThread_->wait(2000)) {
+            delete frameSaver_;
+            frameSaver_ = nullptr;
+        } else {
+            // ⚠ 线程 2s 内没退出（多半卡在磁盘 IO）。此时两件事都不能做：
+            //   ① `delete frameSaver_` —— 对象仍归 saver 线程，跨线程析构；
+            //   ② 放任 `~QWidget` 连带 `delete saverThread_` —— QThread 仍在跑，
+            //      Qt 会打 "Destroyed while thread is still running" 并可能直接 abort。
+            //   故显式断开父子关系：宁可泄漏这两个对象，也不要在退出路径上崩。
+            saverThread_->setParent(nullptr);
+            SPDLOG_WARN("[VisionTestPage] 存图线程 2s 内未退出，跳过 FrameSaver 回收（避免跨线程 delete）");
+        }
     }
 }
 
@@ -614,7 +679,7 @@ QWidget* VisionTestPage::CreateQuadArea()
     overlayInfoLabel_ = overlay.info;
     connect(overlayToggleCheck_, &QCheckBox::toggled, this, &VisionTestPage::OnOverlayToggle);
 
-    // 右下格：QTabWidget（V7 裁定）。11 列结果表在 2×2 等分后的宽度下必然横向滚动，
+    // 右下格：QTabWidget（V7 裁定）。14 列结果表在 2×2 等分后的宽度下必然横向滚动，
     // 与日志同屏会互相挤；用页签表达「同一格两件事」，且不改变 2×2 的等分结构。
     auto* dataTile = new QWidget();
     dataTile->setStyleSheet("background: #1d252f; border: 1px solid #384652; border-radius: 12px;");
@@ -634,22 +699,40 @@ QWidget* VisionTestPage::CreateQuadArea()
     resultTable_ = new QTableWidget();
     resultTable_->setObjectName(QStringLiteral("resultTable"));
     // V3：保留原有 10 列（进算法阶段仍需 置信度 / U / V / 宽 / 高 做调参定位）
-    //     + 追加「耗时 ms」= 11 列
-    resultTable_->setColumnCount(11);
+    //     + 追加「耗时 ms」= 11 列（2026-10-19 起为 14 列，见下方追加说明）
+    // 2026-10-19：再追加「基座 X/Y/Z」3 列 = 14 列，且**排在最前**——本页 2×2 四宫格里
+    // 这张表必然横向滚动，把最关心的基座坐标放在默认视口内，否则每次都要拖滚动条。
+    // ⚠ 原「X/mm Y/mm」两列在深度法下**恒为 0**（`DepthPuffAlgo.cpp:771-772`），
+    //   「Z/mm」是**相机系深度**——这三列都不是基座坐标，别混读（TR-132 / 手眼方案 §5.1 末条）。
+    resultTable_->setColumnCount(14);
     resultTable_->setHorizontalHeaderLabels({
         QStringLiteral("序号"), QStringLiteral("置信度"),
+        QStringLiteral("基座X"), QStringLiteral("基座Y"), QStringLiteral("基座Z"),
         QStringLiteral("X/mm"), QStringLiteral("Y/mm"), QStringLiteral("Z/mm"),
-        QStringLiteral("偏航/°"),
         QStringLiteral("U"), QStringLiteral("V"), QStringLiteral("宽"), QStringLiteral("高"),
-        QStringLiteral("耗时ms")
+        QStringLiteral("偏航/°"), QStringLiteral("耗时ms")
     });
     resultTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultTable_->horizontalHeader()->setStretchLastSection(true);
     resultTable_->horizontalHeader()->setDefaultSectionSize(56);
+    // 逐列宽度（2026-10-19）：`setDefaultSectionSize` 只对「之后新建的 section」生效，
+    // 而这里 14 列是先 `setColumnCount` 建好再设的 ⇒ 不能依赖它。12 px 字体下
+    // 5 字符（"238.2" / "92.3%"）≈ 34 px，加左右各 4 px padding ⇒ 48 px 是下限，这里留余量。
+    {
+        const int kColWidths[14] = {44, 62, 62, 62, 62, 56, 56, 56, 46, 46, 44, 44, 56, 62};
+        for (int i = 0; i < 14; ++i) resultTable_->setColumnWidth(i, kColWidths[i]);
+    }
     resultTable_->verticalHeader()->setVisible(false);
     resultTable_->setStyleSheet(
-        "QTableWidget { background: #0f151b; color: #dbe6f0; gridline-color: #2b3542; border: none; }"
-        "QHeaderView::section { background: #1a2129; color: #9bb3cf; border: none; padding: 3px; }");
+        "QTableWidget { background: #0f151b; color: #dbe6f0; gridline-color: #2b3542; border: none;"
+        "              font-size: 12px; }"
+        // ⚠ **必须显式重写 `QTableWidget::item`**（2026-10-19 用户报障「每列都显示成 9...」）：
+        // 全局 QSS（`MainWindow.cpp:416`）给的是 `padding: 8px 12px`，左右各吃掉 12 px
+        // ⇒ 56 px 列宽只剩 32 px 可用，「92.3%」必然被省略。Qt 的局部样式表**不会**重置
+        // 未声明的选择器——它只叠加，所以这里要写整条规则，不能只写 padding。
+        "QTableWidget::item { padding: 2px 4px; border-bottom: 1px solid #2a3542; }"
+        "QHeaderView::section { background: #1a2129; color: #9bb3cf; border: none;"
+        "                        padding: 3px 2px; font-size: 12px; }");
     tabs->addTab(resultTable_, QStringLiteral("检测结果"));
 
     logView_ = new QPlainTextEdit();
@@ -1232,10 +1315,23 @@ void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, do
         //   （与 `z` 之差 = 该目标上的深度噪点幅度，调参时看这一项）。
         for (int i = 0; i < results.size(); ++i) {
             const auto& r = results[i];
+            // 基座坐标（2026-10-19）：与结果表同一份换算。`r` 是极坐标量
+            // （`r = √(X²+Y²)`，判断是否落在甜甜圈可达域 81.03~358.69 mm 用），
+            // 一并打出来省得手算。
+            QString baseText = QStringLiteral("--");
+            Pose base;
+            if (ToBase(r, &base)) {
+                baseText = QStringLiteral("(%1,%2,%3)mm r=%4")
+                               .arg(base.x, 0, 'f', 1)
+                               .arg(base.y, 0, 'f', 1)
+                               .arg(base.z, 0, 'f', 1)
+                               .arg(std::hypot(base.x, base.y), 0, 'f', 1);
+            }
             SPDLOG_INFO("[VisionTest] target #{}: u={} v={} w={} h={} box=({},{}) "
-                        "z={:.1f}mm rawMin={:.1f}mm conf={:.3f}",
+                        "z={:.1f}mm rawMin={:.1f}mm conf={:.3f} base={}",
                         i + 1, r.pixelU, r.pixelV, r.width, r.height,
-                        r.bboxX, r.bboxY, r.z, r.minDepthMm, r.confidence);
+                        r.bboxX, r.bboxY, r.z, r.minDepthMm, r.confidence,
+                        baseText.toStdString());
         }
     }
 
@@ -1295,18 +1391,63 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elap
         };
         set(0, QString::number(i + 1));
         set(1, QString::number(r.confidence * 100.0, 'f', 1) + QStringLiteral("%"));
-        set(2, QString::number(r.x, 'f', 1));
-        set(3, QString::number(r.y, 'f', 1));
-        set(4, QString::number(r.z, 'f', 1));
-        set(5, QString::number(r.yaw, 'f', 1));
-        set(6, QString::number(r.pixelU));
-        set(7, QString::number(r.pixelV));
-        set(8, QString::number(r.width));
-        set(9, QString::number(r.height));
-        set(10, msText);   // 第 11 列：本次检测的整体耗时（V3）
+
+        // 基座坐标（2026-10-19）：不可用时显式 `--`——「算不出」与「算出来是 0」必须能区分。
+        Pose base;
+        if (ToBase(r, &base)) {
+            set(2, QString::number(base.x, 'f', 1));
+            set(3, QString::number(base.y, 'f', 1));
+            set(4, QString::number(base.z, 'f', 1));
+        } else {
+            set(2, QStringLiteral("--"));
+            set(3, QStringLiteral("--"));
+            set(4, QStringLiteral("--"));
+        }
+
+        set(5, QString::number(r.x, 'f', 1));
+        set(6, QString::number(r.y, 'f', 1));
+        set(7, QString::number(r.z, 'f', 1));
+        set(8, QString::number(r.yaw, 'f', 1));
+        set(9, QString::number(r.pixelU));
+        set(10, QString::number(r.pixelV));
+        set(11, QString::number(r.width));
+        set(12, QString::number(r.height));
+        set(13, msText);   // 第 14 列：本次检测的整体耗时（V3）
     }
 
     resultTable_->setUpdatesEnabled(wasUpdatesEnabled);
+}
+
+// 装载状态 + 内参刷新（2026-10-19）。内参不变时不重设——`SetCameraIntrinsics` 每次都打
+// 一行 INFO，连续检测 15 fps 会把日志冲掉。
+// ⚠ 内参在 `pipeline_->start` 之后才有值（`OrbbecCamera.cpp:387`），启动瞬间 `fx == 0`，
+//   此时返回 false 让调用方显示 `--`，而不是拿 0 去算出一个零位 Pose。
+bool VisionTestPage::EnsureCoordReady()
+{
+    if (!coordMatrixLoaded_) return false;
+    auto* cam = HardwareManager::instance().camera();
+    if (!cam) return false;
+
+    const CameraIntrinsics intr = cam->GetIntrinsics();
+    if (intr.fx <= 0.0 || intr.fy <= 0.0) return false;
+
+    if (!coordIntrValid_ || intr.fx != coordIntr_.fx || intr.fy != coordIntr_.fy
+        || intr.cx != coordIntr_.cx || intr.cy != coordIntr_.cy) {
+        coord_.SetCameraIntrinsics(intr.fx, intr.fy, intr.cx, intr.cy);
+        coordIntr_      = intr;
+        coordIntrValid_ = true;
+    }
+    return true;
+}
+
+bool VisionTestPage::ToBase(const PuffResult& r, Pose* out)
+{
+    if (!out || !EnsureCoordReady()) return false;
+    // 深度无效（0 或负）直接判不可用：`PixelToRobot` 遇 `depthMm <= 0` 会返回零位 `Pose`
+    // 并打 WARN（`CoordTransform.cpp:64-69`），连续检测下会刷屏，且零位不是"目标在原点"。
+    if (r.z <= 0.0) return false;
+    *out = coord_.PixelToRobot(r.pixelU, r.pixelV, r.z);
+    return true;
 }
 
 void VisionTestPage::OnToggleContinuous()

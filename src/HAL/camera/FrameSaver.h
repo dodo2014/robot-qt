@@ -35,6 +35,20 @@ public:
 
     void SetOutputDir(const QString& dir);
 
+    // ---- 磁盘守卫（TR-138，2026-10-19）----
+    // `minFreeRatio` = **可用空间占比下限**（0.05 = 磁盘用到 95% 时开始清理）。
+    // ≤ 0 表示关闭（默认关闭 —— 视觉检测页的手动存图不受影响，只有自动运行开启）。
+    //
+    // 触发后**删除本 saver 自己写的最旧图片**，直到可用空间回到阈值以上。安全边界：
+    //   ① 只扫 `outputDir_` 下**固定白名单子目录**（rgb / depth / overlay / snapshots / frame）；
+    //   ② 只删文件名匹配 `类型_14位时间戳_编号.png` 的 png —— 用户手工放进来的任何
+    //      文件、其他目录的产物一律不碰；
+    //   ③ 每 tick 最多删 `kMaxDeletePerTick` 张，避免一次删几千个文件把存图线程卡住。
+    // ⚠ 删除发生在 `ProcessQueue` 的**写盘之前**，所以「磁盘已满写不进去」不会先发生。
+    void SetDiskGuard(double minFreeRatio);
+    // 每 tick 最多删除的文件数（防止一次清空上万张时长时间阻塞）。
+    static constexpr int kMaxDeletePerTick = 40;
+
 public slots:
     void Start();
     void Stop();
@@ -52,6 +66,8 @@ private slots:
     void ProcessQueue();
 
 private:
+    // 可用空间低于阈值时删最旧图片（只在 saver 线程调用）。边界见 `SetDiskGuard` 注释。
+    void EnforceDiskGuard();
     struct Job {
         QImage  image;
         QString subdir;
@@ -69,4 +85,6 @@ private:
     std::mutex          mutex_;
     QString             outputDir_;
     bool                running_ = false;
+    // 磁盘守卫阈值（可用空间占比）。0 = 关闭（默认）。
+    double              diskGuardMinFreeRatio_ = 0.0;
 };

@@ -52,6 +52,16 @@ struct ActionData {
     double exposure = 0.0;
     QString templateName;
     double threshold = 0.0;
+    // ---- 识别动作的存图开关（2026-10-19，TR-138）----
+    // 自动运行跑到本识别动作时，是否把该次检测的图落盘。三路独立，语义与视觉检测页
+    // 的三个存图开关一致：`rgb` 原始彩图、`depth` 16-bit 原始深度（mm，TR-125）、
+    // `overlay` 带检测框的叠加图。
+    // ⚠ **默认 false**：旧 `process.json` 没有这三个键 ⇒ 保持改造前行为（不存图），
+    //   不会让既有方案一加载就开始写盘。**新建**识别动作时 UI 默认全选，见
+    //   `ProcessPage::OnAddAction`。
+    bool saveRgb = false;
+    bool saveDepth = false;
+    bool saveOverlay = false;
     double extrudeAmount = 0.0;
     double extrudeSpeed = 0.0;
     double suckBackAmount = 0.0;

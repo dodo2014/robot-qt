@@ -67,6 +67,19 @@ public:
         CameraFramePtr      frame;       // 本次检测所用的帧（共享只读，消费者自行渲染）
         QVector<PuffResult> results;     // 图像空间结果（框 / 置信度），可能为空
         double              threshold = 0.0;   // 本次检测的置信度阈值（渲染叠加图用）
+        // 本次检测实际使用的 ROI（2026-10-20，用户需求「autorun/overlay 补充 ROI 框」）。
+        // 与 `threshold` **同一原则**：画框必须与检测同源，不能由消费者另行读 config
+        // ——否则改了 `vision.algorithms.*.roi` 之后，旧图会被标上新的区域（TR-133 的
+        // 阈值同源教训）。坐标系 = **深度图**（`IPuffAlgorithm.h` 的 `RoiRect` 契约）。
+        RoiRect             roi;
+        // ---- 存图开关（TR-138，2026-10-19）----
+        // 直接取自本次执行的识别动作（`ActionData::saveRgb/saveDepth/saveOverlay`）。
+        // 消费者（`AutoRunPage`）据此决定是否把该帧落盘——**是否存图是"动作定义"的一部分**，
+        // 不是全局开关，所以随结果一起下发，而不是让 UI 去查当前执行到哪个节点。
+        // ⚠ 只在 `NodeType::Action` 的识别节点上非零；分组节点不执行检测。
+        bool                saveRgb = false;
+        bool                saveDepth = false;
+        bool                saveOverlay = false;
     };
 
     explicit SequenceWorker(QObject* parent = nullptr);

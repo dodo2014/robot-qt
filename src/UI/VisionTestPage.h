@@ -14,6 +14,7 @@
 
 #include "ICamera.h"
 #include "IPuffAlgorithm.h"
+#include "Core/CoordTransform.h"   // 基座坐标列（2026-10-19）：复用生产实现，不另写公式
 
 class QThread;
 class FrameSaver;
@@ -23,7 +24,7 @@ class FrameSaver;
 // 布局：左 320 px `QScrollArea` 控制栏（「相机控制」+「算法测试」两组）
 //     + 右 2×2 四宫格（RGB / 深度伪彩 / Overlay / 数据+日志）。
 // 与旧版的根本差别：旧版是**单画面 + 视图切换按钮**，一次只能看一路；
-// 新版三格**同时显示**，右下格用 `QTabWidget` 放 11 列结果表与页面级日志。
+// 新版三格**同时显示**，右下格用 `QTabWidget` 放结果表（14 列）与页面级日志。
 class VisionTestPage : public QWidget
 {
     Q_OBJECT
@@ -101,6 +102,16 @@ private:
     void ScheduleDetection(const CameraFramePtr& frame, bool allowAutoSave);
     void ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave);
     void ShowResults(const QVector<PuffResult>& results, double elapsedMs);
+    // 像素 + 深度 → 基座坐标（2026-10-19）。返回 false = 不可用（矩阵未装载 / 内参未就绪），
+    // 调用方据此显示 `--` 而不是假 0——「算不出」和「算出来是 0」必须能区分。
+    //
+    // ⚠ 走 `CoordTransform::PixelToRobot`，与识别动作（`SequenceWorker.cpp:1050-1055`）
+    //   **同一份实现**。本页的用途是「目测坐标量级」，若另写一遍公式就测不到生产路径了。
+    // ⚠ 内参必须**每次现取**（`OrbbecCamera.cpp:387` 在 `pipeline_->start` 之后才赋值，
+    //   且随流分辨率变）——与识别分支同一约束，见 `SequenceWorker.cpp:1041-1047`。
+    bool ToBase(const PuffResult& r, Pose* out);
+    // 装载手眼矩阵 + 刷新内参（内参不变则不重设，避免每帧刷日志）。
+    bool EnsureCoordReady();
     // 三路存图入队（异步，走 FrameSaver 线程）。抽成函数是因为「单次检测自动存图」
     // 与「保存当前帧」两处都要按同一组开关各存一路。
     // ⚠ `tsMs`：本拍存图的统一时间戳（epoch ms）——同一拍的三路必须共用同一个值，
@@ -208,4 +219,13 @@ private:
     QTimer* renderTimer_ = nullptr;
     int     frameCount_  = 0;
     double  fps_         = 0.0;
+
+    // ---- 基座坐标换算（2026-10-19）----
+    // 手眼矩阵在构造时从 `tcpCalibration.handEyeMatrix` 读一次（与
+    // `SequenceWorker::ReloadFromConfig` 同读法：长度必须正好 16）。直接改文件需重启，
+    // 与本项目 `config.json` 的通用约定一致。
+    CoordTransform   coord_;
+    bool             coordMatrixLoaded_ = false;
+    CameraIntrinsics coordIntr_{};        // 最近一次喂给 `coord_` 的内参
+    bool             coordIntrValid_   = false;
 };

@@ -63,6 +63,11 @@ ActionData readNode(const nlohmann::json& nj)
     a.exposure = nj.value("exposure", 0.0);
     a.templateName = QString::fromStdString(nj.value("templateName", ""));
     a.threshold = nj.value("threshold", 0.0);
+    // TR-138（2026-10-19）：识别动作存图开关。**缺省 false** —— 旧 process.json 无这三个键，
+    // 保持改造前「自动运行不存图」的行为；只有用户在识别动作页显式勾选才落盘。
+    a.saveRgb     = nj.value("saveRgb", false);
+    a.saveDepth   = nj.value("saveDepth", false);
+    a.saveOverlay = nj.value("saveOverlay", false);
     a.extrudeAmount = nj.value("extrudeAmount", 0.0);
     a.extrudeSpeed = nj.value("extrudeSpeed", 0.0);
     a.suckBackAmount = nj.value("suckBackAmount", 0.0);
@@ -130,6 +135,10 @@ nlohmann::json writeNode(const ActionData& a)
     aj["exposure"] = a.exposure;
     aj["templateName"] = a.templateName.toStdString();
     aj["threshold"] = a.threshold;
+    // TR-138：三路存图开关（缺省 false，见 `from_json` 同处注释）
+    aj["saveRgb"]     = a.saveRgb;
+    aj["saveDepth"]   = a.saveDepth;
+    aj["saveOverlay"] = a.saveOverlay;
     aj["extrudeAmount"] = a.extrudeAmount;
     aj["extrudeSpeed"] = a.extrudeSpeed;
     aj["suckBackAmount"] = a.suckBackAmount;

@@ -502,6 +502,30 @@ void ProcessPage::SetupUI()
     vf->addRow(makeLabel(QStringLiteral("匹配模板")), m_templateEdit);
     m_thresholdEdit = makeFieldEdit();
     vf->addRow(makeLabel(QStringLiteral("置信度阈值")), m_thresholdEdit);
+
+    // 自动运行存图开关（TR-138，2026-10-19）：本识别动作被执行时，把**该次检测**的图落盘。
+    // 三路语义与视觉检测页的存图开关一致：`RGB` = 原始彩图；`深度` = 16-bit 原始深度
+    // （mm，**不是**伪彩，TR-125）；`叠加图` = 带检测框的图（最有追溯价值）。
+    // ⚠ 循环生产下每轮都存一次，磁盘由 `storage.autorunMinFreePercent` 守卫（FrameSaver 内）。
+    auto* saveChecks = new QWidget();
+    auto* saveChecksLayout = new QHBoxLayout(saveChecks);
+    saveChecksLayout->setContentsMargins(0, 0, 0, 0);
+    saveChecksLayout->setSpacing(16);
+    auto makeSaveCheck = [](const QString& text) {
+        auto* cb = new QCheckBox(text);
+        cb->setStyleSheet(
+            "QCheckBox { color: #dbe6f0; font-size: 13px; spacing: 6px; }"
+            "QCheckBox::indicator { width: 14px; height: 14px; }");
+        return cb;
+    };
+    m_saveRgbCheck     = makeSaveCheck(QStringLiteral("RGB"));
+    m_saveDepthCheck   = makeSaveCheck(QStringLiteral("深度"));
+    m_saveOverlayCheck = makeSaveCheck(QStringLiteral("叠加图"));
+    saveChecksLayout->addWidget(m_saveRgbCheck);
+    saveChecksLayout->addWidget(m_saveDepthCheck);
+    saveChecksLayout->addWidget(m_saveOverlayCheck);
+    saveChecksLayout->addStretch();
+    vf->addRow(makeLabel(QStringLiteral("运行存图")), saveChecks);
     auto* visionSaveLayout = new QHBoxLayout();
     visionSaveLayout->addStretch();
     auto* visionSaveBtn = new QPushButton(QStringLiteral("保存动作"));
@@ -971,6 +995,10 @@ void ProcessPage::RefreshNodeDetail(int nodeId)
         m_exposureEdit->setText(QString::number(node->exposure));
         m_templateEdit->setText(node->templateName);
         m_thresholdEdit->setText(QString::number(node->threshold));
+        // 存图开关（TR-138）：旧方案缺这三个键 ⇒ 载入为 false，勾选框如实不勾。
+        m_saveRgbCheck->setChecked(node->saveRgb);
+        m_saveDepthCheck->setChecked(node->saveDepth);
+        m_saveOverlayCheck->setChecked(node->saveOverlay);
         break;
     case ActionType::Extrude:
         m_extrudeAmountEdit->setText(QString::number(node->extrudeAmount));
@@ -1622,6 +1650,15 @@ void ProcessPage::OnNewAction()
     // 编号由方案的单调计数器分配（删除不回退，见 ProcessManager::allocateActionId）
     a.id = ProcessManager::allocateActionId(scheme);
 
+    // TR-138（2026-10-19，用户裁定「默认全选」）：新建的识别动作三路存图默认开启。
+    // ⚠ 与**读取**侧的缺省值刻意不同：`readNode` 对缺键的老 `process.json` 取 false，
+    //   保证既有方案升级后不会突然开始写盘；只有这里新建的节点才默认 true。
+    if (a.type == ActionType::Vision) {
+        a.saveRgb = true;
+        a.saveDepth = true;
+        a.saveOverlay = true;
+    }
+
     // ---- 组内校验（第二道）：置灰只覆盖资源冲突；数据依赖（识别 × 引用它的视觉引导）
     // 与顺序无关，用「试插一份再整体校验」兜住。校验失败即拒绝，不落盘。
     if (parentGroup) {
@@ -2069,6 +2106,10 @@ void ProcessPage::OnSaveAction()
         node->exposure = m_exposureEdit->text().toDouble();
         node->templateName = m_templateEdit->text();
         node->threshold = m_thresholdEdit->text().toDouble();
+        // 存图开关（TR-138）
+        node->saveRgb = m_saveRgbCheck->isChecked();
+        node->saveDepth = m_saveDepthCheck->isChecked();
+        node->saveOverlay = m_saveOverlayCheck->isChecked();
         break;
     case ActionType::Extrude:
         node->extrudeAmount = m_extrudeAmountEdit->text().toDouble();

@@ -3,7 +3,12 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <QStorageInfo>
 #include <QTimer>
+
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
@@ -23,6 +28,90 @@ void FrameSaver::SetOutputDir(const QString& dir)
     outputDir_ = dir;
     if (!outputDir_.isEmpty())
         QDir().mkpath(outputDir_);
+}
+
+void FrameSaver::SetDiskGuard(double minFreeRatio)
+{
+    // 只接受 (0, 1) 开区间内的值；越界一律视为「关闭」，避免把 1.0 当成"永远触发清理"。
+    const double ratio = (minFreeRatio > 0.0 && minFreeRatio < 1.0) ? minFreeRatio : 0.0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        diskGuardMinFreeRatio_ = ratio;
+    }
+    if (ratio > 0.0)
+        SPDLOG_INFO("[FrameSaver] 磁盘守卫已启用：可用空间低于 {:.1f}% 时删除最旧图片",
+                    ratio * 100.0);
+    else
+        SPDLOG_INFO("[FrameSaver] 磁盘守卫关闭");
+}
+
+// 磁盘守卫（TR-138）：可用空间占比低于阈值时，删本 saver 写过的最旧图片。
+// ⚠ 安全边界见头文件：只认固定子目录 + 固定文件名格式，**绝不递归删目录**、
+//   也不碰用户手工放进去的任何文件。
+void FrameSaver::EnforceDiskGuard()
+{
+    double  ratio = 0.0;
+    QString dir;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ratio = diskGuardMinFreeRatio_;
+        dir   = outputDir_;
+    }
+    if (ratio <= 0.0 || dir.isEmpty()) return;
+
+    QStorageInfo si(dir);
+    if (!si.isValid() || si.bytesTotal() <= 0) return;
+
+    const auto freeRatio = [&si] {
+        return static_cast<double>(si.bytesAvailable()) / static_cast<double>(si.bytesTotal());
+    };
+    if (freeRatio() >= ratio) return;
+
+    // 只收本 saver 自己写出的文件：子目录白名单 + 文件名格式双重限定。
+    // 文件名规则见 `ProcessQueue`：`类型_14位时间戳_编号.png`。
+    static const QRegularExpression kName(
+        QStringLiteral("^(rgb|depth|overlay|snapshots|frame)_\\d{14}_\\d+\\.png$"));
+    static const QStringList kSubdirs = {
+        QStringLiteral("rgb"), QStringLiteral("depth"), QStringLiteral("overlay"),
+        QStringLiteral("snapshots"), QStringLiteral("frame")
+    };
+
+    QFileInfoList files;
+    for (const QString& sub : kSubdirs) {
+        QDir d(dir + QLatin1Char('/') + sub);
+        if (!d.exists()) continue;
+        const QFileInfoList list = d.entryInfoList(QStringList{QStringLiteral("*.png")}, QDir::Files);
+        for (const QFileInfo& fi : list)
+            if (kName.match(fi.fileName()).hasMatch()) files.push_back(fi);
+    }
+
+    if (files.isEmpty()) {
+        SPDLOG_WARN("[FrameSaver] 磁盘可用 {:.1f}% 低于阈值 {:.1f}%，但目录内没有可删的自动存图",
+                    freeRatio() * 100.0, ratio * 100.0);
+        return;
+    }
+
+    // 最旧在前（按修改时间）。同一秒内多路存图靠文件名已能区分，这里只需粗排。
+    std::sort(files.begin(), files.end(), [](const QFileInfo& a, const QFileInfo& b) {
+        return a.lastModified() < b.lastModified();
+    });
+
+    int deleted = 0;
+    for (const QFileInfo& fi : files) {
+        if (deleted >= kMaxDeletePerTick) break;
+        if (!QFile::remove(fi.absoluteFilePath())) continue;
+        ++deleted;
+        // 每删 8 张复核一次可用空间：删够就停，别把整批历史都清掉。
+        if (deleted % 8 == 0) {
+            si.refresh();
+            if (freeRatio() >= ratio) break;
+        }
+    }
+
+    si.refresh();
+    SPDLOG_WARN("[FrameSaver] 磁盘守卫：可用 {:.1f}% < {:.1f}%，本次删除 {} 张最旧图片，"
+                "现可用 {:.1f}%",
+                freeRatio() * 100.0, ratio * 100.0, deleted, freeRatio() * 100.0);
 }
 
 void FrameSaver::Start()
@@ -84,6 +173,16 @@ void FrameSaver::ProcessQueue()
         queue_.clear();
         return;
     }
+
+    // TR-138：**先腾空间再写**。磁盘真满时 `QImage::save` 会直接失败，那样「存新的同时
+    // 删旧的」永远轮不到执行。本 tick 最多删 `kMaxDeletePerTick` 张，不够下个 tick 继续。
+    // ⚠ **队列为空时不守卫**：否则空闲时每 30 ms 查一次磁盘 + 扫 5 个目录，且低于阈值
+    //   又无可删文件时每个 tick 都打一条 WARN（刷屏）。守卫只在「确实要写盘」时才有意义。
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.empty()) return;
+    }
+    EnforceDiskGuard();
 
     // D5：单 tick 预算。原 `while(true)` 会把积压一次排空，积压 90 张时本线程
     // 连续阻塞数十秒。

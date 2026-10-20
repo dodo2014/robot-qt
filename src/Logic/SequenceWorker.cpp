@@ -1021,6 +1021,12 @@ bool SequenceWorker::StepRunner(RunnerState& r)
                 dr.frame     = std::make_shared<const CameraFrame>(std::move(frame));
                 dr.results   = QVector<PuffResult>(results.begin(), results.end());
                 dr.threshold = algoParams.confidenceThreshold;
+                // 2026-10-20：ROI 随结果下发（与 threshold 同源，理由见 `DetectionResult`）
+                dr.roi         = algoParams.roi;
+                // TR-138：存图开关随结果下发（动作定义的一部分，见 `DetectionResult` 注释）
+                dr.saveRgb     = action.saveRgb;
+                dr.saveDepth   = action.saveDepth;
+                dr.saveOverlay = action.saveOverlay;
                 emit detectionReady(dr);
             }
 

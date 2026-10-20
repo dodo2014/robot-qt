@@ -232,6 +232,9 @@
         "motionCardType": "Bopai",
         "servoType": "XRServo"
     },
+    "storage": {
+        "autorunMinFreePercent": 5.0
+    },
     "tcpCalibration": {
         "handEyeMatrix": [
             0,

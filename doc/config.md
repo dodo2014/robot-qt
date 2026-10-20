@@ -14,6 +14,7 @@
 | `vision` | object | 视觉与工艺参数 |
 | `tcpCalibration` | object | TCP与标定 |
 | `production` | object | 自动运行页（循环模式 / 次数 / 回安全位控件） |
+| `storage` | object | **无界面入口**：自动运行存图磁盘守卫（TR-138） |
 | `axes` | object | 电控与映射 |
 | `ui` | object | 视觉与工艺参数（`autoRunStreamPreview` 开关） |
 | `version` | string | 配置版本号（当前 `"1.0.0"`） |
@@ -249,6 +250,22 @@ production
 - `retryCount` / `retryDelayMs` 是 `LoopConfig` 的**可选键**（`AutoRunPage.cpp:929-930` 读；结构体默认见 `SequenceWorker.h:85-86`），当前文件里**没有** ⇒ 走默认值 `0` / `500`，行为＝**不重试**。要启用节点级重试须手改本文件 + **重启**。
 - `returnToSafePos=true` 且 `mode != 0`（确实是循环）时，`kinematics.safePos.enabled` 必须为 `true`：UI 侧启动门禁会拦（`AutoRunPage.cpp:619-624`，提示「循环运行需先示教安全位…或取消勾选『回安全位』」），`SequenceWorker` 内另有兜底（`SequenceWorker.cpp:259-263`）。**单轮（`mode=0`）不触发该门禁**——不发生跨轮回安全位。
 - `mode=2`（无限循环）启动时弹**二次确认**（`AutoRunPage.cpp:626-639`）。
+
+---
+
+## storage — 存图与磁盘守卫（TR-138，2026-10-19）
+
+自动运行「识别」动作存图的磁盘保护。**唯一读点**：`AutoRunPage` 构造函数（`AutoRunPage.cpp:66-71`，先 `ConfigPaths::ensureConfigLoaded()` —— 页面构造早于 `Initialize()`；且 `SetDiskGuard` 在 `moveToThread` **之前**调用，见 `architecture.md` §5 生命周期铁律）→ `FrameSaver::SetDiskGuard()`。
+
+```
+storage
+└── autorunMinFreePercent   5.0    可用空间占比下限 (%)：低于此值开始删最旧的自动存图
+```
+
+- `0` = **关闭**磁盘守卫（`SetDiskGuard` 对 ≤0 一律视为关闭）。
+- 守卫只删**自动运行自己写的** `saves/autorun/{rgb,depth,overlay}/类型_14位时间戳_编号.png`；视觉检测页的 `saves/{rgb,depth,overlay,snapshots}/` 不碰（两套 `FrameSaver` 实例、各自 `outputDir_`）。
+- 删除发生在**写盘之前**（`FrameSaver::ProcessQueue` 首步），每 30 ms tick 最多删 `kMaxDeletePerTick = 40` 张，删够即停。
+- **手改本键需重启**（页面构造期读取，非实时）。视觉检测页的手动存图**不受本键影响**。
 
 ---
 

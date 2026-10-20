@@ -17,6 +17,8 @@
 #include "Logic/SequenceWorker.h"   // 槽签名用 WorkerState/PauseReason（Q_ENUM 元类型）
 
 class SequenceWorker;
+class FrameSaver;
+class QThread;
 
 class AutoRunPage : public QWidget
 {
@@ -24,6 +26,7 @@ class AutoRunPage : public QWidget
 
 public:
     explicit AutoRunPage(QWidget* parent = nullptr);
+    ~AutoRunPage() override;
 
     void SetSequenceWorker(SequenceWorker* worker);
 
@@ -95,6 +98,16 @@ private:
     // Setup 订阅 `frameReady` 并在本页可见时 acquire；Teardown 反订阅并 release。
     void SetupStreamPreview();
     void TeardownStreamPreview();
+    // 自动运行存图（TR-138，2026-10-19）。
+    //
+    // 按 `DetectionResult` 里的三个开关，把**该次识别动作**的图投给 `FrameSaver` 落盘。
+    // 三路语义与视觉检测页一致：`rgb` 原始彩图 / `depth` 16-bit 原始深度（mm，TR-125）/
+    // `overlay` 带检测框的叠加图（原分辨率绘制，不依赖任何 QLabel 尺寸）。
+    //
+    // ⚠ **必须在 `OnDetectionReady` 的可见性闸门之前调用**：本页不可见时
+    //   `RenderDetectionTiles()` 会早退，若存图挂在渲染路径上，用户切到别的页面
+    //   看流程跑，图就一张都不会落盘。
+    void SaveDetectionImages(const SequenceWorker::DetectionResult& result);
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
 
@@ -130,6 +143,12 @@ private:
     SequenceWorker::DetectionResult m_lastDetection;
     // 预览源：false = 检测结果（默认）；true = 原始视频流 + 可见性持有。
     bool m_streamPreviewOn = false;
+
+    // ---- 自动运行存图（TR-138，2026-10-19）----
+    // 与视觉检测页**各自一套**实例（独立线程 + 独立队列 + 独立目录 `saves/autorun/`），
+    // 互不干扰：视觉页的手动存图与自动运行的批量存图清理策略完全不同。
+    FrameSaver* m_saver       = nullptr;
+    QThread*    m_saverThread = nullptr;
     // 2026-09-15：底部 m_hintLabel 已删除——提示改由 MainWindow 顶栏全局横幅承载
     // （SetHint 转发 requestGlobalHint），释放本页竖向空间。
 

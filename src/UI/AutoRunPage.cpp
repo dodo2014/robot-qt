@@ -5,10 +5,14 @@
 #include "HAL/core/HardwareManager.h"
 #include "HAL/interfaces/ICamera.h"
 #include "HAL/camera/FrameConverter.h"
+#include "HAL/camera/FrameSaver.h"
 #include "Core/Kinematics.h"
 #include "Config/ConfigManager.h"
+#include "Config/ConfigPaths.h"
 
+#include <QCoreApplication>
 #include <QHBoxLayout>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -43,6 +47,42 @@ AutoRunPage::AutoRunPage(QWidget* parent)
     SetupUI();
     LoadLoopConfigFromConfig();   // TR-091：循环控件按上次选择初始化（在 SetupUI 之后，控件已建）
 
+    // ---- 自动运行存图（TR-138）----
+    // 与视觉页各自一套 saver（独立线程 / 独立队列），落盘到 `saves/autorun/<路>/`。
+    // 目录独立的原因：磁盘守卫只删「自己 saver 白名单子目录」下的文件，两套 saver
+    // 若共目录会互删对方产物；且自动运行的批量写盘量级（循环生产）与视觉页手动存图
+    // 完全不同，清理策略必须分开。
+    m_saver = new FrameSaver();
+    // ⚠ 配置必须在 `moveToThread` **之前**做完：之后对象已归属 saver 线程，
+    //   从 UI 线程直接调非 slot 成员函数属于跨线程访问（Qt 只保证事件投递，
+    //   不保证直接调用安全）。线程启动前调用则无并发，语义最干净。
+    m_saver->SetOutputDir(QCoreApplication::applicationDirPath()
+                          + QStringLiteral("/saves/autorun"));
+    // 磁盘守卫：循环生产每轮最多 3 张 × ~2.5 MB，不设上限能写满盘。阈值
+    // `storage.autorunMinFreePercent`（可用空间占比 %，0 = 关闭），手改 config 需重启。
+    // ⚠ 本页构造早于 `HardwareManager::Initialize()`（后者才调 `ConfigManager::load()`），
+    //   故必须先 `ensureConfigLoaded()` —— 否则本键永远读到默认值（同 VisionTestPage 的
+    //   构造期读配置陷阱，AGENTS.md 已记录）。
+    {
+        ConfigPaths::ensureConfigLoaded();
+        const double pct = ConfigManager::instance().getValue<double>(
+            "storage.autorunMinFreePercent", 5.0);
+        m_saver->SetDiskGuard(pct / 100.0);
+    }
+    m_saverThread = new QThread(this);
+    m_saver->moveToThread(m_saverThread);
+    // ⚠ **不接** `finished → deleteLater`（2026-10-20 修正）：该模式在线程事件循环
+    //   停止后 `DeferredDelete` 不保证被处理，`m_saver` 无 parent ⇒ 静默泄漏。
+    //   改为「析构函数在 `wait()` 成功后显式 delete」——所有权明确、可判失败。
+    connect(m_saver, &FrameSaver::imageSaved, this, [this](const QString& path) {
+        OnLogMessage(QStringLiteral("自动存图: %1").arg(path));
+    });
+    connect(m_saver, &FrameSaver::saveError, this, [this](const QString& msg) {
+        OnLogMessage(QStringLiteral("自动存图失败: %1").arg(msg));
+    });
+    m_saverThread->start();
+    QMetaObject::invokeMethod(m_saver, "Start", Qt::QueuedConnection);
+
     // HardwareManager 信号在构造函数即连接：连接状态/遥测/帧不依赖 m_worker。
     // 关键：connectionChanged 只在 Initialize 完成与运行中状态边沿时发一次，
     // 若等 SetSequenceWorker（MainWindow 在 HardwareManager::Initialize 之后才调用）
@@ -62,6 +102,39 @@ AutoRunPage::AutoRunPage(QWidget* parent)
         OnLogMessage(QStringLiteral("硬件连接状态变更：%1")
                          .arg(HardwareManager::instance().ConnectionStatus()));
     });
+}
+
+AutoRunPage::~AutoRunPage()
+{
+    // 存图线程收尾（2026-10-20 修正）。
+    //
+    // ⚠ 原实现用 `Qt::BlockingQueuedConnection` 调 `Stop`：一旦 saver 线程的事件循环
+    //   已经退出（或正在退出），该调用**永远等不到执行** ⇒ 析构永久阻塞。
+    //   改为 QueuedConnection 投递 + `quit()` + `wait()`：`Stop` 只是停定时器、丢队列，
+    //   不需要「确认执行完」——线程退出本身已保证它不会再跑。
+    //
+    // ⚠ `m_saver` 无 parent，**不接** `finished → deleteLater`（原因见构造函数），
+    //   故这里必须显式 delete；但只在 `wait()` 成功后才删 —— 超时说明线程仍可能
+    //   在跑（例如卡在磁盘 IO），此时跨线程 delete 会崩，宁可泄漏一个对象。
+    if (!m_saverThread) return;
+
+    if (m_saverThread->isRunning()) {
+        QMetaObject::invokeMethod(m_saver, "Stop", Qt::QueuedConnection);
+        m_saverThread->quit();
+    }
+
+    if (m_saverThread->wait(3000)) {
+        delete m_saver;
+        m_saver = nullptr;
+    } else {
+        // ⚠ 线程 3s 内没退出（多半卡在磁盘 IO）。此时两件事都不能做：
+        //   ① `delete m_saver` —— 对象仍归 saver 线程，跨线程析构；
+        //   ② 放任 `~QWidget` 连带 `delete m_saverThread` —— QThread 仍在跑，
+        //      Qt 会打 "Destroyed while thread is still running" 并可能直接 abort。
+        //   故显式断开父子关系：宁可泄漏这两个对象，也不要在退出路径上崩。
+        m_saverThread->setParent(nullptr);
+        SPDLOG_WARN("[AutoRunPage] 存图线程 3s 内未退出，跳过 FrameSaver 回收（避免跨线程 delete）");
+    }
 }
 
 void AutoRunPage::SetSequenceWorker(SequenceWorker* worker)
@@ -488,10 +561,59 @@ void AutoRunPage::TeardownStreamPreview()
 
 void AutoRunPage::OnDetectionReady(const SequenceWorker::DetectionResult& result)
 {
+    // TR-138：存图**必须**在可见性闸门之前——本页不可见时下面会早退，
+    // 若把存图挂到渲染路径，用户切到别的页面看流程跑，图就一张都不会落盘
+    // （数据留存不依赖任何人正在看画面）。
+    SaveDetectionImages(result);
+
     // 与视频流路径同款策略（P3-4）：不可见时**只缓存、不产位图**，切回本页由 showEvent 补绘。
     m_lastDetection = result;
     if (!isVisible()) return;
     RenderDetectionTiles();
+}
+
+// 自动运行存图（TR-138）。三路语义与视觉页 `QueueSaveRgb/Depth/Overlay` 一致：
+// rgb = 原始彩图；depth = 16-bit 原始深度 mm（TR-125，**不是**伪彩）；
+// overlay = 原分辨率叠加图（`DrawOverlays` 的阈值用 `result.threshold`——它是
+// `SnapshotParams` 的节点域有效值，与本次检测同源，无 TR-133 的取错域问题）。
+// 三路共用一个时间戳（epoch ms），保证 rgb/depth/overlay 文件名可互相对照。
+// ⚠ 空结果（未检出）也存：数据留存要的是「跑过这一拍」的完整证据链。
+void AutoRunPage::SaveDetectionImages(const SequenceWorker::DetectionResult& result)
+{
+    if (!m_saver || !result.frame) return;
+
+    const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
+    const auto save = [this](const QImage& img, const QString& subdir, qint64 ts) {
+        QMetaObject::invokeMethod(m_saver, "SaveImage", Qt::QueuedConnection,
+                                  Q_ARG(QImage, img), Q_ARG(QString, subdir),
+                                  Q_ARG(qint64, ts));
+    };
+
+    if (result.saveRgb)
+        save(FrameConverter::ColorToQImage(*result.frame), QStringLiteral("rgb"), tsMs);
+
+    if (result.saveDepth)
+        save(FrameConverter::DepthToQImage16(*result.frame), QStringLiteral("depth"), tsMs);
+
+    if (result.saveOverlay) {
+        QImage overlay = FrameConverter::ColorToQImage(*result.frame);
+        if (!overlay.isNull()) {
+            // 绿框 = 检出目标；黄框 = 算法实际扫描的 ROI（`DrawRoiAnnotation`，TR-128）。
+            // 顺序与视觉页 `BuildOverlayImage` 一致：先目标框、后 ROI 框（ROI 压在上层）。
+            FrameConverter::DrawOverlays(overlay, result.results, result.threshold);
+            // 2026-10-20（用户需求「autorun/overlay 下的图片补充 ROI 框」）：
+            // ⚠ ROI 取 `result.roi`（随检测下发），**不在这里读 config** —— 画框必须与本次
+            //   检测用的是同一个 ROI，否则改完配置回头再看旧图会被标上错误区域
+            //   （同 TR-133「画框/过滤阈值必须与检测同源」的教训）。
+            // `targetFound` 判据与视觉页一致（有检出结果）。**未检出时仍然画** —— 此时
+            // 黄框 + 「未找到目标」标签正是排查所需（没有它无法判断是没检出还是没跑）。
+            // ⚠ 口径：`RoiRect` 是**深度图**坐标；D2C=SW 对齐时与彩图同尺寸、直接可用，
+            //   D2C 关闭时按数值直绘会有偏移 —— 与视觉页预览/存图同一已知限制。
+            FrameConverter::DrawRoiAnnotation(overlay, result.roi,
+                                              /*targetFound=*/!result.results.isEmpty());
+            save(overlay, QStringLiteral("overlay"), tsMs);
+        }
+    }
 }
 
 void AutoRunPage::RenderDetectionTiles()
