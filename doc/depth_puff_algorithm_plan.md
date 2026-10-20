@@ -79,7 +79,7 @@
 | `vision.depthZMin` | 通用域 | double | `6.0` | mm | 有效深度下限。老项目为 `minDepthMm = 100`；⚠ 本仓现值 `6.0` 是按**仿真背景 600 mm** 定的，**真机装高后必须重定**（`implementation_roadmap.md` §9.5 项 3） |
 | `vision.depthZMax` | 通用域 | double | `496.0` | mm | 有效深度上限。老项目为 `maxDepthMm = 3000`；同上，真机重定 |
 | `vision.confidenceThreshold` | 通用域 | double | `0.85` | 0~1 | 置信度过滤阈值。⚠ **老实现从不过滤**（只输出 `confidence`）；本仓契约要求消费该键（§七 M1 说明风险） |
-| `…nearestPercentile` | 私有域 | double | `0.03` | — | 最近层分位数；代码内 `clamp(值, 0.001, 0.5)`。**调参重点** |
+| `…nearestPercentile` | 私有域 | double | `0.001` | — | **种子深度分位**（噪声稳健的最近深度，TR-144）：只用来定种子带 `nearest + 10 mm`，不再直接当顶层上限。代码内 `clamp(值, 0.001, 0.005)`——再大就会锚到背景面。**调参重点** |
 | `…heightBandMm` | 私有域 | double | `35.0` | mm | 最高层带厚；代码内实际用 `max(1.0, 值)`。**调参重点** |
 | `…apexPercentile` | 私有域 | double | `0.02` | — | **球顶面片比例**（TR-132，2026-10-16）：取连通域内**深度最小的这一比例**像素，其质心 ⇒ `pixelU`/`pixelV`、其均值深度 ⇒ `z`。代码内 `clamp(值, 0.005, 0.5)` 且面片至少 8 px。**调参重点**（取小 ⇒ 更贴真实最高点但 `z` 抖动大；取大 ⇒ 更稳但球顶被球面下拉）。真机 15 帧标定见 §八 14 |
 | `…minArea` | 私有域 | int | `120` | px² | 连通域面积下限（滤噪声） |
@@ -97,9 +97,13 @@
 
 | 量 | 值 | 位置 |
 | :--- | :--- | :--- |
-| 最高层阈值 | `nearestDepthMm + max(1.0, heightBandMm)` | `BuildTopRegionMask` |
+| 种子带厚 | `10.0 mm`（`kSeedBandMm`，TR-144：同一层目标的顶点高度容差） | `BuildSeeds` |
+| 种子最少像素 | `20`（`kSeedMinPixels`） | `BuildSeeds` |
+| 种子开运算核 | `3×3` 椭圆（`kSeedMorphKernel`，只开不闭） | `BuildSeeds` |
+| 目标顶层阈值 | `seed.minDepthMm + max(1.0, heightBandMm)`（TR-144：逐目标锚定，不再用全 ROI 分位） | `GrowSeedRegion` |
 | 球顶面片最少像素数 | `8`（`kApexMinPixels`，与 `apexPercentile` 取较大者） | `ComputeApex` |
 | 连通域最少有效像素 | `max(10, minArea / 4)` | `SelectRegions` |
+| 区域重叠上限 | 与已接受区域重叠 `> 50%` 视为同一片表面，丢弃（TR-144） | `SelectRegions` |
 | `score` 权重 | `confidence × 0.60 + nearScore × 0.25 + areaScore × 0.15` | `SelectRegions` |
 | `confidence` 权重 | `areaScore × 0.45 + stabilityScore × 0.35 + centerScore × 0.20` | `EstimateConfidence` |
 | `nearScore` | `1.0 / (1.0 + max(0.0, meanDepth − nearestDepthMm))` | `SelectRegions` |
@@ -110,6 +114,8 @@
 | 触发切分的最低峰数 | `2`（`kSplitMinMarkers`；同样用作「切分成功」的最低合格子目标数） | `SelectRegions` |
 
 > ⚠ 上表 TR-135 的 5 项**刻意做成相对量**（除以 `dist.max()`）⇒ 与球径、安装高度、相机距离**无关**，换工位**无需重标定**；仅当改用**非球形**目标时才需重新审视。
+
+> **TR-144（2026-10-20）修订：顶层锚点改为「逐目标种子」。** 旧实现的顶层上限 = 全 ROI 有效深度分位 + 带厚；目标只占画面一小块时分位落到背景面，球与背景连成巨块（`depth_20261020152105_0`：绿框 579×406，球实际 91×102）。现改为：分位只定种子（最近层 10 mm 内的连通面片），每个种子按自己的最低深度 + `heightBandMm` 生长区域；贴 ROI 边界的种子丢弃；区域与已接受区域重叠过半则丢弃。`nearestPercentile` 默认值 `0.03` → `0.001`，钳位上限 `0.5` → `0.005`。
 
 ## 五、移植步骤
 

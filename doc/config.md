@@ -153,7 +153,7 @@ vision
     ├── SimAlgo                   {}      空对象——它没有私有键，参数全在通用域
     └── DepthPuffAlgo                    深度法私有参数（11 项）
         ├── confidenceThreshold 0.65     **覆盖**通用域 0.85（2026-10-16，TR-131：真机标定）
-        ├── nearestPercentile  0.03      最近层分位数（代码内 clamp 到 [0.001, 0.5]）
+        ├── nearestPercentile  0.001     **种子深度分位**（2026-10-20，TR-144；代码内 clamp 到 [0.001, 0.005]）
         ├── heightBandMm       35.0      最高层带厚 (mm)（代码内取 max(1.0, 值)）
         ├── apexPercentile     0.02      **球顶面片比例**（2026-10-16，TR-132；代码内 clamp 到 [0.005, 0.5] 且面片 ≥ 8 px）
         ├── minArea            120       连通域面积下限 (px²，**深度系**)

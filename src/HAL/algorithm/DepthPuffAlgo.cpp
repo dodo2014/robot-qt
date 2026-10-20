@@ -21,7 +21,7 @@ namespace {
 // ---- 代码内硬编码、不可配的量（`depth_puff_algorithm_plan.md` §四）----
 // 如将来需调，须改代码。
 constexpr double kNearestPercentileMin = 0.001;   // nearestPercentile 下钳位
-constexpr double kNearestPercentileMax = 0.5;     // 上钳位
+constexpr double kNearestPercentileMax = 0.005;   // 上钳位（TR-144：再大就会锚到背景面）
 constexpr double kMinHeightBandMm      = 1.0;     // heightBandMm 下限
 constexpr double kApexPercentileMin    = 0.005;   // apexPercentile 下钳位（TR-132）
 constexpr double kApexPercentileMax    = 0.5;     // 上钳位
@@ -44,6 +44,21 @@ constexpr int    kSplitLocalKernel       = 7;     // 局部极大值比较核（
 constexpr double kSplitLocalEps          = 0.5;   // 局部极大值容差（px，抗距离变换平台抖动）
 constexpr double kSplitPlateauFloorRatio = 0.25;  // 候选峰预筛：dist > 0.25 × dist.max()
 constexpr int    kSplitMinMarkers        = 2;     // 触发切分 / 判定切分成功的最低峰数
+
+// ---- 种子（TR-144，2026-10-20）：顶层带厚的锚点 ----
+// 同一层目标的顶点高度容差；实测同一桌面的泡芙顶点相差 ≤ 9 mm，而背景面比顶点低 ≥ 19 mm。
+constexpr double kSeedBandMm      = 10.0;
+constexpr int    kSeedMinPixels   = 20;   // 种子连通域最少像素（滤单像素噪点）
+constexpr int    kSeedMorphKernel = 3;    // 种子开运算核（只开不闭，避免把相邻顶点桥接）
+
+/// 单个种子（**深度域**坐标）：最近层里的一块连通面片 = 一个目标的顶点。
+struct Seed
+{
+    int         label = 0;
+    cv::Rect    bbox;
+    cv::Point2f center;              // 质心——用于在候选掩码里定位所属连通域
+    double      minDepthMm = 0.0;    // 面片最低深度 = 该目标的顶点深度
+};
 
 /// 单个候选连通域（**深度域**坐标）。
 struct Candidate
@@ -129,10 +144,23 @@ int BuildValidMask(const cv::Mat& depthMm, const cv::Rect& roi,
     return validCount;
 }
 
-/// ② 最高层掩码 + 最近深度。返回 false = 无有效像素 / 形态学后无候选。
-bool BuildTopRegionMask(const cv::Mat& depthMm, const cv::Mat& validMask,
-                        const AlgorithmParams& p, cv::Mat& topMask,
-                        double& nearestDepthMm)
+/// ② 种子提取 + 最近深度（TR-144，2026-10-20）。返回 false = 无有效像素 / 无合格种子。
+///
+/// **旧实现的问题**：顶层上限锚在**全 ROI 有效深度的分位**上（`nearestPercentile` 默认
+/// 0.03）——目标只占画面一小块时，分位落在背景面上，顶层把背景一起圈进来。实测
+/// `depth_20261020152105_0`：球顶 526 mm、背景面约 567 mm，3% 分位 = 561 mm ⇒ 上限
+/// 581 mm 覆盖背景，球与背景连成 **218487 px** 的连通域，绿框 579×406（球本身只有
+/// 91×102）。根因是基准随「目标占画面比例」漂移；去掉右侧深度传感器遮挡后背景有效
+/// 像素变多，分位从球顶掉到背景面，问题才暴露。
+///
+/// **新做法**：分位只用来定「**种子**」——最近层的一小块面片（`nearest + kSeedBandMm`）。
+/// 每个种子代表一个目标顶点；后续每个目标**各自**以 `种子最低深度 + heightBandMm` 定带，
+/// 不再受其它目标 / 背景占画面比例的影响。
+///
+/// ⚠ 贴 ROI 边界的种子一律丢弃：被裁掉的目标顶点不可信，且实测会在 ROI 边界产生
+///   细长条假种子（背景面被边界切断）。
+bool BuildSeeds(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect& roi,
+                const AlgorithmParams& p, std::vector<Seed>& seeds, double& nearestDepthMm)
 {
     std::vector<float> values;
     values.reserve(static_cast<size_t>(cv::countNonZero(validMask)));
@@ -154,18 +182,107 @@ bool BuildTopRegionMask(const cv::Mat& depthMm, const cv::Mat& validMask,
     std::nth_element(values.begin(), values.begin() + nth, values.end());
     nearestDepthMm = values[nth];
 
-    const double thresholdMm = nearestDepthMm + std::max(kMinHeightBandMm, p.heightBandMm);
-    topMask = cv::Mat::zeros(depthMm.size(), CV_8UC1);
-
-    for (int y = 0; y < depthMm.rows; ++y) {
+    cv::Mat seedMask = cv::Mat::zeros(depthMm.size(), CV_8UC1);
+    const double seedCutMm = nearestDepthMm + kSeedBandMm;
+    for (int y = roi.y; y < roi.y + roi.height; ++y) {
         const float* depthRow = depthMm.ptr<float>(y);
         const uchar* validRow = validMask.ptr<uchar>(y);
-        uchar* topRow = topMask.ptr<uchar>(y);
-        for (int x = 0; x < depthMm.cols; ++x) {
-            if (validRow[x] && depthRow[x] <= thresholdMm)
-                topRow[x] = 255;
+        uchar* seedRow = seedMask.ptr<uchar>(y);
+        for (int x = roi.x; x < roi.x + roi.width; ++x) {
+            if (validRow[x] && depthRow[x] <= seedCutMm)
+                seedRow[x] = 255;
         }
     }
+
+    if (kSeedMorphKernel > 1) {
+        const cv::Mat kernel = cv::getStructuringElement(
+            cv::MORPH_ELLIPSE, cv::Size(kSeedMorphKernel, kSeedMorphKernel));
+        cv::morphologyEx(seedMask, seedMask, cv::MORPH_OPEN, kernel);
+    }
+
+    cv::Mat labels, stats, centroids;
+    const int labelCount = cv::connectedComponentsWithStats(
+        seedMask, labels, stats, centroids, 8, CV_32S);
+    if (labelCount <= 1)
+        return false;
+
+    seeds.clear();
+    for (int label = 1; label < labelCount; ++label) {
+        if (stats.at<int>(label, cv::CC_STAT_AREA) < kSeedMinPixels)
+            continue;
+
+        const cv::Rect bbox(stats.at<int>(label, cv::CC_STAT_LEFT),
+                            stats.at<int>(label, cv::CC_STAT_TOP),
+                            stats.at<int>(label, cv::CC_STAT_WIDTH),
+                            stats.at<int>(label, cv::CC_STAT_HEIGHT));
+        // 贴 ROI 边界的种子一律丢弃：被裁掉的目标顶点不可信，且实测会在边界产生
+        // 细长条假种子（背景面被边界切断后，其残片会落进种子带）。
+        // ⚠ `bbox` 是**图像坐标**（种子掩码与图像同尺寸），边界须按 `roi` 判，不能按整图。
+        if (bbox.x <= roi.x + p.edgeMargin || bbox.y <= roi.y + p.edgeMargin ||
+            bbox.x + bbox.width >= roi.x + roi.width - p.edgeMargin ||
+            bbox.y + bbox.height >= roi.y + roi.height - p.edgeMargin)
+            continue;
+
+        double minDepth = std::numeric_limits<double>::max();
+        for (int y = bbox.y; y < bbox.y + bbox.height; ++y) {
+            const float* depthRow = depthMm.ptr<float>(y);
+            const int* labelRow = labels.ptr<int>(y);
+            for (int x = bbox.x; x < bbox.x + bbox.width; ++x) {
+                if (labelRow[x] == label)
+                    minDepth = std::min(minDepth, static_cast<double>(depthRow[x]));
+            }
+        }
+        if (minDepth == std::numeric_limits<double>::max())
+            continue;
+
+        Seed seed;
+        seed.label = label;
+        seed.bbox = bbox;
+        seed.center = cv::Point2f(static_cast<float>(centroids.at<double>(label, 0)),
+                                  static_cast<float>(centroids.at<double>(label, 1)));
+        seed.minDepthMm = minDepth;
+        seeds.push_back(seed);
+    }
+    if (seeds.empty())
+        return false;
+
+    std::sort(seeds.begin(), seeds.end(),
+              [](const Seed& a, const Seed& b) { return a.minDepthMm < b.minDepthMm; });
+    return true;
+}
+
+/// ③ 以种子为起点生长该目标的顶层区域（TR-144）。
+///
+/// 候选 = `valid && depth <= seed.minDepthMm + heightBandMm`，取**包含种子**的那个连通域。
+/// 带厚锚定在目标自己的顶点上，背景面在带外 ⇒ 不会被并进来。
+bool GrowSeedRegion(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect& roi,
+                    const Seed& seed, const AlgorithmParams& p,
+                    cv::Mat& regionMask, cv::Rect& bbox)
+{
+    const double cutoffMm = seed.minDepthMm + std::max(kMinHeightBandMm, p.heightBandMm);
+
+    cv::Mat cand = cv::Mat::zeros(depthMm.size(), CV_8UC1);
+    for (int y = roi.y; y < roi.y + roi.height; ++y) {
+        const float* depthRow = depthMm.ptr<float>(y);
+        const uchar* validRow = validMask.ptr<uchar>(y);
+        uchar* candRow = cand.ptr<uchar>(y);
+        for (int x = roi.x; x < roi.x + roi.width; ++x) {
+            if (validRow[x] && depthRow[x] <= cutoffMm)
+                candRow[x] = 255;
+        }
+    }
+
+    const cv::Point seedPoint(static_cast<int>(std::lround(seed.center.x)),
+                              static_cast<int>(std::lround(seed.center.y)));
+    if (seedPoint.x < 0 || seedPoint.x >= cand.cols ||
+        seedPoint.y < 0 || seedPoint.y >= cand.rows ||
+        cand.at<uchar>(seedPoint) == 0)
+        return false;
+
+    // 填充值 128 与掩码的 0/255 区分开：128 = 种子所在连通域
+    cv::Rect filledRect;
+    cv::floodFill(cand, seedPoint, cv::Scalar(128), &filledRect, cv::Scalar(), cv::Scalar(), 8);
+    regionMask = (cand == 128);
 
     if (p.morphKernelSize > 1) {
         int kernelSize = p.morphKernelSize;
@@ -173,16 +290,32 @@ bool BuildTopRegionMask(const cv::Mat& depthMm, const cv::Mat& validMask,
             ++kernelSize;   // ⚠ 偶数自动 +1（M6）——避免「填了 6 实际 7」的困惑
         const cv::Mat kernel = cv::getStructuringElement(
             cv::MORPH_ELLIPSE, cv::Size(kernelSize, kernelSize));
-        cv::morphologyEx(topMask, topMask, cv::MORPH_OPEN, kernel);
-        cv::morphologyEx(topMask, topMask, cv::MORPH_CLOSE, kernel);
+        // 只在区域包围框（外扩核半径）内做形态学：整图做会随种子数线性放大开销，
+        // 空桌帧实测有 30 个种子。
+        const cv::Rect imageRect(0, 0, depthMm.cols, depthMm.rows);
+        const int pad = kernelSize / 2 + 1;
+        const cv::Rect grow =
+            cv::Rect(filledRect.x - pad, filledRect.y - pad,
+                     filledRect.width + pad * 2, filledRect.height + pad * 2) & imageRect;
+        if (grow.width > 0 && grow.height > 0) {
+            cv::Mat sub;
+            regionMask(grow).copyTo(sub);
+            cv::morphologyEx(sub, sub, cv::MORPH_OPEN, kernel);
+            cv::morphologyEx(sub, sub, cv::MORPH_CLOSE, kernel);
+            regionMask.setTo(0);
+            sub.copyTo(regionMask(grow));
+        }
     }
 
-    return cv::countNonZero(topMask) > 0;
+    if (cv::countNonZero(regionMask) <= 0)
+        return false;
+    bbox = cv::boundingRect(regionMask);
+    return true;
 }
 
 /// 组件内「距离变换峰值」检测（TR-135，2026-10-16）。
 ///
-/// **动机**：三个纸团挤在一起时，`BuildTopRegionMask` 末尾的 `MORPH_CLOSE` 会把它们**桥接**
+/// **动机**：三个纸团挤在一起时，`GrowSeedRegion` 末尾的 `MORPH_CLOSE` 会把它们**桥接**
 /// 成单个连通域——真机实测 `depth_20261016153457_0`：合并域 `area = 18458` ≈ 三球之和、
 /// `bbox = 160×177`；而三球分开时各 `area ≈ 6458/5909/5025`、`bbox ≈ 96×92`。
 /// 组件级只能产出 1 个目标 ⇒ 用户报障「三个纸团只检测出一个」。
@@ -446,7 +579,7 @@ void ComputeApex(const cv::Mat& depthMm, const cv::Mat& regionMask, const cv::Re
 ///
 /// ⚠ `regionMask` 与图像**同尺寸**（255 = 属于该区域），只在 `bbox` 内遍历；
 ///   `bbox` 须为区域的**紧包围框**。
-/// ⚠ `area` 直接取区域像素数：`topMask ⊆ validMask`（掩码已保证深度有限且落在 `[zMin, zMax]`）
+/// ⚠ `area` 直接取区域像素数：`regionMask ⊆ validMask`（掩码已保证深度有限且落在 `[zMin, zMax]`）
 ///   ⇒ 区域像素**恒**有有效深度，与 `connectedComponentsWithStats` 的 `CC_STAT_AREA` 恒等。
 bool MeasureRegion(const cv::Mat& depthMm, const cv::Mat& regionMask, const cv::Rect& bbox,
                    const cv::Rect& safeRect, double nearestDepthMm,
@@ -519,25 +652,21 @@ bool MeasureRegion(const cv::Mat& depthMm, const cv::Mat& regionMask, const cv::
     return true;
 }
 
-/// ③ 遍历**全部**连通域，硬过滤后按**球顶深度升序**返回（`front()` = 最高）。
+/// ④ 逐个种子生长目标区域，硬过滤后按**球顶深度升序**返回（`front()` = 最高）。
 ///
 /// ⚠ 与老实现的差异：老实现只保留 `argmax` 一个（边扫边比），本仓 `Detect` 返回
 /// `vector<PuffResult>`，故改为全量产出 + **显式排序**（契约 §11.3 约定 1）。
 ///
-/// ⚠ TR-135（2026-10-16）：一个连通域**不一定**只有一个目标——三球挤在一起时 `MORPH_CLOSE`
-///   会把它们桥接成单域。故先做**组件内峰切分**（`FindMarkers` + `VoronoiSplit`），切出
-///   ≥ `kSplitMinMarkers` 个合格子目标时按子目标逐个产出，否则**回退**组件级单目标
-///   （⇒ 单球行为与 TR-135 之前**逐位一致**）。
-std::vector<Candidate> SelectRegions(const cv::Mat& depthMm, const cv::Mat& topMask,
+/// ⚠ TR-135（2026-10-16）：一个区域**不一定**只有一个目标——三球挤在一起时 `MORPH_CLOSE`
+///   会把它们桥接成单域。故先做**区域内的峰切分**（`FindMarkers` + `VoronoiSplit`），切出
+///   ≥ `kSplitMinMarkers` 个合格子目标时按子目标逐个产出，否则**回退**区域级单目标。
+/// ⚠ TR-144（2026-10-20）：区域改为**按种子生长**（`GrowSeedRegion`），带厚锚定在目标
+///   自己的顶点上；同一区域覆盖的其它种子一并消费（合并域交给上面的峰切分）。
+std::vector<Candidate> SelectRegions(const cv::Mat& depthMm, const cv::Mat& validMask,
+                                     const cv::Rect& roi, const std::vector<Seed>& seeds,
                                      double nearestDepthMm, const AlgorithmParams& p)
 {
-    cv::Mat labels, stats, centroids;
-    const int componentCount = cv::connectedComponentsWithStats(
-        topMask, labels, stats, centroids, 8, CV_32S);
-
     std::vector<Candidate> out;
-    if (componentCount <= 1)
-        return out;
 
     const cv::Rect safeRect(
         p.edgeMargin,
@@ -545,34 +674,45 @@ std::vector<Candidate> SelectRegions(const cv::Mat& depthMm, const cv::Mat& topM
         std::max(0, depthMm.cols - p.edgeMargin * 2),
         std::max(0, depthMm.rows - p.edgeMargin * 2));
 
-    for (int label = 1; label < componentCount; ++label) {
-        const int area = stats.at<int>(label, cv::CC_STAT_AREA);
+    std::vector<bool> consumed(seeds.size(), false);
+    cv::Mat claimed = cv::Mat::zeros(depthMm.size(), CV_8UC1);
+    for (size_t si = 0; si < seeds.size(); ++si) {
+        if (consumed[si])
+            continue;
+        const Seed& seed = seeds[si];
+
+        cv::Mat regionMask;
+        cv::Rect bbox;
+        if (!GrowSeedRegion(depthMm, validMask, roi, seed, p, regionMask, bbox))
+            continue;
+
+        // 本区域覆盖的其它种子一并消费：合并域由峰切分产出多个目标，避免重复计
+        for (size_t sj = si + 1; sj < seeds.size(); ++sj) {
+            if (consumed[sj])
+                continue;
+            const cv::Point c(static_cast<int>(std::lround(seeds[sj].center.x)),
+                              static_cast<int>(std::lround(seeds[sj].center.y)));
+            if (regionMask.at<uchar>(c) != 0)
+                consumed[sj] = true;
+        }
+
+        const int area = cv::countNonZero(regionMask);
         if (area < p.minArea || area > p.maxArea)
             continue;
 
-        const cv::Rect bbox(stats.at<int>(label, cv::CC_STAT_LEFT),
-                            stats.at<int>(label, cv::CC_STAT_TOP),
-                            stats.at<int>(label, cv::CC_STAT_WIDTH),
-                            stats.at<int>(label, cv::CC_STAT_HEIGHT));
-
-        const cv::Point2f center(static_cast<float>(centroids.at<double>(label, 0)),
-                                 static_cast<float>(centroids.at<double>(label, 1)));
-
-        // 边缘过滤：质心落在 [margin, 边长−margin] 之外则丢弃
-        if (!safeRect.contains(cv::Point(static_cast<int>(center.x),
-                                         static_cast<int>(center.y))))
+        // 与已接受区域重叠过半 ⇒ 同一片表面被多个种子重复生长（平背景上常见），只留一个。
+        // 正常目标（分离或已由峰切分拆开）区域互不重叠，不会触发。
+        if (cv::countNonZero(regionMask & claimed) * 2 > area)
             continue;
+        cv::bitwise_or(claimed, regionMask, claimed);
 
-        // 组件掩码（与图像同尺寸）。`labels == label` 的比较结果即 255/0 的 CV_8U。
-        const cv::Mat compMask = (labels == label);
-
-        // ---- TR-135（2026-10-16）：组件内峰切分。三球挤在一起时 `MORPH_CLOSE` 把它们
-        //      桥接成单域，组件级只会报 1 个目标 ⇒ 先试切分，成功则按子目标逐个产出。----
-        const std::vector<cv::Point2f> markers = FindMarkers(compMask, bbox);
+        // ---- TR-135（2026-10-16）：区域内峰切分。三球挤在一起时 `MORPH_CLOSE` 把它们
+        //      桥接成单域，区域级只会报 1 个目标 ⇒ 先试切分，成功则按子目标逐个产出。----
+        const std::vector<cv::Point2f> markers = FindMarkers(regionMask, bbox);
         if (static_cast<int>(markers.size()) >= kSplitMinMarkers) {
             std::vector<cv::Mat>  subMasks;
             std::vector<cv::Rect> subBoxes;
-            VoronoiSplit(compMask, bbox, markers, subMasks, subBoxes);
+            VoronoiSplit(regionMask, bbox, markers, subMasks, subBoxes);
 
             std::vector<Candidate> subs;
             subs.reserve(subMasks.size());
@@ -584,17 +724,17 @@ std::vector<Candidate> SelectRegions(const cv::Mat& depthMm, const cv::Mat& topM
                 Candidate sc;
                 if (MeasureRegion(depthMm, subMasks[i], subBoxes[i], safeRect,
                                   nearestDepthMm, p, sc)) {
-                    sc.label = label;
+                    sc.label = seed.label;
                     subs.push_back(sc);
                 }
             }
 
-            // 切出 ≥ `kSplitMinMarkers` 个**合格**子目标才算成功；否则**回退**组件级单目标
+            // 切出 ≥ `kSplitMinMarkers` 个**合格**子目标才算成功；否则**回退**区域级单目标
             // （⇒ 单球 / 切分失败时的行为与 TR-135 之前**逐位一致**）。
             if (static_cast<int>(subs.size()) >= kSplitMinMarkers) {
-                SPDLOG_INFO("[DepthPuffAlgo] component #{} area={} → {} sub-target(s) "
+                SPDLOG_INFO("[DepthPuffAlgo] seed #{} area={} → {} sub-target(s) "
                             "(markers={}; sep={:.2f}×dmax peak={:.2f}×dmax)",
-                            label, area, subs.size(), markers.size(),
+                            seed.label, area, subs.size(), markers.size(),
                             kSplitSepRatio, kSplitPeakRatio);
                 out.insert(out.end(), subs.begin(), subs.end());
                 continue;
@@ -602,8 +742,8 @@ std::vector<Candidate> SelectRegions(const cv::Mat& depthMm, const cv::Mat& topM
         }
 
         Candidate c;
-        c.label = label;
-        if (MeasureRegion(depthMm, compMask, bbox, safeRect, nearestDepthMm, p, c))
+        c.label = seed.label;
+        if (MeasureRegion(depthMm, regionMask, bbox, safeRect, nearestDepthMm, p, c))
             out.push_back(c);
     }
 
@@ -712,14 +852,15 @@ std::vector<PuffResult> DepthPuffAlgo::Detect(const CameraFrame& frame, const Al
         return results;
     }
 
-    cv::Mat topMask;
+    std::vector<Seed> seeds;
     double nearestDepthMm = 0.0;
-    if (!BuildTopRegionMask(depthMm, validMask, params, topMask, nearestDepthMm)) {
-        lastError_ = "no top-region candidates";
+    if (!BuildSeeds(depthMm, validMask, roi, params, seeds, nearestDepthMm)) {
+        lastError_ = "no seeds in ROI";
         return results;
     }
 
-    const std::vector<Candidate> cands = SelectRegions(depthMm, topMask, nearestDepthMm, params);
+    const std::vector<Candidate> cands =
+        SelectRegions(depthMm, validMask, roi, seeds, nearestDepthMm, params);
     if (cands.empty()) {
         lastError_ = "no candidate passed filtering";
         return results;
@@ -779,10 +920,10 @@ std::vector<PuffResult> DepthPuffAlgo::Detect(const CameraFrame& frame, const Al
         const Candidate& best = cands.front();
         // ⚠ `topDepth` = 原始最小深度（保留原名，兼容既有 grep 配方）；
         //   `apexDepth` = 球顶面片均值 = 真正写进 `z` 的值；二者之差 = 该连通域的噪点幅度。
-        SPDLOG_INFO("[DepthPuffAlgo] {} candidate(s); best area={} meanDepth={:.1f}mm "
+        SPDLOG_INFO("[DepthPuffAlgo] {} seed(s) → {} candidate(s); best area={} meanDepth={:.1f}mm "
                     "topDepth={:.1f}mm apexDepth={:.1f}mm apex=({:.0f},{:.0f})[{}px] score={:.3f}; "
                     "nearestDepth={:.1f}mm zRange=[{:.1f},{:.1f}]",
-                    cands.size(), best.area, best.meanDepthMm, best.minDepthMm,
+                    seeds.size(), cands.size(), best.area, best.meanDepthMm, best.minDepthMm,
                     best.apexDepthMm, best.apex.x, best.apex.y, best.apexCount, best.score,
                     nearestDepthMm, params.depthZMin, params.depthZMax);
     }

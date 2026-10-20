@@ -76,7 +76,7 @@ struct AlgorithmParams
     // ⚠ 覆盖关系 = **算法节点优先、通用域作默认**（`algorithm_config_plan.md` §十 裁定 3）。
     // ⚠ `roi` / `minArea` / `maxArea` / `edgeMargin` 的坐标系 = **深度图**。
     // ⚠ 只加**当前已注册实现**的量；改本结构体属头文件改动 ⇒ 必须 `-t clean` 全清重建。
-    double  nearestPercentile   = 0.03;    // 最近层分位数；代码内 clamp(0.001, 0.5)
+    double  nearestPercentile   = 0.001;   // 种子深度分位（噪声稳健的最近深度）；代码内 clamp(0.001, 0.005)
     double  heightBandMm        = 35.0;    // 最高层带厚；代码内 max(1.0, 值)
 
     /// 球顶面片比例（TR-132，2026-10-16）：取连通域内**深度最小的这一比例**的像素，

@@ -272,7 +272,7 @@
                 "maxArea": 250000,
                 "minArea": 120,
                 "morphKernelSize": 7,
-                "nearestPercentile": 0.03,
+                "nearestPercentile": 0.001,
                 "roi": {
                     "h": 610,
                     "w": 900,
