@@ -1283,15 +1283,25 @@ void VisionTestPage::ScheduleDetection(const CameraFramePtr& frame, bool allowAu
         const auto raw = algo->Detect(*frame, params);
         const double ms = static_cast<double>(timer.nsecsElapsed()) / 1.0e6;
         const QVector<PuffResult> results = ToQVector(raw);
+        // TR-147（2026-10-21）：0 结果时取走算法的提前返回原因（`GetLastError()`）。
+        // ⚠ 必须在**本线程**（与 `Detect` 同线程）读——`lastError_` 无锁，跨线程读有数据竞争。
+        const QString detectError = raw.empty()
+                                        ? QString::fromStdString(algo->GetLastError())
+                                        : QString();
 
         // 结果回 UI 线程。以 `this` 为 context：页面析构时该事件被 Qt 自动撤销，不会悬垂。
-        QMetaObject::invokeMethod(this, [this, results, ms, allowAutoSave]() {
-            ApplyDetectionResult(results, ms, allowAutoSave);
+        // ⚠ `frame` 一并带回：它是**本次检测实际吃的帧**。此前存图路径回 UI 线程后再读
+        //   `latestFrame_`，而采集流一直在跑，那时它已前进若干帧 ⇒ 落盘帧 ≠ 检测帧
+        //   （实测复现：按落盘帧离线复刻全部能检出，真机却报「未找到目标」）。
+        QMetaObject::invokeMethod(this, [this, results, ms, allowAutoSave, frame, detectError]() {
+            ApplyDetectionResult(results, ms, allowAutoSave, frame, detectError);
         }, Qt::QueuedConnection);
     }, Qt::QueuedConnection);
 }
 
-void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave)
+void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs,
+                                          bool allowAutoSave, const CameraFramePtr& frame,
+                                          const QString& detectError)
 {
     detectBusy_ = false;
 
@@ -1314,6 +1324,15 @@ void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, do
         AppendLog(QStringLiteral("[检测] 目标 %1 个，耗时 %2 ms")
                       .arg(results.size())
                       .arg(QString::number(lastDetectMs_, 'f', 1)));
+
+        // TR-147（2026-10-21）：0 结果时暴露算法的提前返回原因。此前 `Detect()` 的三条
+        // 提前返回路径（无有效深度 / 无种子 / 无合格候选）**完全静默**——只置 `lastError_`
+        // 不打日志，现场无从区分「场景里确实没有目标」与「深度帧失效 / 手占满 ROI 把
+        // 种子全挤到边界外」。连续检测下空帧正常，靠 `countChanged` 门控防刷屏。
+        if (results.isEmpty()) {
+            SPDLOG_WARN("[VisionTest] 未检出目标（算法原因: {}）", detectError.toStdString());
+            AppendLog(QStringLiteral("[检测] 未找到目标：%1").arg(detectError));
+        }
 
         // TR-132（2026-10-16）：逐目标打**机器可读**的像素坐标。overlay 图上的标注只供人眼
         // 核对——要「输出目标坐标」必须有文本出口（改造前本页只打「发现 N 个目标」，不落
@@ -1347,10 +1366,11 @@ void VisionTestPage::ApplyDetectionResult(const QVector<PuffResult>& results, do
     // 否则 30 fps × 3 路 = 90 张/秒 → 秒级爆盘，且必然命中 FrameSaver 的 D4/D5。
     if (allowAutoSave) {
         // TR-130：本拍取一次时间戳、三路共用——落盘名时间戳严格一致（rgb/depth 对比前提）。
+        // TR-147：三路全部传**检测当帧**（`frame`），落盘与结果严格同源。
         const qint64 tsMs = QDateTime::currentMSecsSinceEpoch();
-        if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb(tsMs);
-        if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth(tsMs);
-        if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay(tsMs);
+        if (saveRgbCheck_ && saveRgbCheck_->isChecked())         QueueSaveRgb(tsMs, frame);
+        if (saveDepthCheck_ && saveDepthCheck_->isChecked())     QueueSaveDepth(tsMs, frame);
+        if (saveOverlayCheck_ && saveOverlayCheck_->isChecked()) QueueSaveOverlay(tsMs, frame);
     }
 
     if (results.empty())
@@ -1520,18 +1540,20 @@ void VisionTestPage::OnBrowseTemplate()
 // 存图
 // ---------------------------------------------------------------------------
 
-void VisionTestPage::QueueSaveRgb(qint64 tsMs)
+void VisionTestPage::QueueSaveRgb(qint64 tsMs, const CameraFramePtr& frame)
 {
     if (!hasFrame_) return;
-    // TR-128（2026-10-15 三次追加，用户裁定）：RGB 存图**不打** ROI 框——保持原始
     // 彩图语义，ROI / 失败标注只进 overlay 路（预览 + 存图同在 `BuildOverlayImage` 内）。
+    // TR-147（2026-10-21）：`frame` 非空 = 单次检测的自动存图，用**检测当帧**落盘——
+    // 此前回 UI 线程后现读 `latestFrame_`，采集流在跑时它已前进若干帧，落盘帧 ≠ 检测帧。
+    const QImage img = frame ? FrameConverter::ColorToQImage(*frame) : BuildRgbImage();
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
-                              Q_ARG(QImage, BuildRgbImage()),
+                              Q_ARG(QImage, img),
                               Q_ARG(QString, QStringLiteral("rgb")),
                               Q_ARG(qint64, tsMs));
 }
 
-void VisionTestPage::QueueSaveDepth(qint64 tsMs)
+void VisionTestPage::QueueSaveDepth(qint64 tsMs, const CameraFramePtr& frame)
 {
     if (!hasFrame_) return;
     // ⚠ 存的是**原始 16-bit 深度值（mm）**，不是伪彩图（TR-125，2026-10-14）。
@@ -1540,20 +1562,25 @@ void VisionTestPage::QueueSaveDepth(qint64 tsMs)
     // 伪彩渐变不可逆（8-bit 三通道 + 受 depthMin/depthMax 影响），无法从中还原 mm。
     // 预览格仍走 `BuildDepthImage()`——那是给人看的，语义与落盘**刻意不同**。
     // ⚠ 同理（TR-128）本路**不做** ROI / 「未找到目标」标注——标注会毁掉物理量语义。
+    // ⚠ TR-147：同 `QueueSaveRgb`，优先用检测当帧。
+    const QImage img = frame ? FrameConverter::DepthToQImage16(*frame)
+                             : FrameConverter::DepthToQImage16(*latestFrame_);
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
-                              Q_ARG(QImage, FrameConverter::DepthToQImage16(*latestFrame_)),
+                              Q_ARG(QImage, img),
                               Q_ARG(QString, QStringLiteral("depth")),
                               Q_ARG(qint64, tsMs));
 }
 
-void VisionTestPage::QueueSaveOverlay(qint64 tsMs)
+void VisionTestPage::QueueSaveOverlay(qint64 tsMs, const CameraFramePtr& frame)
 {
     if (!hasFrame_) return;
     // TR-128：ROI 框 / 「未找到目标」标签已并入 `BuildOverlayImage`（预览与存图
     // 同一函数产出，天然一致；RGB / 深度两路均不打标注——RGB 保原始彩图语义
     // （用户裁定），深度 16-bit 保物理量语义（TR-125））。
+    // TR-147：`frame` 非空 = 用检测当帧的彩图作 overlay 底图（框/标注与该帧同源）。
+    const QImage rgb = frame ? FrameConverter::ColorToQImage(*frame) : QImage();
     QMetaObject::invokeMethod(frameSaver_, "SaveImage", Qt::QueuedConnection,
-                              Q_ARG(QImage, BuildOverlayImage()),
+                              Q_ARG(QImage, BuildOverlayImage(rgb)),
                               Q_ARG(QString, QStringLiteral("overlay")),
                               Q_ARG(qint64, tsMs));
 }

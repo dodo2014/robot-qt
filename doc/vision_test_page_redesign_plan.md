@@ -379,6 +379,7 @@ HardwareManager::frameReady(CameraFrame)
 | 信号风暴 | 每张 `emit imageSaved`（`:78`） | 连续存图时**合并通知**（如每 tick 只发最后一次 / 或改发计数） |
 | `Stop()` 阻塞 | 同步 `ProcessQueue()` 排空（`:40-45`） | `Stop()` 只置标志 + 丢弃队列，不做全量落盘 |
 | 析构回收（TR-140） | `connect(saverThread_, finished, frameSaver_, deleteLater)`；`Stop` 用 `Qt::BlockingQueuedConnection` | 去掉 `deleteLater`，改「`wait()` 成功后显式 `delete`，超时 `saverThread_->setParent(nullptr)` 并 WARN」；`Stop` 改 `Qt::QueuedConnection`。判据见 `architecture.md` §5 生命周期铁律 |
+| 存图与检测同帧（TR-146，2026-10-21） | 自动存图在 `ApplyDetectionResult`（UI 线程）现读 `latestFrame_`——采集流在跑时它已前进若干帧，**落盘帧 ≠ 检测帧**，「用落盘图离线复现检测」天然失真（实测：真机报「未找到目标」的三帧，按落盘图复刻全部能检出） | `ScheduleDetection` 把检测帧带回 `ApplyDetectionResult`，三路 `QueueSave*` 加 `frame` 参数优先用检测当帧（`OnSnapshot` 快照路径仍读 `latestFrame_`）；0 结果时打 `WARN [VisionTest] 未检出目标（算法原因: …）`（`GetLastError()` 在工作线程与 `Detect` 同线程取走——`lastError_` 无锁）+ 页面日志框同步显示，连续检测靠 `countChanged` 门控防刷屏 |
 
 ## 八、改动清单
 

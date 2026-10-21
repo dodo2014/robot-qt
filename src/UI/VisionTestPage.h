@@ -100,7 +100,10 @@ private:
     // ⚠ 参数快照必须在主线程取——`IPuffAlgorithm::SnapshotParams()` 读 `ConfigManager`，
     // 而项目硬约束是「worker 线程绝不读 ConfigManager」（`json` 读写非线程安全）。
     void ScheduleDetection(const CameraFramePtr& frame, bool allowAutoSave);
-    void ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave);
+    // TR-147（2026-10-21）：`frame` = **本次检测实际用的那一帧**，供三路存图与检测严格同源；
+    // `detectError` = 0 结果时算法的提前返回原因（`GetLastError()`，工作线程取好带回）。
+    void ApplyDetectionResult(const QVector<PuffResult>& results, double elapsedMs, bool allowAutoSave,
+                              const CameraFramePtr& frame, const QString& detectError = QString());
     void ShowResults(const QVector<PuffResult>& results, double elapsedMs);
     // 像素 + 深度 → 基座坐标（2026-10-19）。返回 false = 不可用（矩阵未装载 / 内参未就绪），
     // 调用方据此显示 `--` 而不是假 0——「算不出」和「算出来是 0」必须能区分。
@@ -121,9 +124,10 @@ private:
     // ⚠ `tsMs`：本拍存图的统一时间戳（epoch ms）——同一拍的三路必须共用同一个值，
     // 落盘名 `类型_时间戳_编号.png` 的时间戳才严格一致（rgb/depth 对比的前提，TR-130）。
     // 由调用方（ApplyDetectionResult / OnSnapshot）取一次、传三处。
-    void QueueSaveRgb(qint64 tsMs);
-    void QueueSaveDepth(qint64 tsMs);
-    void QueueSaveOverlay(qint64 tsMs);
+    // TR-147：`frame` 非空 = 用**检测当帧**落盘（与结果同源）；空 = 快照路径，用当前 `latestFrame_`。
+    void QueueSaveRgb(qint64 tsMs, const CameraFramePtr& frame = {});
+    void QueueSaveDepth(qint64 tsMs, const CameraFramePtr& frame = {});
+    void QueueSaveOverlay(qint64 tsMs, const CameraFramePtr& frame = {});
     // ROI / 「未找到目标」标注只进 overlay 路（`BuildOverlayImage` 内，预览与存图
     // 同源）；RGB 存图保原始彩图语义（用户 2026-10-15 裁定），深度 16-bit 保物理量
     // 语义（TR-125），两路均不打标注。

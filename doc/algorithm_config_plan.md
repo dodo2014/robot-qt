@@ -103,7 +103,7 @@
 | `roi`（托盘感兴趣区域） | 调参期人定 | 安装与托盘布局 | **算法节点**（调参期）→ 稳定后可上提至产品域 | L1 `vision.algorithms.<名>` → L2 | 老项目 `puff_locator_params.json` 即为算法侧参数，有先例 |
 | `confidenceThreshold` | 人定 | 产品与光照 | **`vision.*`（跨算法通用）** | L1 → L2 | 深度法与颜色法**都有**这个概念 ⇒ 不下沉，避免每算法重复声明 |
 | `depthZMin` / `depthZMax` | 人定 | 安装高度与工作范围 | **`vision.*`（深度域通用）** | L1 → L2 | 任何消费深度图的算法都需要，属**深度域**而非某算法 |
-| `nearestPercentile` / `heightBandMm` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` | 人定 | **具体算法实现** | **算法节点** | L1 `vision.algorithms.<名>` → L2 | 只有深度法有这些概念；换算法即整体失效 |
+| `nearestPercentile` / `heightBandMm` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` / `maxExtentProduct` | 人定 | **具体算法实现** | **算法节点** | L1 `vision.algorithms.<名>` → L2 | 只有深度法有这些概念；换算法即整体失效 |
 | `templatePath` | 人定 | 具体算法实现 | **算法节点** | L1 `vision.algorithms.<名>` | ⚠ 现值在 `vision.templatePath`，**且无读点**（`doc/config.md:143`）⇒ 属错位，见 §七 M1 |
 | 动作级 `threshold` / `visionType` / `templateName` | 工艺方案 | 单个动作 | **L3 调用入参** | `process.json` → 执行时组装 | 属动作而非全局；**当前未落地**（§3.2），本方案不改变 C6 裁定 |
 
@@ -125,6 +125,7 @@
       "targetAreaTolerance": 0,
       "morphKernelSize": 7,
       "edgeMargin": 8,
+      "maxExtentProduct": 130000,
       "roi": { "x": 0, "y": 0, "w": 0, "h": 0 },
       "templatePath": ""
     }
@@ -253,7 +254,7 @@
 | 分组 | 键 | 归属层 |
 | :--- | :--- | :--- |
 | **通用（跨算法）** | `confidenceThreshold` / `depthZMin` / `depthZMax` | `vision.*`（§四） |
-| **算法私有** | `vision.algorithms.<algoType>.*`——如 `roi` / `nearestPercentile` / `heightBandMm` / `apexPercentile` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` / `templatePath` | 算法节点（§四 / §五） |
+| **算法私有** | `vision.algorithms.<algoType>.*`——如 `roi` / `nearestPercentile` / `heightBandMm` / `apexPercentile` / `minArea` / `maxArea` / `targetArea` / `targetAreaTolerance` / `morphKernelSize` / `edgeMargin` / `maxExtentProduct` / `templatePath` | 算法节点（§四 / §五） |
 
 ⚠ **参数只以「快照」形式进入算法**：调用方在**主线程**调 `SnapshotParams()` 取一份值语义结构，算法**不回头读任何全局状态**（§二）。覆盖关系 = 算法节点优先、通用域作默认（§十 裁定 3）。
 
@@ -304,6 +305,7 @@
     "minArea": 120, "maxArea": 250000,
     "targetArea": 0, "targetAreaTolerance": 0,
     "morphKernelSize": 7, "edgeMargin": 8,
+    "maxExtentProduct": 130000,
     "roi": { "x": 0, "y": 0, "w": 0, "h": 0 }
   }
 }

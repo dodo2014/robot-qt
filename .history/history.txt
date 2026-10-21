@@ -1,13 +1,13 @@
 项目历史（自动维护）
 
 该文件由 OpenCode 项目历史插件自动维护。
-最后更新时间：2026-10-19T15:35:44.403+08:00
+最后更新时间：2026-10-21T10:03:47.098+08:00
 
 # 项目概述
 
 - CreamPuffRobot — SCARA 泡芙抓取机器人控制系统，Qt6 深色 HMI + 仿真/真机双模式；分层 UI → Logic → Core → HAL，HAL 再依赖 Config。
-- 核心运动学使用 Pose{x,y,z,r} / Joints{j1,j2,z,r}，2D SCARA L1=138.83、L2=166.86；R 独立透传；提供 Forward/Inverse/InverseSmart/SetTCP。TCP 已内化为等效小臂：l2_eff = L2 + tcpForward_，Z 扣 tcpDown_，旧 ApplyTCPOffset 已删除。
-- 2026-09 主线 implementation_roadmap 的 P0~P6 全部落地：P0 TR-095 J1 偏移、P1 TR-097 配置地基、P2 TR-098 编号机制、P3 TR-099 相机 HAL、P4 TR-100 视觉页重构、P5 TR-101 视觉引导、P6 TR-102 动作树与分组并发；2026-09-20 单次提交 2be44d3 入库。
+- 核心运动学使用 Pose{x,y,z,r} / Joints{j1,j2,z,r}，2D SCARA L1=138.83、L2=166.86；R 独立透传；提供 Forward/Inverse/InverseSmart/SetTCP。TCP 已内化为等效小臂：l2_eff = L2 + tcpForward_，Z 扣 tcpDown_。
+- 2026-09 主线 P0~P6 全部落地：P0 TR-095 J1 偏移、P1 TR-097 配置地基、P2 TR-098 编号机制、P3 TR-099 相机 HAL、P4 TR-100 视觉页重构、P5 TR-101 视觉引导、P6 TR-102 动作树与分组并发；2026-09-20 单次提交 2be44d3 入库。
 - 当前瓶颈已从编码转到真机验收：phase3 阶段 11/12/13 共 99 条用例；阶段 11 全部执行，阶段 12A/12B、13A/13B（13.1~13.23）已执行；12C（12.22~12.26）与 13C（13.30~13.34）阻塞在手眼矩阵标定。
 - 2026-10 新增：TR-123 取帧并发收敛、TR-125 深度存图 16-bit、TR-126/127 深度法算法移植与算法配置命名空间、TR-131~135 深度法真机调参与多目标切分；台账最大号 TR-135（2026-10-16）。
 - 截至 2026-10-08 基线 5e683d3；main 领先 origin/main 10 个提交且未 push（用户未授权），此后新增改动以 git 实际状态为准。
@@ -111,6 +111,20 @@
 - SimAlgo 深度超范围曾只把 z 置 0、结果照常入表，产生 x=y=z=0 伪目标并被 results.front() 取走；已修为过滤掉（TR-103）。
 - vision.templatePath 目前只做入口 + 持久化，IPuffAlgorithm 无模板参数，该键无读取方，不要当成已生效。
 
+# 自动运行视觉存图（新增需求，进行中）
+
+- 需求来源（2026-10-19）：为数据留存，自动运行方案执行时也需保存视觉检测图片。用户最初设想「在工艺流程识别类型动作界面加保存选项即可」，经确认方向对但只加复选框不够——真正要动三处逻辑，另有一个可见性闸门坑。
+- 现状：FrameSaver（src/HAL/camera/FrameSaver.h）目前只在 VisionTestPage 里被 new 出并配独立线程；Logic/ 与 AutoRunPage 一处都没有（grep 为空），自动运行拿到帧也没有存图通路。
+- 计划改 4 处（缺省 false ⇒ 老 process.json 不用迁移）：
+- 1. ProcessManager.h ActionData 加 bool saveImage=false，JSON 读写各一行（.cpp 约 :62/:129）；
+- 2. ProcessPage.cpp Vision 详情页（约 :486-510）加复选框，与「置信度阈值」并列；载入 :969、保存 :2067 同步；
+- 3. SequenceWorker.h DetectionResult 加 bool saveImage，识别分支（约 :1019-1025）把 action.saveImage 填进去；
+- 4. AutoRunPage 新建 FrameSaver + 线程，在 OnDetectionReady（约 :489）里存——主体工作量在此。
+- 必须避开的坑：AutoRunPage::OnDetectionReady 第一件事是 m_lastDetection = result，紧接着 if(!isVisible()) return——页面不可见就不渲染。若存图写在渲染路径里，用户在别的页面看流程跑则一张都不存。存图必须放在可见性闸门之前，且不依赖任何 QLabel 尺寸。
+- 产品决策（已定）：存图走 rgb/depth/overlay 三路，与视觉页一致，每循环约 2~3 MB；循环生产下必须限流——可用空间 < 5% 时删最旧（视觉页 V8 裁定正是因连续检测无限制存图问题才在连续检测时禁止自动存图）。自动运行用 autorun 子目录，带磁盘守卫。
+- 落地状态（2026-10-19）：方案为跨 7 个文件的改动，用户确认「有一些文件已经做了一点修改，没有完全完成」，落地时需先检测已改动文件再续做。需尽量复用 VisionTestPage 的 FrameSaver 三路存图与 DepthToQImage16 实现，而非另写一套。
+- 业务边界：自动运行存图与视觉页存图是两套独立线程与队列（视觉页无磁盘守卫，自动运行必须带 storage.autorunMinFreePercent 守卫），共目录会互删对方产物，刻意不共用。
+
 # 深度法算法与手眼标定
 
 - 算法配置：AlgorithmParams/PuffResult 扩展，vision.algorithms.<算法名> 为算法私有参数命名空间，HardwareManager 透传整棵子树；覆盖关系 = 算法节点优先、通用域作默认。PuffResult.x/y 保留但算法侧不填（恒 0），视觉页两列由 PixelToRobot 实时算。
@@ -138,11 +152,12 @@
 
 - TEST_RECORD.md 台账列：编号 | 模块 | 测试场景/动作 | 期望结果 | 测试状态 | 踩坑记录/备注；编号为 TR-###，唯一、递增、禁止重排/复用。
 - PointData：name、posture、coord{x,y,z,r}、joints{j1,j2,j3,j4}、hasJoints；joints 作废时删除字段而非置 0。
-- ActionData：id、name、type、nodeType(action/group)、children、points、speedPercent、sourceActionId、offsetZ、guideR、gripperTarget、captureTag/captureSaveLocal/captureSubdir/captureDeliverPath/captureDeliverStream/captureContent/captureFormat/captureRequired。
+- ActionData：id、name、type、nodeType(action/group)、children、points、speedPercent、sourceActionId、offsetZ、guideR、gripperTarget、saveImage（2026-10-19 新增，默认 false，识别动作存图开关）、captureTag/captureSaveLocal/captureSubdir/captureDeliverPath/captureDeliverStream/captureContent/captureFormat/captureRequired。
 - SchemeData：name、nodes、nextActionId；第三方对接时新增 schemeId（8 位十六进制）。
 - PuffResult：pixelU、pixelV、z、confidence、yaw、bboxX、bboxY、width、height、area、minDepthMm；z 语义为区域最高点；x/y 弃用恒 0。
 - CameraFrame：colorData、depthData、width、height、depthWidth、depthHeight；深度尺寸独立，depthWidth/Height 为 0 时回落彩色尺寸。
 - AlgorithmParams：通用 confidenceThreshold/depthZMin/depthZMax + roi + 算法私有参数（heightBandMm、minArea、maxArea、morphKernelSize、edgeMargin、apexPercentile 等）。
+- SequenceWorker::DetectionResult：识别动作结果结构，含 saveImage 字段（2026-10-19 新增，由 action.saveImage 填充），供 AutoRunPage 决定是否存图。
 
 # UI 样式与控件约定
 
@@ -190,6 +205,7 @@
 # 待确认问题
 
 - 手眼矩阵标定是当前唯一硬阻塞：12C（12.22~12.26）与 13C（13.30~13.34）无法执行；方法 B′ 待用户裁定并补进 doc/hand_eye_calibration_plan.md §4.2；标定前视觉引导坐标只能用于仿真。
+- 自动运行视觉存图（2026-10-19 新增，进行中）：跨 7 文件改动，部分文件已改未完；落地点 = ActionData.saveImage + ProcessPage 复选框 + SequenceWorker::DetectionResult.saveImage + AutoRunPage 新建 FrameSaver（磁盘守卫 <5% 删最旧、存 rgb/depth/overlay 三路、存图在 OnDetectionReady 可见性闸门之前）；落地前需先检测已改动文件再续做，尽量复用 VisionTestPage 现有实现。
 - 阶段 13 余 13.24~13.29 未执行：单步整组算一步、执行选中动作、同级移动、引用校验扩全树、删除分组不回退编号、循环生产×分组。
 - J1 残余失步未定量（目测级）；maxAccel 上限边界未扫描，与 P6 节拍优化冲突；D8/D9（节拍回收）建议同批做。
 - TR-084 退出悬垂崩溃的真机复现待做（Sim 难构造 Paused 会话）。

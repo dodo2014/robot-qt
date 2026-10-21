@@ -270,6 +270,7 @@
                 "edgeMargin": 8,
                 "heightBandMm": 20.0,
                 "maxArea": 250000,
+                "maxExtentProduct": 130000,
                 "minArea": 120,
                 "morphKernelSize": 7,
                 "nearestPercentile": 0.001,

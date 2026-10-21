@@ -2,7 +2,7 @@
 
 > **需求来源**：`implementation_roadmap.md` §9.6 要求「④ 的技术方案尚未成文……移植步骤、接口扩展、参数表须另开一篇」；用户 2026-10-13 指令「把移植步骤与参数初值表那篇补上」。
 > **结论**：**移植优先于重写**——老项目 `D:/workspace/projects/robot-puff/Framework/VisionModule/` 的 `CPuffLocator` 是纯深度法实现，核心 6 个函数**零 MFC 依赖**（只用 OpenCV + std）。本文给出**符号映射、参数初值、分阶段步骤与验收判据**，落地形态为 `src/HAL/algorithm/DepthPuffAlgo.{h,cpp}`。
-> **状态**：🟢 **阶段 0~2 已实施（TR-126 / TR-127 / TR-131 / TR-132 / TR-135，2026-10-14 ~ 10-16）**——`DepthPuffAlgo` 已落地并注册，C1 / C3 / C4 / C5 同批完成；Sim 冒烟 + A 档离线验收通过（TR-127）；**2026-10-16 真机落盘帧离线复跑 11/11 PASS**（TR-131），并收口两处：**M1 阈值**（节点级 `confidenceThreshold = 0.65`）与**排序键**（改**深度优先** ⇒ `results.front()` = 最高，落实用户「取最高泡芙」需求）；**TR-132 定死输出语义 = 球顶**（`apexPercentile = 0.02`，`pixelU/pixelV` 由质心改球顶 + 新增 `bboxX/bboxY`）；**TR-135 解决「多目标合并」**（三球挤在一起被 `MORPH_CLOSE` 桥接成单连通域 ⇒ 距离变换峰 + 尺度自适应 NMS + Voronoi 切分，当日 8 帧离线 **8/8 PASS**、合并帧 1 → 3 个目标）。**阶段 3（真机调参）未做**——`targetArea` / `roi` / `depthZMin` / `depthZMax` 仍待按最终安装高度重定。⚠ **C6 已移出本批**——`vision.templatePath` 并非「无读点」，见 §七 M1。本文只定**怎么移植**；**接口契约**见 `algorithm_config_plan.md` §十一，**参数归属**见同篇 §四 / §五。
+> **状态**：🟢 **阶段 0~2 已实施（TR-126 / TR-127 / TR-131 / TR-132 / TR-135 / TR-145 / TR-146 / TR-147 / TR-148，2026-10-14 ~ 10-21）**——`DepthPuffAlgo` 已落地并注册，C1 / C3 / C4 / C5 同批完成；Sim 冒烟 + A 档离线验收通过（TR-127）；**2026-10-16 真机落盘帧离线复跑 11/11 PASS**（TR-131），并收口两处：**M1 阈值**（节点级 `confidenceThreshold = 0.65`）与**排序键**（改**深度优先** ⇒ `results.front()` = 最高，落实用户「取最高泡芙」需求）；**TR-132 定死输出语义 = 球顶**（`apexPercentile = 0.02`，`pixelU/pixelV` 由质心改球顶 + 新增 `bboxX/bboxY`）；**TR-135 解决「多目标合并」**（三球挤在一起被 `MORPH_CLOSE` 桥接成单连通域 ⇒ 距离变换峰 + 尺度自适应 NMS + Voronoi 切分，当日 8 帧离线 **8/8 PASS**、合并帧 1 → 3 个目标）；**TR-145 锚点改「连通域级 + 面积/边界过滤后取最近」**（近→远逐层抬高截断深度，67 帧全部 `anchor=component`，旧配置修复 6 帧、0 回归）；**TR-147 新增目标几何上限**（包围框最长边 × 球顶深度 ≤ 13 万 px·mm，挡「A4 纸叠等近处大平面被当目标」，离线复刻假目标全灭、真球零误伤）；**TR-148 该阈值配置化**（`maxExtentProduct`，≤ 0 = 禁用）；**TR-146（视觉页消费侧）存图与检测同帧 + 0 结果原因日志**。**阶段 3（真机调参）未做**——`targetArea` / `roi` / `depthZMin` / `depthZMax` 仍待按最终安装高度重定。⚠ **C6 已移出本批**——`vision.templatePath` 并非「无读点」，见 §七 M1。本文只定**怎么移植**；**接口契约**见 `algorithm_config_plan.md` §十一，**参数归属**见同篇 §四 / §五。
 > **关联**：`algorithm_config_plan.md`（§十一 接口契约、§十 已裁定项、§六 C1/C3/C4/C5）、`implementation_roadmap.md` §9.2 / §9.4 / §9.5（工期、来源、既有约束）、`hand_eye_calibration_plan.md`（真机标定；本算法**不做**坐标转换）、`doc/config.md`（键的 schema 落点）。
 
 ## 一、目标与范围
@@ -79,7 +79,7 @@
 | `vision.depthZMin` | 通用域 | double | `6.0` | mm | 有效深度下限。老项目为 `minDepthMm = 100`；⚠ 本仓现值 `6.0` 是按**仿真背景 600 mm** 定的，**真机装高后必须重定**（`implementation_roadmap.md` §9.5 项 3） |
 | `vision.depthZMax` | 通用域 | double | `496.0` | mm | 有效深度上限。老项目为 `maxDepthMm = 3000`；同上，真机重定 |
 | `vision.confidenceThreshold` | 通用域 | double | `0.85` | 0~1 | 置信度过滤阈值。⚠ **老实现从不过滤**（只输出 `confidence`）；本仓契约要求消费该键（§七 M1 说明风险） |
-| `…nearestPercentile` | 私有域 | double | `0.001` | — | **种子深度分位**（噪声稳健的最近深度，TR-144）：只用来定种子带 `nearest + 10 mm`，不再直接当顶层上限。代码内 `clamp(值, 0.001, 0.005)`——再大就会锚到背景面。**调参重点** |
+| `…nearestPercentile` | 私有域 | double | `0.001` | — | **全局分位锚点（仅防御性回退）**：2026-10-20 TR-144 起只用来定种子带 `nearest + 10 mm`；**2026-10-21 TR-145 起主路径改为「连通域级锚点」**，仅当逐层搜索达迭代上限（64 次 / 128 mm）仍找不到合格面片时才用它。代码内 `clamp(值, 0.001, 0.005)` |
 | `…heightBandMm` | 私有域 | double | `35.0` | mm | 最高层带厚；代码内实际用 `max(1.0, 值)`。**调参重点** |
 | `…apexPercentile` | 私有域 | double | `0.02` | — | **球顶面片比例**（TR-132，2026-10-16）：取连通域内**深度最小的这一比例**像素，其质心 ⇒ `pixelU`/`pixelV`、其均值深度 ⇒ `z`。代码内 `clamp(值, 0.005, 0.5)` 且面片至少 8 px。**调参重点**（取小 ⇒ 更贴真实最高点但 `z` 抖动大；取大 ⇒ 更稳但球顶被球面下拉）。真机 15 帧标定见 §八 14 |
 | `…minArea` | 私有域 | int | `120` | px² | 连通域面积下限（滤噪声） |
@@ -88,6 +88,7 @@
 | `…targetAreaTolerance` | 私有域 | int | `0` | px² | 目标面积容差；**0 = 自动取 `max(1, targetArea/2)`** |
 | `…morphKernelSize` | 私有域 | int | `7` | px | 形态学核（开 + 闭）；**偶数自动 +1**，`≤1` 时跳过形态学 |
 | `…edgeMargin` | 私有域 | int | `8` | px | 边缘过滤距离：中心点落在 `[margin, 边长−margin]` 之外则丢弃 |
+| `…maxExtentProduct` | 私有域 | double | `130000` | px·mm | **目标几何上限**（TR-148，2026-10-21）：包围框最长边 × 球顶深度超限即拒（挡「A4 纸叠等近处大平面被当目标」）。物理尺寸代理，对工作距离不敏感；**≤ 0 = 禁用**。标定依据见 §四 常量表注与 TR-147 |
 | `…roi` | 私有域 | object | `{x:0, y:0, w:0, h:0}` | px | 感兴趣区域；`w` 或 `h` ≤ 0 视为**全图**。⚠ 坐标系 = **深度图** |
 | `…templatePath` | 私有域 | string | `""` | — | 深度法**不使用**模板；随 M1 迁键保留空串 |
 
@@ -98,12 +99,15 @@
 | 量 | 值 | 位置 |
 | :--- | :--- | :--- |
 | 种子带厚 | `10.0 mm`（`kSeedBandMm`，TR-144：同一层目标的顶点高度容差） | `BuildSeeds` |
+| 锚点截断步长 | `2.0 mm`（`kAnchorStepMm`，TR-145：近→远逐层抬高截断深度） | `ComponentNearestDepth` |
+| 锚点迭代上限 | `64` 次（`kAnchorMaxIters`，≈ 128 mm；超出回退全局分位） | `ComponentNearestDepth` |
 | 种子最少像素 | `20`（`kSeedMinPixels`） | `BuildSeeds` |
 | 种子开运算核 | `3×3` 椭圆（`kSeedMorphKernel`，只开不闭） | `BuildSeeds` |
 | 目标顶层阈值 | `seed.minDepthMm + max(1.0, heightBandMm)`（TR-144：逐目标锚定，不再用全 ROI 分位） | `GrowSeedRegion` |
 | 球顶面片最少像素数 | `8`（`kApexMinPixels`，与 `apexPercentile` 取较大者） | `ComputeApex` |
 | 连通域最少有效像素 | `max(10, minArea / 4)` | `SelectRegions` |
 | 区域重叠上限 | 与已接受区域重叠 `> 50%` 视为同一片表面，丢弃（TR-144） | `SelectRegions` |
+| 目标几何上限 | **TR-148 起已配置化** → `vision.algorithms.DepthPuffAlgo.maxExtentProduct`（默认 `130000`，`≤ 0 = 禁用`；TR-147 引入时为硬编码 `kMaxBboxDepthProduct`） | `MeasureRegion` |
 | `score` 权重 | `confidence × 0.60 + nearScore × 0.25 + areaScore × 0.15` | `SelectRegions` |
 | `confidence` 权重 | `areaScore × 0.45 + stabilityScore × 0.35 + centerScore × 0.20` | `EstimateConfidence` |
 | `nearScore` | `1.0 / (1.0 + max(0.0, meanDepth − nearestDepthMm))` | `SelectRegions` |
@@ -116,6 +120,10 @@
 > ⚠ 上表 TR-135 的 5 项**刻意做成相对量**（除以 `dist.max()`）⇒ 与球径、安装高度、相机距离**无关**，换工位**无需重标定**；仅当改用**非球形**目标时才需重新审视。
 
 > **TR-144（2026-10-20）修订：顶层锚点改为「逐目标种子」。** 旧实现的顶层上限 = 全 ROI 有效深度分位 + 带厚；目标只占画面一小块时分位落到背景面，球与背景连成巨块（`depth_20261020152105_0`：绿框 579×406，球实际 91×102）。现改为：分位只定种子（最近层 10 mm 内的连通面片），每个种子按自己的最低深度 + `heightBandMm` 生长区域；贴 ROI 边界的种子丢弃；区域与已接受区域重叠过半则丢弃。`nearestPercentile` 默认值 `0.03` → `0.001`，钳位上限 `0.5` → `0.005`。
+
+> **TR-145（2026-10-21）修订：锚点改为「连通域级 + 面积/边界过滤后取最近」。** 全局分位没有「这块像素是不是一个像样的面片」的判断，ROI 内任何比目标更近的非目标物都能劫持它——实测 `depth_20261021091617_0`（球顶 586 mm）：ROI 右上角散热器 569~607 mm、18567 px、贴 ROI 右界，0.1% 分位 = 571 mm ⇒ 种子带 581 mm 够不到球顶 ⇒ `seeds=0`。**关键实现约束**：不能直接在原始 `validMask` 上做一次连通域——目标与承载面在 2D 上连通，永远是一个贴 ROI 边界的巨域，面积/边界过滤后一无所获（当前配置 62/67 帧如此）。正确做法是**从 ROI 全局最小有效深度起步、每次抬高 2 mm 在「有效且深度 ≤ cut」掩膜上做连通域**，取第一个面积 ≥ `max(kSeedMinPixels, minArea)` 且不贴 ROI 边界的连通域的**实际最低深度**。实测 67 帧平均 1.7 次、最多 5 次；旧配置下修复 6 帧、0 回归。全局分位降级为迭代上限内的**防御性回退**（日志 `anchor=component|percentile`）。
+>
+> **TR-147（2026-10-21）追加：目标几何上限（`MeasureRegion` 内）。** 场景无球但存在比球更近的大平面（A4 纸叠，~50 mm 厚）时，锚点**正常**捕获它（「最近物体」语义没错），但整个平面长成 21 万 px 巨域——`maxArea = 250000` 挡不住，峰切分后各子域 conf 0.70~0.73 全部越过 0.65 阈值 ⇒ 空场景报出 1~5 个假目标（`depth_20261021113117/113140_0`：17~26 种子 → 213~214k px 巨域）。深度法无外观信息，物理尺寸是唯一可靠判据：**包围框最长边 × 球顶深度 ≈ 物理尺寸 × fx，对工作距离不敏感**。实测真机：单球 ≤ 5.6 万、三球合并域 ≈ 8.6 万、纸叠假目标 ≥ 17.3 万 ⇒ 阈值 `130000`。在 `MeasureRegion` 内（`ComputeApex` 之后）对「整连通域」与「峰切分子区域」同一条路径生效。离线复刻验证：两帧假目标 3+1 个全灭（184k / 211k / 223k / 319k），真球帧 5+3 个候选零误伤。**TR-148（同日）配置化**：键 `maxExtentProduct`（默认 130000，**≤ 0 = 禁用**），纳入 `SnapshotParams` 实时读取与 `config loaded` 日志；换安装高度 / 球径须重新核算。
 
 ## 五、移植步骤
 

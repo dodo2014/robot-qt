@@ -92,6 +92,13 @@ struct AlgorithmParams
     int     targetAreaTolerance = 0;       // 容差；**0 = 自动取 max(1, targetArea/2)**
     int     morphKernelSize     = 7;       // 形态学核（开 + 闭）；偶数自动 +1，≤1 时跳过
     int     edgeMargin          = 8;       // 边缘过滤距离 px（深度系）
+
+    /// 目标几何上限（TR-148，2026-10-21；由 TR-147 硬编码 `kMaxBboxDepthProduct` 配置化）：
+    /// 候选包围框最长边(px) × 球顶深度(mm) 超过此值即拒——物理尺寸代理，对工作距离不敏感。
+    /// 实测真机：单球 ≤ 5.6 万、三球合并域 ≈ 8.6 万、A4 纸叠假目标 ≥ 17.3 万 ⇒ 默认 13.0 万。
+    /// ⚠ **≤ 0 = 禁用该过滤**（与 `targetArea = 0` 同风格）。换安装高度 / 球径须重新核算。
+    double  maxExtentProduct    = 130000.0;
+
     RoiRect roi;                           // 感兴趣区域；w/h ≤ 0 = 全图
 };
 
