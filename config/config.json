@@ -275,7 +275,7 @@
                 "nearestPercentile": 0.001,
                 "roi": {
                     "h": 610,
-                    "w": 900,
+                    "w": 800,
                     "x": 900,
                     "y": 70
                 },
@@ -285,8 +285,8 @@
             "SimAlgo": {}
         },
         "confidenceThreshold": 0.85,
-        "depthZMax": 618.0,
-        "depthZMin": 458.0,
+        "depthZMax": 700.0,
+        "depthZMin": 430.0,
         "templatePath": ""
     }
 }

@@ -31,6 +31,18 @@ public:
     // 未设置手眼矩阵时返回原值（单位阵退化，即假设相机系=基座标）。
     Pose CameraToRobot(double xc, double yc, double zc) const;
 
+    // 像素 + 深度(mm) → **相机系**坐标（只做内参反投影，不含手眼变换）。
+    //
+    // 2026-10-20 新增：视觉页结果表的 X/Y/Z 三列原本直读 `PuffResult::x/y`，
+    // 而 `DepthPuffAlgo` 按契约 §十 裁定 2 把 x/y **恒置 0** ⇒ 两列永远显示 0.0。
+    // 改为用本函数从 `pixelU/pixelV/z` 现算，使三列成为「像素 → 基座」的**中间量**，
+    // 可直接手算核对 `PixelToRobot` 的结果。
+    //
+    // 返回 false = 内参未设置或深度非法（≤0），此时输出参数不被写入。
+    // ⚠ 与 `PixelToRobot` **共用同一份公式**（后者内部即调用本函数），勿另写一份。
+    bool PixelToCamera(int u, int v, double depthMm,
+                       double* xc, double* yc, double* zc) const;
+
     // 像素 + 深度(mm) → 机器人基座标（内参 + 手眼两步）。
     // 内参未设置或深度非法(≤0) 返回零位 Pose。
     Pose PixelToRobot(int u, int v, double depthMm) const;

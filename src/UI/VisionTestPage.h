@@ -112,6 +112,10 @@ private:
     bool ToBase(const PuffResult& r, Pose* out);
     // 装载手眼矩阵 + 刷新内参（内参不变则不重设，避免每帧刷日志）。
     bool EnsureCoordReady();
+    // 只刷新内参（不要求手眼矩阵已装载，2026-10-20）。
+    // 结果表的 X/Y/Z 三列是**相机系**反投影值，只需要内参——手眼矩阵缺失时它们
+    // 仍应显示（基座三列才显示 `--`）。`EnsureCoordReady` 内部复用本函数。
+    bool EnsureIntrinsicsReady();
     // 三路存图入队（异步，走 FrameSaver 线程）。抽成函数是因为「单次检测自动存图」
     // 与「保存当前帧」两处都要按同一组开关各存一路。
     // ⚠ `tsMs`：本拍存图的统一时间戳（epoch ms）——同一拍的三路必须共用同一个值，

@@ -1040,7 +1040,7 @@ bool SequenceWorker::StepRunner(RunnerState& r)
             const auto& best = results.front();
             // C1（2026-10-13）：识别分支改走 `PixelToRobot` —— 像素 + 深度 → 内参反投影 →
             // 手眼变换。改动前直接吃算法给的 `best.x/y/z`，而算法用的是**硬编码内参**
-            // （`SimAlgo.cpp:53-56`：fx=fy=520、cx=w/2、cy=h/2）⇒ `x/y` 带一个乘性误差，
+            // （`SimAlgo.cpp:61-64`：fx=fy=520、cx=w/2、cy=h/2）⇒ `x/y` 带一个乘性误差，
             // 而手眼平移 `t` 是加性常数，**任何 t 都吸收不掉**（`hand_eye_calibration_plan.md`
             // §五 前置项 1；`algorithm_config_plan.md` §3.3 / §六 C2）。
             //
@@ -1048,7 +1048,7 @@ bool SequenceWorker::StepRunner(RunnerState& r)
             //   ① `MainWindow.cpp:244` 启动即调 `ReloadFromConfig`，而内参是在
             //      `pipeline_->start(cfg)` **之后**才赋值（`OrbbecCamera.cpp:387`）⇒ 那一刻
             //      `fx == 0`，`PixelToRobot` 会因 `fx_ <= 0` 直接返回零位 `Pose`
-            //      （`CoordTransform.cpp:64-69`）——即方案 §5.1 的 C3；
+            //      （`CoordTransform.cpp:66-67`）——即方案 §5.1 的 C3；
             //   ② 内参**随流分辨率变**（`OrbbecCamera.cpp:396-397` 连 width/height 一起写入），
             //      不可启动时缓存一次——即 C4。
             // 取内参 / 写 coord / 换算**整体在主线程**执行：`coord` 的写者（`ReloadFromConfig`）

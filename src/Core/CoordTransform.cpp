@@ -53,24 +53,35 @@ Pose CoordTransform::CameraToRobot(double xc, double yc, double zc) const
     return out;
 }
 
-// 像素 + 深度 → 机器人基座标（内参反投影 + 手眼两步）。
+// 像素 + 深度 → **相机系**坐标（只做内参反投影）。
 // 小孔成像反投影（针孔模型）：以光心为原点，u/v 相对主点 (cx,cy) 的偏移
 // 除以焦距 fx/fy 得到归一化方向，再乘深度 depthMm 得到相机系坐标：
 //   xc = (u − cx) × depth / fx     （像素列差 → mm）
 //   yc = (v − cy) × depth / fy     （像素行差 → mm）
 //   zc = depth                     （深度方向即相机光轴方向）
-Pose CoordTransform::PixelToRobot(int u, int v, double depthMm) const
+// ⚠ 本函数是**唯一**的反投影实现，`PixelToRobot` 复用它（2026-10-20 抽出）。
+bool CoordTransform::PixelToCamera(int u, int v, double depthMm,
+                                   double* xc, double* yc, double* zc) const
 {
     if (fx_ <= 0.0 || fy_ <= 0.0 || depthMm <= 0.0)
+        return false;   // 内参未设置 / 深度无效，输出参数保持调用方原值
+
+    if (xc) *xc = (static_cast<double>(u) - cx_) * depthMm / fx_;   // 像素列偏移换算为 X (mm)
+    if (yc) *yc = (static_cast<double>(v) - cy_) * depthMm / fy_;   // 像素行偏移换算为 Y (mm)
+    if (zc) *zc = depthMm;                                         // 深度即相机系 Z (mm)
+    return true;
+}
+
+// 像素 + 深度 → 机器人基座标（内参反投影 + 手眼两步）。
+Pose CoordTransform::PixelToRobot(int u, int v, double depthMm) const
+{
+    double xc = 0.0, yc = 0.0, zc = 0.0;
+    if (!PixelToCamera(u, v, depthMm, &xc, &yc, &zc))
     {
         // fx_/fy_ 为 0 表示内参未设置（无标定数据），depthMm ≤ 0 表示深度无效
         SPDLOG_WARN("[CoordTransform] Camera intrinsics not set or invalid depth {}", depthMm);
         return {};
     }
-
-    double xc = (static_cast<double>(u) - cx_) * depthMm / fx_;   // 像素列偏移换算为 X (mm)
-    double yc = (static_cast<double>(v) - cy_) * depthMm / fy_;   // 像素行偏移换算为 Y (mm)
-    double zc = depthMm;                                         // 深度即相机系 Z (mm)
 
     return CameraToRobot(xc, yc, zc);   // 第二步：相机系 → 机器人基座标
 }

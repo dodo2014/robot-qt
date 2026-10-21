@@ -15,7 +15,7 @@
 | :--- | :--- | :--- |
 | 1 | **「按算法名命名空间化」应做** | 真正的问题是**调用方知道算法私有键名**（`HardwareManager.cpp:161-163` 手工拼 JSON），不是「配置放在哪个文件」。命名空间化能用零基础设施成本解决它 |
 | 2 | **「单独配置文件」暂不做** | 触发条件（`config_ownership_plan.md` §6.1）未满足；分文件的代价（同文 §6.3）与收益不成比例。**「一个算法一个文件」尤其不做** |
-| 3 | **内参不进算法，也不进算法配置** | 算法只输出**像素 + 深度**；XY 由下游 `PixelToRobot(u, v, z)` 用真实内参反投影（`CoordTransform.cpp:62-76`，**已实现、全仓无调用者**）。内参的唯一所有者是相机 |
+| 3 | **内参不进算法，也不进算法配置** | 算法只输出**像素 + 深度**；XY 由下游 `PixelToRobot(u, v, z)` 用真实内参反投影（`CoordTransform.cpp:63-87`，**已实现、全仓无调用者**）。内参的唯一所有者是相机 |
 | 4 | **接口契约须先冻结**（2026-10-13 补） | 算法同事暂无法交付 ⇒ 现阶段由我方实现（移植 `CPuffLocator` 深度法），**但将来由同事以「独立程序」形态重写** ⇒ 输入 / 输出格式必须先定死，换实现只替换一个**适配器**，`SequenceWorker` / 视觉页 / `CoordTransform` **零改动**（§十一） |
 
 ⚠ **结论 3 是本方案最容易被写反的一处**：直觉上会认为「算法要出 `x/y`，所以要把 `fx/fy` 喂给算法」。本项目**已经为此准备好了正确通路**——`PixelToRobot` 就是「像素 + 深度 → 基座坐标（内参 + 手眼两步）」，只是没人调用它。走它，算法就完全不必知道内参。
@@ -73,10 +73,10 @@
 | 项 | 事实 | 依据 |
 | :--- | :--- | :--- |
 | 算法侧无内参字段 | `AlgorithmParams` 只有 `confidenceThreshold` / `depthZMin` / `depthZMax` | `IPuffAlgorithm.h:28-33` |
-| 算法用假内参 | `SimAlgo::Detect` 硬编码 `fx = fy = 520.0`、`cx = w/2`、`cy = h/2` | `SimAlgo.cpp:53-56` |
+| 算法用假内参 | `SimAlgo::Detect` 硬编码 `fx = fy = 520.0`、`cx = w/2`、`cy = h/2` | `SimAlgo.cpp:61-64` |
 | 假内参**恰好等于**仿真相机内参 | `SimCamera` 的内参同为 `fx = fy = 520.0`、`cx/cy = w/2, h/2` | `SimCamera.cpp:27-30` |
 | 相机能给出真内参 | `OrbbecCamera` 从彩色 profile 取 `fx/fy/cx/cy` + 畸变系数 | `OrbbecCamera.cpp:387-397` |
-| **正确的下游通路已存在** | `CoordTransform::PixelToRobot(u, v, depthMm)`：像素 + 深度 → 内参反投影 → 手眼变换 → 基座坐标 | `CoordTransform.cpp:62-76` |
+| **正确的下游通路已存在** | `CoordTransform::PixelToRobot(u, v, depthMm)`：像素 + 深度 → 内参反投影 → 手眼变换 → 基座坐标 | `CoordTransform.cpp:63-87` |
 | **但没人调用** | `PixelToRobot` / `SetCameraIntrinsics` / `ICamera::GetIntrinsics()` 全仓无生产调用者 | 全仓 `grep`（2026-10-12） |
 | 当前实际调用的是**另一半** | `SequenceWorker.cpp:1035` 走 `CameraToRobot(best.x, best.y, best.z)`——**消费算法用假内参算出的 `x/y`** | `SequenceWorker.cpp:1035` |
 

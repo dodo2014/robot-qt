@@ -702,15 +702,22 @@ QWidget* VisionTestPage::CreateQuadArea()
     //     + 追加「耗时 ms」= 11 列（2026-10-19 起为 14 列，见下方追加说明）
     // 2026-10-19：再追加「基座 X/Y/Z」3 列 = 14 列，且**排在最前**——本页 2×2 四宫格里
     // 这张表必然横向滚动，把最关心的基座坐标放在默认视口内，否则每次都要拖滚动条。
-    // ⚠ 原「X/mm Y/mm」两列在深度法下**恒为 0**（`DepthPuffAlgo.cpp:771-772`），
-    //   「Z/mm」是**相机系深度**——这三列都不是基座坐标，别混读（TR-132 / 手眼方案 §5.1 末条）。
+    // ⚠ 原「X/mm Y/mm」两列在深度法下**恒为 0**（`DepthPuffAlgo.cpp:771-772` 按契约
+    //   §十 裁定 2 不产出相机系 x/y）。2026-10-20 起这三列改为**本页用内参现算**的
+    //   相机系坐标（`CoordTransform::PixelToCamera`），不再是算法原始输出 ——
+    //   三列仍**不是基座坐标**，别与左边三列混读（TR-132 / 手眼方案 §5.1 末条）。
     resultTable_->setColumnCount(14);
+    // ⚠ 列序**必须**与 `ShowResults` 的 `set(col, …)` 一致（2026-10-20 用户报障：
+    //   「U/V/宽/高 的数据显示到 V/宽/高/偏航 列里去了」）。TR-136 加三列时把「偏航/°」
+    //   误挪到末尾，而填充代码仍按原顺序（偏航在 U 之前）写 ⇒ 从 U 列起整体右移一格。
+    //   原始 11 列的顺序就是「… Z/mm、偏航/°、U、V、宽、高、耗时ms」，此处照原样保留。
     resultTable_->setHorizontalHeaderLabels({
         QStringLiteral("序号"), QStringLiteral("置信度"),
         QStringLiteral("基座X"), QStringLiteral("基座Y"), QStringLiteral("基座Z"),
         QStringLiteral("X/mm"), QStringLiteral("Y/mm"), QStringLiteral("Z/mm"),
+        QStringLiteral("偏航/°"),
         QStringLiteral("U"), QStringLiteral("V"), QStringLiteral("宽"), QStringLiteral("高"),
-        QStringLiteral("偏航/°"), QStringLiteral("耗时ms")
+        QStringLiteral("耗时ms")
     });
     resultTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     resultTable_->horizontalHeader()->setStretchLastSection(true);
@@ -718,8 +725,9 @@ QWidget* VisionTestPage::CreateQuadArea()
     // 逐列宽度（2026-10-19）：`setDefaultSectionSize` 只对「之后新建的 section」生效，
     // 而这里 14 列是先 `setColumnCount` 建好再设的 ⇒ 不能依赖它。12 px 字体下
     // 5 字符（"238.2" / "92.3%"）≈ 34 px，加左右各 4 px padding ⇒ 48 px 是下限，这里留余量。
+    // ⚠ 顺序与上面的表头一一对应（2026-10-20 随表头重排同步调整：偏航=56 挪到 index 8）。
     {
-        const int kColWidths[14] = {44, 62, 62, 62, 62, 56, 56, 56, 46, 46, 44, 44, 56, 62};
+        const int kColWidths[14] = {44, 62, 62, 62, 62, 56, 56, 56, 56, 46, 46, 44, 44, 62};
         for (int i = 0; i < 14; ++i) resultTable_->setColumnWidth(i, kColWidths[i]);
     }
     resultTable_->verticalHeader()->setVisible(false);
@@ -1377,6 +1385,9 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elap
     const bool wasUpdatesEnabled = resultTable_->updatesEnabled();
     resultTable_->setUpdatesEnabled(false);
 
+    // 相机系三列（X/Y/Z）需要内参：先确保内参已刷新（不要求手眼矩阵）。
+    EnsureIntrinsicsReady();
+
     for (int i = 0; i < n; ++i) {
         const auto& r = results[i];
         auto set = [&](int col, const QString& text) {
@@ -1404,9 +1415,21 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elap
             set(4, QStringLiteral("--"));
         }
 
-        set(5, QString::number(r.x, 'f', 1));
-        set(6, QString::number(r.y, 'f', 1));
-        set(7, QString::number(r.z, 'f', 1));
+        // 相机系坐标（2026-10-20）：**不再直读 `r.x` / `r.y`** —— 深度法按契约 §十
+        // 裁定 2 把二者恒置 0，直读只会显示 0.0（用户报障）。改为用 `pixelU/pixelV/z`
+        // + 内参现算，与 `PixelToRobot` 共用 `PixelToCamera` 同一份公式 ⇒ 这三列就是
+        // 「像素 → 基座」的中间量，可手算核对。`zc` 数值恒等于 `r.z`（深度即相机系 Z）。
+        // 不可用时显式 `--`（同基座三列的约定：「算不出」与「算出来是 0」必须能区分）。
+        double xc = 0.0, yc = 0.0, zc = 0.0;
+        if (coord_.PixelToCamera(r.pixelU, r.pixelV, r.z, &xc, &yc, &zc)) {
+            set(5, QString::number(xc, 'f', 1));
+            set(6, QString::number(yc, 'f', 1));
+            set(7, QString::number(zc, 'f', 1));
+        } else {
+            set(5, QStringLiteral("--"));
+            set(6, QStringLiteral("--"));
+            set(7, QStringLiteral("--"));
+        }
         set(8, QString::number(r.yaw, 'f', 1));
         set(9, QString::number(r.pixelU));
         set(10, QString::number(r.pixelV));
@@ -1418,13 +1441,12 @@ void VisionTestPage::ShowResults(const QVector<PuffResult>& results, double elap
     resultTable_->setUpdatesEnabled(wasUpdatesEnabled);
 }
 
-// 装载状态 + 内参刷新（2026-10-19）。内参不变时不重设——`SetCameraIntrinsics` 每次都打
-// 一行 INFO，连续检测 15 fps 会把日志冲掉。
+// 内参刷新（2026-10-19；2026-10-20 从 `EnsureCoordReady` 拆出）。内参不变时不重设——
+// `SetCameraIntrinsics` 每次都打一行 INFO，连续检测 15 fps 会把日志冲掉。
 // ⚠ 内参在 `pipeline_->start` 之后才有值（`OrbbecCamera.cpp:387`），启动瞬间 `fx == 0`，
 //   此时返回 false 让调用方显示 `--`，而不是拿 0 去算出一个零位 Pose。
-bool VisionTestPage::EnsureCoordReady()
+bool VisionTestPage::EnsureIntrinsicsReady()
 {
-    if (!coordMatrixLoaded_) return false;
     auto* cam = HardwareManager::instance().camera();
     if (!cam) return false;
 
@@ -1440,11 +1462,19 @@ bool VisionTestPage::EnsureCoordReady()
     return true;
 }
 
+bool VisionTestPage::EnsureCoordReady()
+{
+    // 手眼矩阵只影响「相机系 → 基座」这一步；反投影（相机系）只要有内参即可算，
+    // 故两者拆开：缺手眼矩阵时基座三列显示 `--`，相机系三列照常显示。
+    if (!coordMatrixLoaded_) return false;
+    return EnsureIntrinsicsReady();
+}
+
 bool VisionTestPage::ToBase(const PuffResult& r, Pose* out)
 {
     if (!out || !EnsureCoordReady()) return false;
     // 深度无效（0 或负）直接判不可用：`PixelToRobot` 遇 `depthMm <= 0` 会返回零位 `Pose`
-    // 并打 WARN（`CoordTransform.cpp:64-69`），连续检测下会刷屏，且零位不是"目标在原点"。
+    // 并打 WARN（`CoordTransform.cpp:66-67`），连续检测下会刷屏，且零位不是"目标在原点"。
     if (r.z <= 0.0) return false;
     *out = coord_.PixelToRobot(r.pixelU, r.pixelV, r.z);
     return true;

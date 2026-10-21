@@ -32,7 +32,7 @@
 | UI 入口   | **无**——`src/UI/` 全仓 `grep` 不到 `handEye`；`ConfigPage` 只有运动学 L1/L2/z0/h1 与 TCP XYZ                                                    | 全仓核实（2026-10-12）                                       |
 | 生效时机    | 直接编辑 `config.json` **需重启**——`ConfigManager::getValue` 读的是内存 `root_`                                                                 | `AGENTS.md` Config 节                                   |
 | 内参链路    | `CoordTransform::SetCameraIntrinsics` 与 `PixelToRobot` **全仓无任何调用者**；`ICamera::GetIntrinsics()` 同样无生产调用者                             | 全仓 `grep` 核实（2026-10-12）                               |
-| 现行算法    | 唯一实现 `SimAlgo` 用**硬编码假内参** `fx = fy = 520.0`、`cx = w/2`、`cy = h/2`                                                                  | `src/HAL/algorithm/SimAlgo.cpp:53-56,142-143`          |
+| 现行算法    | 唯一实现 `SimAlgo` 用**硬编码假内参** `fx = fy = 520.0`、`cx = w/2`、`cy = h/2`                                                                  | `src/HAL/algorithm/SimAlgo.cpp:61-64,155-156`          |
 | 相机      | Orbbec Gemini 336，SN `CP9KB530005S`，`d2cAlign = "SW"`（软件对齐）                                                                         | `config/config.json`；TR-099                            |
 
 > ⚠ **「Z 参考面」的口径（2026-10-15 澄清）**
@@ -167,12 +167,12 @@ src/Logic/SequenceWorker.cpp:1035
 而唯一的算法实现 `SimAlgo` 用**硬编码假内参**：
 
 ```
-src/HAL/algorithm/SimAlgo.cpp:53-56
+src/HAL/algorithm/SimAlgo.cpp:61-64
     const double cx = w * 0.5;
     const double cy = h * 0.5;
     const double fx = 520.0;
     const double fy = 520.0;
-src/HAL/algorithm/SimAlgo.cpp:142-143
+src/HAL/algorithm/SimAlgo.cpp:155-156
     res.x = (res.pixelU - cx) / fx * z;
     res.y = (res.pixelV - cy) / fy * z;
 ```
@@ -209,14 +209,14 @@ src/HAL/algorithm/SimAlgo.cpp:142-143
 
 > ⚠ **这是标定的前置，不是标定完成后的收尾**——不改它，标定采到的 `x_c / y_c` 与运行期用的不是同一组内参，§七 的残差判据必然超差。
 >
-> **状态变更（2026-10-13）**：用户 2026-10-12 原要求「标定完成后再动」，**2026-10-13 改为提前实施**。可提前的三条依据：① 改动**不依赖相机**——无相机时识别分支在更早处（`:990-997`）就退回模拟延时，这段代码根本执行不到；② 相机就位后**行为等价**于改造前（`SimCamera` 内参 `fx=fy=520`、`cx/cy = w/2,h/2` 与 `SimAlgo.cpp:53-56` 逐项相同）；③ 它本就是标定作业的前置，先做掉，标定完成时只剩「填矩阵 + 重启」。已通过 Debug/Release 双编译 + 两次 Sim 冒烟（`Initialize complete` 递增、无 `[error]`）。
+> **状态变更（2026-10-13）**：用户 2026-10-12 原要求「标定完成后再动」，**2026-10-13 改为提前实施**。可提前的三条依据：① 改动**不依赖相机**——无相机时识别分支在更早处（`:990-997`）就退回模拟延时，这段代码根本执行不到；② 相机就位后**行为等价**于改造前（`SimCamera` 内参 `fx=fy=520`、`cx/cy = w/2,h/2` 与 `SimAlgo.cpp:61-64` 逐项相同）；③ 它本就是标定作业的前置，先做掉，标定完成时只剩「填矩阵 + 重启」。已通过 Debug/Release 双编译 + 两次 Sim 冒烟（`Initialize complete` 递增、无 `[error]`）。
 
 | # | 文件 / 位置 | 改动 | 必要性 |
 | :--- | :--- | :--- | :--- |
 | C1 | `src/Logic/SequenceWorker.cpp` 识别分支（`:1034-1055`） | 分支内用 `InMainThread` 取 `camera->GetIntrinsics()` → `impl_->coord.SetCameraIntrinsics(...)`；把原 `CameraToRobot(best.x, best.y, best.z)` 改为 `PixelToRobot(best.pixelU, best.pixelV, best.z)` | ✅ 已实施 |
 | C1b | 同上（本次新增，不在原清单内） | 补一条**标定读数行** `[SequenceWorker] Vision calib: pixel(u,v) depth=… intr(fx,fy,cx,cy)`。原日志的 `cam(x,y,z)` 是**算法**给的 `best.x/y/z`（用算法内部内参），真机上不可直接用于标定；本行给出反投影的**全部原始量**（像素 + 实际参与换算的内参 + 深度）⇒ 可离线复算，且与运行期同源。§6.1 的 `x_c / y_c` 由此得来 | ✅ 已实施 |
-| C2 | `src/HAL/camera/OrbbecCamera.cpp:407` | 取到内参处补一条 `SPDLOG_INFO`（原**从不打印**，UI 也不显示 ⇒ 现场看不到真实 `fx/fy/cx/cy`） | ✅ 已实施 |
-| C3 | 同上 C1 处（约束） | ⚠ **不能**在 `ReloadFromConfig` 里取内参：`MainWindow.cpp:244` 启动时即调用它，而内参是在 `pipeline_->start(cfg)` **之后**才赋值（`OrbbecCamera.cpp:387`）⇒ 那一刻 `intrinsics_.fx == 0`，`PixelToRobot` 会因 `fx_ <= 0` 直接返回零位 `Pose`（`CoordTransform.cpp:64-69`） | 约束（已固化在 C1 注释） |
+| C2 | `src/HAL/camera/OrbbecCamera.cpp:403` | 取到内参处补一条 `SPDLOG_INFO`（原**从不打印**、UI 也不显示 ⇒ 现场看不到真实 `fx/fy/cx/cy`） | ✅ 已实施 |
+| C3 | 同上 C1 处（约束） | ⚠ **不能**在 `ReloadFromConfig` 里取内参：`MainWindow.cpp:244` 启动时即调用它，而内参是在 `pipeline_->start(cfg)` **之后**才赋值（`OrbbecCamera.cpp:387`）⇒ 那一刻 `intrinsics_.fx == 0`，`PixelToRobot` 会因 `fx_ <= 0` 直接返回零位 `Pose`（`CoordTransform.cpp:66-67`） | 约束（已固化在 C1 注释） |
 | C4 | 同上 C1 处（约束） | ⚠ 内参**随流分辨率变**（`OrbbecCamera.cpp:396-397` 连 `width/height` 一起写入）⇒ 须**每次识别时取**，不可启动时取一次缓存 | 约束（已固化在 C1 注释） |
 | C5 | `src/UI/ConfigPage.cpp` | 补 `handEyeMatrix` 编辑入口（现无 UI 入口，只能改文件 + 重启）；走 `paramsChanged` → `ReloadFromConfig` 即时生效 | 可选（未做） |
 | C6 | `src/Logic/SequenceWorker.cpp` `ReloadFromConfig` 末尾 | 补一条手眼矩阵值的日志（现只打 `Kinematics reloaded`，不含矩阵值） | 可选（未做） |
