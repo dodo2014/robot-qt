@@ -4,11 +4,17 @@
 #include <QString>
 #include <QStringList>
 
-// ⚠ 枚举值**只能追加在末尾**：`type` 在 `process.json` 里是**整数持久化**的（现有 0~4），
+// ⚠ 枚举值**只能追加在末尾**：`type` 在 `process.json` 里是**整数持久化**的（现有 0~6），
 // 插在中间会让所有已保存方案的动作类型静默错位（详见 doc/vision_guide_action_plan.md §三）。
-// 新增类型须同步三处：本枚举 / ProcessManager.cpp 的 actionTypeName / ProcessPage.cpp 的
-// 类型下拉项（**下拉框索引直接就是枚举值**，两处硬编码列表都要改）。
-enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide };
+// 新增类型须同步五处：本枚举 / ProcessManager.cpp 的 actionTypeName / ProcessManager.cpp 的
+// resourceKeysOf（组内并发资源互斥）/ ProcessManager.cpp 的 readNode + writeNode（`process.json`
+// 往返）/ ProcessPage.cpp 的类型下拉项（**下拉框索引直接就是枚举值**，两处硬编码列表都要改）。
+// 漏了 resourceKeysOf 会让「上下移动 + 移动」同组时争用 `Axis_Z` 不被拦截。
+// ⚠ 另须核对 ProcessPage.cpp 的 `kGroupPageIndex`（stack 索引 = `type + 1`，分组页必须排在
+//   所有动作页之后并随类型数量顺延；`ZMove` 落地时已由 7 改为 8）。
+// ⚠ `ZMove = 6` 占用了 `doc/third_party_integration_plan.md` 曾预留的 `Capture = 6`；
+//   该篇状态为 ⏳ 未实施，重启该篇时改取 `7`（其余改动点同本篇，不涉及其它代码）。
+enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide, ZMove };
 
 // 节点类型（P6，doc/action_tree_concurrency_plan.md §7.1）。
 // **刻意不进 `ActionType` 枚举**：① `type` 是整数持久化的，插值会让既有方案错位；
@@ -85,6 +91,16 @@ struct ActionData {
     // 默认 179.9 而非 180：R 物理停在 180° 附近时读数会在 {179.9, 180, -179.9} 之间跳动，
     // 179.9 离 ±180 回绕奇点稍远，读数更稳（§七）。
     double guideR = 179.9;
+
+    // ---- 上下移动（ZMove = 6，2026-10-22）----
+    // 语义：**以当前位姿为起点、只动逻辑轴 `Axis_Z`**，J1/J2/R 保持不变（不经过 IK，
+    // 也不存在双解歧义）。距离恒为正值，方向由 `zMoveUp` 决定。
+    //
+    // ⚠ 坐标系选择：走 `Axis_Z`（= `PointData.j3` 的坐标系：回零后 0、向下为负 ⇒ 上移 = +）。
+    // 与末端高度 `Pose.z` 之间是**固定偏移**，做**相对**位移时两者等价；选 `Axis_Z` 的唯一
+    // 好处是「不动其它轴、不需要 IK」，故落点定为轴坐标，**不要**改成先 FK 再 IK。
+    bool   zMoveUp = true;          // true = 上移（+Z），false = 下移（−Z）
+    double zMoveDistance = 10.0;    // mm，恒正；执行期 ≤ 0 直接拒绝（不静默跳过）
 
     bool isGroup() const { return nodeType == NodeType::Group; }
 };

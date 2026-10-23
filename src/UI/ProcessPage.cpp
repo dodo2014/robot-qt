@@ -1,6 +1,7 @@
 #include "ProcessPage.h"
 #include "ProcessManager.h"
 #include "KinematicsHelper.h"
+#include "HAL/core/AxisMap.h"
 #include "HAL/core/HardwareManager.h"
 #include "Logic/SequenceWorker.h"
 
@@ -87,10 +88,12 @@ QString NodeLabel(const ActionData& n)
         .arg(n.id).arg(ProcessManager::actionTypeName(n.type)).arg(n.name);
 }
 
-// 详情页索引：0=占位，1..6 = ActionType + 1，7 = 分组页。
+// 详情页索引：0=占位，1..7 = ActionType + 1，8 = 分组页。
 // ⚠ 分组页**必须存在**：RefreshNodeDetail 用 `static_cast<int>(type) + 1` 当 stack 索引，
 // 缺页时 setCurrentIndex 越界会被 Qt 静默忽略 → 界面停留在上一个节点的面板上（错显）。
-constexpr int kGroupPageIndex = 7;
+// ⚠ 分组页**必须排在所有动作页之后**：新增动作类型会顺延 ActionType+1，分组页索引须同步 +1
+// （`ZMove = 6` 落地时由 7 改为 8，见 doc/z_move_action_plan.md）。
+constexpr int kGroupPageIndex = 8;
 
 // 节点在给定列表里的下标（-1 = 不在其中）
 int IndexInList(const QVector<ActionData>& list, int id)
@@ -705,8 +708,53 @@ void ProcessPage::SetupUI()
     vgf->addRow(guideSaveLayout);
     m_detailStack->addWidget(visionGuidePage);
 
-    // Page 7: Group（P6 §八 第 8 项）——分组没有动作参数，只有编号 / 名称 / 子动作清单
-    // 与组内并发校验结果。索引由 kGroupPageIndex 固定（= 7）。
+    // Page 7: ZMove（上下移动，ActionType::ZMove = 6，2026-10-22）
+    // 语义：以**当前位姿**为起点、只动逻辑轴 `Axis_Z`，J1/J2/R 保持不变（不经过 IK）。
+    // ⚠ 这一页**必须存在**且**排在分组页之前**：`RefreshNodeDetail` 用 `static_cast<int>(type)+1`
+    //   当 stack 索引，缺页时 `setCurrentIndex(7)` 越界被 Qt 静默忽略 → 界面停在**上一个节点的
+    //   面板**上；若误放在分组页之后，索引 7 会落到分组页，显示成「分组详情」。
+    auto* zMovePage = new QWidget();
+    auto* zmf = makeFormPage(zMovePage);
+
+    m_zMoveDirCombo = new QComboBox();
+    m_zMoveDirCombo->addItems({ QStringLiteral("上移"), QStringLiteral("下移") });
+    m_zMoveDirCombo->setFixedHeight(30);
+    m_zMoveDirCombo->setStyleSheet(comboStyle);
+    zmf->addRow(makeLabel(QStringLiteral("移动方向")), m_zMoveDirCombo);
+
+    // 距离恒为**正值**（方向由上面的下拉决定，不进数值）。范围取 0.01~500 mm：
+    // 下限 0.01 让「距离为 0」在 UI 上不可构造（执行期仍会再拦一次）；上限 500 mm 远大于
+    // Z 轴行程，真正的边界由软限位在执行前拦（越界直接拒绝，不静默改写目标）。
+    m_zMoveDistanceSpin = new QDoubleSpinBox();
+    m_zMoveDistanceSpin->setRange(0.01, 500.0);
+    m_zMoveDistanceSpin->setDecimals(2);
+    m_zMoveDistanceSpin->setSingleStep(1.0);
+    m_zMoveDistanceSpin->setSuffix(QStringLiteral(" mm"));
+    m_zMoveDistanceSpin->setFixedHeight(30);
+    m_zMoveDistanceSpin->setFixedWidth(140);
+    m_zMoveDistanceSpin->setAlignment(Qt::AlignRight);
+    m_zMoveDistanceSpin->setStyleSheet(spinStyle);
+    zmf->addRow(makeLabel(QStringLiteral("移动距离")), m_zMoveDistanceSpin);
+
+    auto* zmHint = makeLabel(QStringLiteral(
+        "以执行到本动作时的**当前位置**为起点，只动 Z 轴；J1/J2/R 保持不变。\n"
+        "目标 Z 超出轴 Z 软限位时**拒绝执行并报错**（不会自动夹到限位）。\n"
+        "本动作是相对位移，运行失败时不会自动重试（重试会重复走一遍距离）。"));
+    zmHint->setWordWrap(true);
+    zmf->addRow(zmHint);
+
+    auto* zmSaveLayout = new QHBoxLayout();
+    zmSaveLayout->addStretch();
+    auto* zmSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    zmSaveBtn->setStyleSheet(saveBtnStyle);
+    zmSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(zmSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    zmSaveLayout->addWidget(zmSaveBtn);
+    zmf->addRow(zmSaveLayout);
+    m_detailStack->addWidget(zMovePage);
+
+    // Page 8: Group（P6 §八 第 8 项）——分组没有动作参数，只有编号 / 名称 / 子动作清单
+    // 与组内并发校验结果。索引由 kGroupPageIndex 固定（= 8）。
     auto* groupPage = new QWidget();
     auto* gpf = makeFormPage(groupPage);
     m_groupInfoLabel = new QLabel();
@@ -943,10 +991,12 @@ void ProcessPage::RefreshNodeDetail(int nodeId)
         m_detailStack->setCurrentIndex(stackIdx);
 
     // 视觉引导也走两段移动动作，速度百分比同样生效 → 一并显示（P5）
+    // 上下移动同理：只动一根轴，速度百分比直接乘到 `Axis_Z` 的最大速度上
     bool hasSpeedPercent = (node->type == ActionType::Move ||
                             node->type == ActionType::Extrude ||
                             node->type == ActionType::Gripper ||
-                            node->type == ActionType::VisionGuide);
+                            node->type == ActionType::VisionGuide ||
+                            node->type == ActionType::ZMove);
     m_speedPercentRow->setVisible(hasSpeedPercent);
     if (hasSpeedPercent) {
         m_speedPercentSpin->setValue(node->speedPercent);
@@ -1024,6 +1074,12 @@ void ProcessPage::RefreshNodeDetail(int nodeId)
         m_guideOffsetZSpin->setValue(node->offsetZ);
         m_guideRSpin->setValue(node->guideR);
         UpdateGuidePreview();
+        break;
+    case ActionType::ZMove:
+        // 方向下拉与距离框都按**存盘值**回填；距离下限 0.01 mm 会把「缺失键落到 0」的
+        // 异常数据抬到下限，与执行期「≤ 0 拒绝」的判据不冲突（执行期读的是内存值）。
+        m_zMoveDirCombo->setCurrentIndex(node->zMoveUp ? 0 : 1);
+        m_zMoveDistanceSpin->setValue(node->zMoveDistance > 0.0 ? node->zMoveDistance : 0.01);
         break;
     }
 }
@@ -1588,7 +1644,7 @@ void ProcessPage::OnNewAction()
     auto* typeCombo = new QComboBox();
     // ⚠ 本列表的**索引直接就是 ActionType 枚举值**（见下方 static_cast<ActionType>(currentIndex())），
     // 故顺序必须与 ProcessManager.h 的枚举严格一致，新增类型只能**追加在末尾**。
-    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导") });
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动") });
     typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
     // ---- 防呆（§八 第 5 项，落点就在这一处 typeCombo）----
     // 按**父分组已占用的资源集合**对冲突类型置灰（§六：按资源互斥，不按类型）。
@@ -1798,7 +1854,7 @@ void ProcessPage::OnEditAction()
     auto* typeCombo = new QComboBox();
     // ⚠ 本列表的**索引直接就是 ActionType 枚举值**（见下方 static_cast<ActionType>(currentIndex())），
     // 故顺序必须与 ProcessManager.h 的枚举严格一致，新增类型只能**追加在末尾**。
-    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导") });
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动") });
     typeCombo->setCurrentIndex(static_cast<int>(node->type));
     typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
     // 防呆（§八 第 5 项）：在分组内编辑时，按**排除自身后**的已占用资源对冲突类型置灰
@@ -2022,6 +2078,44 @@ void ProcessPage::OnTeachRead()
                 hw.GetPosition(LogicalAxis::Z),
                 hw.GetPosition(LogicalAxis::R) };
 
+    // 软限位前置校验（TR-156）：越界点位在执行期必被 MoveAbs 硬拒绝（越界即 return false，
+    // 绝不夹紧），静默入库只会把问题推迟到「跑方案」时才暴露——2026-10-22 方案_409 节点 #12
+    // 就是这样来的：点动到 Z 上限靠 50ms 轮询刹停、冲过边界停在 +0.18 mm 时示教，落盘后
+    // 执行报「target 0.2 out of soft limits [-165.0, 0.0]」。
+    // 判据与 MoveAbs 同源（同一 config、同一 IsWithinSoftLimits），**不做额外放宽**：
+    // 示教能存进去的点，执行期就必须能下发。
+    struct AxisProbe { LogicalAxis axis; const char* name; double value; };
+    const AxisProbe probes[] = {
+        { LogicalAxis::J1, "J1", cur.j1 },
+        { LogicalAxis::J2, "J2", cur.j2 },
+        { LogicalAxis::Z,  "Z",  cur.z  },
+        { LogicalAxis::R,  "R",  cur.r  },
+    };
+    for (const AxisProbe& p : probes) {
+        // 舵机轴读数在 ±180 边界会 wrap（R 实测在 {179.9, 180, -179.9} 之间跳动），
+        // 先按执行侧同一规则归一化，否则边界示教被误拒（2026-09-02 真机：示教 R=-179.9 执行失败）
+        const double v = (AxisMap::Get(p.axis).type == AxisBinding::Type::Servo)
+                             ? hw.NormalizeRotationAngle(p.axis, p.value)
+                             : p.value;
+        if (hw.IsWithinSoftLimits(p.axis, v)) continue;
+
+        const double lo = hw.GetLimitMin(p.axis);
+        const double hi = hw.GetLimitMax(p.axis);
+        const QString unit = hw.AxisUnit(p.axis);
+        SPDLOG_WARN("[Process] Teach read rejected: axis {} pos={:.3f} out of soft limits [{:.3f}, {:.3f}]",
+                    p.name, v, lo, hi);
+        QMessageBox::warning(this, QStringLiteral("示教读取被拒绝"),
+            QStringLiteral("轴 %1 当前位置 %2%3，超出软限位 %4 ~ %5%3。\n\n"
+                           "越界点位在执行时会被直接拒绝下发（不会夹到限位），"
+                           "请先点动回到限位内再示教。")
+                .arg(QString::fromLatin1(p.name))
+                .arg(v, 0, 'f', 2)
+                .arg(unit)
+                .arg(lo, 0, 'f', 2)
+                .arg(hi, 0, 'f', 2));
+        return;
+    }
+
     Kinematics kin = KinematicsHelper::FromConfig();
     Pose pose = kin.Forward(cur);
 
@@ -2145,6 +2239,21 @@ void ProcessPage::OnSaveAction()
         node->sourceActionId = src;
         node->offsetZ = m_guideOffsetZSpin->value();
         node->guideR   = m_guideRSpin->value();
+        break;
+    }
+    case ActionType::ZMove: {
+        // 距离必须为正：方向单独存，数值不带符号（见 `ActionData::zMoveDistance` 注释）。
+        // 输入框下限已限 0.01，这里再拦一次是为了防「旧 json 手改成 0 后直接保存」
+        // ——执行期也会拒绝，但编辑期拦下能省一轮跑空。
+        const double dist = m_zMoveDistanceSpin->value();
+        if (!(dist > 0.0)) {
+            *node = backup;
+            QMessageBox::warning(this, QStringLiteral("提示"),
+                QStringLiteral("移动距离必须大于 0 mm。方向请用上面的「上移 / 下移」选择。"));
+            return;
+        }
+        node->zMoveUp = (m_zMoveDirCombo->currentIndex() == 0);
+        node->zMoveDistance = dist;
         break;
     }
     }

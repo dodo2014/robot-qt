@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QToolTip>
+#include <QCursor>
 #include <QPalette>
 #include <QFont>
 #include <QMessageBox>
@@ -248,6 +249,24 @@ MainWindow::MainWindow(QWidget* parent)
     connect(configPage_, &ConfigPage::paramsChanged, this, [this]() {
         // TR-084：worker 由 deleteLater 销毁后 QPointer 自动置空，须先判空（原裸指针此处会悬垂）
         if (!sequenceWorker_) return;
+
+        // 视觉检测页的手眼矩阵是构造时读一次（`VisionTestPage::ReloadHandEyeMatrix`）。
+        // 不重读的话配置页改完矩阵后，自动运行页用新值、视觉页「基座 X/Y/Z」三列仍是旧值。
+        // 该重读只碰 `coord_`（UI 线程独占），不依赖 worker 状态，故放在 running 判断之前。
+        if (visionTestPage_) visionTestPage_->ReloadHandEyeMatrix();
+
+        // 方案运行中 `ReloadFromConfig` 会**静默跳过**（`SequenceWorker.cpp:185-187`：主线程写
+        // kin/coord 与 worker 线程并发读是 UB）⇒ 必须给可见反馈，否则用户会以为改动已生效。
+        // 改动本身已由 `ConfigManager::set` → `scheduleSave` 落盘，且每次 `RunSequence` 前
+        // 都会 `ReloadFromConfig`，所以下次运行必然用新值。
+        // 用 QToolTip 而非 statusBar / QMessageBox：不改布局、不引入未定义样式的控件、不打断
+        // 操作；本分支是低频异常路径（标定属停机作业，运行中改参数不该是常态）。
+        if (sequenceWorker_->IsRunning()) {
+            QToolTip::showText(QCursor::pos(),
+                               QStringLiteral("方案运行中：参数已保存，将在下次运行前生效"),
+                               this, QRect(), 4000);
+            return;
+        }
         sequenceWorker_->ReloadFromConfig();
     });
     // 全局安全位（2026-09-07）：回零完成（**上升沿**，homeStateChanged 是电平语义——

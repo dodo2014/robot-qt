@@ -273,3 +273,43 @@
   [35] 00007FFCF02EA9C6 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7bcb20
   [36] 00007FFE46907374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
   [37] 00007FFE46FDCC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21
+== crash addr=00007FF76B1D5C1C code=0xc0000005 flt=0 nparams=2 info0=0x0
+  fault 00007FF76B1D5C1C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  ob::Pipeline::waitForFrameset+0x4c  (D:\workspace\projects\CreamPuffRobot\3rdparty\orbbec\include\libobsensor\hpp\Pipeline.hpp:396)
+  [0] 00007FF76B178EE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CrashHandler+0xd3  (D:\workspace\projects\CreamPuffRobot\src\main.cpp:66)
+  [1] 00007FFB1650C507 [C:\WINDOWS\System32\KERNELBASE.dll]  UnhandledExceptionFilter+0x1e7
+  [2] 00007FFB188F5818 [C:\WINDOWS\SYSTEM32\ntdll.dll]  memset+0x1218
+  [3] 00007FFB188DCE46 [C:\WINDOWS\SYSTEM32\ntdll.dll]  _C_specific_handler+0x96
+  [4] 00007FFB188F28BF [C:\WINDOWS\SYSTEM32\ntdll.dll]  _chkstk+0x11f
+  [5] 00007FFB188A2554 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlRaiseException+0x484
+  [6] 00007FFB188F13CE [C:\WINDOWS\SYSTEM32\ntdll.dll]  KiUserExceptionDispatcher+0x2e
+  [7] 00007FF76B1D5C1C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  ob::Pipeline::waitForFrameset+0x4c  (D:\workspace\projects\CreamPuffRobot\3rdparty\orbbec\include\libobsensor\hpp\Pipeline.hpp:396)
+  [8] 00007FF76B1A3C29 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  OrbbecCamera::CaptureFrame+0x249  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\OrbbecCamera.cpp:685)
+  [9] 00007FF76B283E0D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  CameraCaptureWorker::CaptureTick+0x7d  (D:\workspace\projects\CreamPuffRobot\src\HAL\camera\CameraCaptureWorker.cpp:64)
+  [10] 00007FF76B28572A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  `QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl CameraCaptureWorker::*)(void)>::call'::`2'::<lambda_1>::operator()+0x2a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:128)
+  [11] 00007FF76B284B39 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCallBase::call_internal<void,`QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl CameraCaptureWorker::*)(void)>::call'::`2'::<lambda_1> >+0x19  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:66)
+  [12] 00007FF76B285D40 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctorCall<std::integer_sequence<unsigned __int64>,QtPrivate::List<>,void,void (__cdecl CameraCaptureWorker::*)(void)>::call+0x40  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:127)
+  [13] 00007FF76B284B08 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::FunctionPointer<void (__cdecl CameraCaptureWorker::*)(void)>::call<QtPrivate::List<>,void>+0x28  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:175)
+  [14] 00007FF76B285F9A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\CreamPuffRobot.exe]  QtPrivate::QCallableObject<void (__cdecl CameraCaptureWorker::*)(void),QtPrivate::List<>,void>::impl+0x9a  (D:\Qt\6.11.1\msvc2022_64\include\QtCore\qobjectdefs_impl.h:546)
+  [15] 00007FF9E2A93CA3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x75dfd
+  [16] 00007FF9E2D4CFE3 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x32f13d
+  [17] 00007FF9E2D31D98 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x313ef2
+  [18] 00007FF9E2D8E414 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x37056e
+  [19] 00007FF9E2D8AA7F [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36cbd9
+  [20] 00007FF9E2D8B055 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x36d1af
+  [21] 00007FF9E2D3431E [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x316478
+  [22] 00007FFA8FE0A5A0 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x375fb
+  [23] 00007FFA8FE07AA8 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Widgetsd.dll]  QLineEdit::`default constructor closure'+0x34b03
+  [24] 00007FF9E2C5DF75 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x2400cf
+  [25] 00007FF9E2C5BA5B [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x23dbb5
+  [26] 00007FF9E31A7197 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7892f1
+  [27] 00007FF9E31A4593 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7866ed
+  [28] 00007FFB182AEF5C [C:\WINDOWS\System32\USER32.dll]  CallWindowProcW+0x60c
+  [29] 00007FFB182AE684 [C:\WINDOWS\System32\USER32.dll]  DispatchMessageW+0x4a4
+  [30] 00007FF9E31A4E9D [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x786ff7
+  [31] 00007FF9E2C7FE3C [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x261f96
+  [32] 00007FF9E2C80144 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x26229e
+  [33] 00007FF9E2F2D88A [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x50f9e4
+  [34] 00007FF9E2F2D744 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x50f89e
+  [35] 00007FF9E31DA9C6 [D:\workspace\projects\CreamPuffRobot\out\build\x64-Debug\Qt6Cored.dll]  QFileInfo::filePath+0x7bcb20
+  [36] 00007FFB169B7374 [C:\WINDOWS\System32\KERNEL32.DLL]  BaseThreadInitThunk+0x14
+  [37] 00007FFB1889CC91 [C:\WINDOWS\SYSTEM32\ntdll.dll]  RtlUserThreadStart+0x21

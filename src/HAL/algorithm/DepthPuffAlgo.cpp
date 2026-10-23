@@ -56,7 +56,23 @@ constexpr int    kSeedMorphKernel = 3;    // 种子开运算核（只开不闭�
 // 面积/边界过滤后一无所获。必须**从近到远抬高截断深度**，目标会在与背景合并之前先
 // 长成一个面积合格的独立连通域。
 constexpr double kAnchorStepMm    = 2.0;  // 截断深度步长（锚点最终取实际最低深度，不受步长量化）
-constexpr int    kAnchorMaxIters  = 64;   // 迭代上限（64 × 2 mm = 128 mm，超出回退全局分位）
+constexpr int    kAnchorFineIters = 8;    // 前 N 次用细步长（近处目标优先）
+constexpr double kAnchorCoarseStepMm = 10.0;  // 之后换粗步长（快速越过噪声带，见下）
+constexpr int    kAnchorMaxIters  = 64;   // 迭代上限（8×2 + 56×10 = 576 mm 行程）
+
+// **TR-151（2026-10-21）多锚点**：`NextAnchor` 逐个产出合格锚点，`Detect` 对每个锚点各跑
+// 一遍「种子 → 生长 → 过滤」，取第一个出结果的。三条配套常量：
+constexpr int    kAnchorMaxAttempts   = 8;    // 单帧最多尝试的锚点数（防病态场景无限扫描）
+constexpr double kAnchorNearClipTolMm = 1.0;  // 近端截断判据：minDepth ≤ zMin + 此值 ⇒ 不作锚点
+constexpr double kAnchorDedupMm       = 2.0;  // 锚点去重容差（同一面片在相邻层重复出现）
+
+// **TR-149（2026-10-21）起点与步长**：原实现从「ROI 内全局最小有效深度」起步、恒定 2 mm
+// 步长 ⇒ 迭代预算 128 mm 全部耗在噪声带上。实测 `depth_20261021135309_0`（球顶 586 mm）：
+// ROI 里 430~480 mm 有 300 余个零星噪声像素，`lo=430`，球顶需要 78 次迭代 > 上限 64 ⇒
+// 锚点永远够不到球 ⇒ `no seeds in ROI`。
+// 修法两条：① 起点改用 `nearestPercentile` 分位（分位**只定起点**，锚点仍由面积 + 边界
+// 过滤后的连通面片给出，不承担 TR-144 的「锚点」职责）；② 细步长 8 次后转 10 mm 粗步长
+// —— 泡芙球顶到承载面的深度跨度实测 ≥ 36 mm，粗步长不会跨过整个目标。
 
 // ---- 目标几何上限（TR-147/148，2026-10-21）：挡「近处大平面被当目标」----
 // 深度法没有外观信息，场景里比球更近的大平面（A4 纸叠、桌面残片）会被锚点正常捕获——
@@ -162,113 +178,184 @@ int BuildValidMask(const cv::Mat& depthMm, const cv::Rect& roi,
     return validCount;
 }
 
-/// ①b 锚点（TR-145，2026-10-21）：**近→远逐层抬高截断深度**，取第一个「面积合格且
-/// 不贴 ROI 边界」的连通面片的最低深度。
+/// ①b 锚点枚举器（TR-145 逐层扫描 + **TR-151 不早退**）。
 ///
-/// **为什么不用全局分位**：`nearestPercentile` 只由「ROI 内最浅的 0.1% 像素」决定，
-/// 没有「这些像素是不是一个像样的面片」的判断 ⇒ ROI 内任何比目标更近的非目标物都能
-/// 劫持锚点。实测 `depth_20261021091617_0`（球顶 586 mm）：ROI 右上角散热器铝型材
-/// 569~607 mm、18567 px（占有效像素 3.4%）、贴 ROI 右界，0.1% 分位 = 571 mm
-/// ⇒ 种子带 581 mm 够不到球顶 ⇒ `seeds=0` ⇒ 整帧「未找到目标」。
+/// **为什么必须从近到远抬高截断深度**：`validMask` 里目标与承载面在 2D 上连成一片，
+/// 直接做一次连通域永远是「贴 ROI 边界的巨大连通域」，面积/边界过滤后一无所获。
+/// 从 `lo` 起步、每次抬高截断深度，目标会在与背景合并之前先长成一个面积合格的独立
+/// 连通域。
 ///
-/// **为什么必须在「深度受限掩膜」上算连通域**：直接在 `validMask` 上做一次连通域是
-/// 无效的——目标与承载面在 2D 上连成一片，永远是一个贴 ROI 边界的巨大连通域，面积/
-/// 边界过滤后一无所获（实测当前配置下 62/67 帧如此）。从 `lo`（ROI 内全局最小有效
-/// 深度）起步、每次把截断深度抬高 `kAnchorStepMm`，目标会在与背景合并之前先长成一个
-/// 面积合格的独立连通域；近处的非目标物（如散热器）则因贴边界被过滤掉。
+/// **为什么不能「首个合格面片即返回」（TR-151，2026-10-21）**：TR-145 一找到合格面片就
+/// 把锚点定死，于是**任何**比目标更近、又不贴 ROI 边界的物体都能否决整帧。实测
+/// `depth_20261021150749_0` 等 5 帧：机械臂末端（白色连杆 + 黑色夹爪）侵入 ROI 右下角
+/// `x1631~1650 / y647~670`，深度 421~433 mm，被 `depthZMin=430` 切成一层 3 mm 厚的
+/// **近端截断薄壳**；这层壳与 ROI 边界是否 8-连通只差 5~6 px，帧间深度噪声一抖就断开
+/// ⇒ 独立小块 123~244 px > `minArea=120` ⇒ 锚点落在 430 ⇒ 种子带 430~440 够不到球顶
+/// 584 ⇒ 只长出那块小面片（conf 0.42~0.47 < 0.65）⇒「未检出」。同一场景连拍 8 帧，
+/// 5 帧漏检 / 3 帧正常，**差别只在这块薄壳有没有断开**（11 帧 100% 相关）。
+/// 现在改为**逐个产出**全部合格锚点，调用方取「第一个能出过阈值目标的锚点」。
 ///
-/// 面积阈值取 `max(kSeedMinPixels, p.minArea)`（「像一个目标面片」而非「几个噪点」）；
-/// 边界判据与种子一致（`edgeMargin`）。锚点最终取该连通域的**实际最低深度**，不受步长
-/// 量化影响。
-///
-/// ⚠ 迭代上限 `kAnchorMaxIters`：正常场景实测平均 1.7 次、最多 5 次（从 `lo` 起步）；
-///   超出上限（例如 ROI 里只有背景、无任何合格面片）返回 false，调用方回退全局分位。
-///   **该回退是防御性兜底，不是主路径**——67 帧真机数据全部走连通域分支。
-bool ComponentNearestDepth(const cv::Mat& depthMm, const cv::Mat& validMask,
-                           const cv::Rect& roi, const AlgorithmParams& p,
-                           double& nearestDepthMm)
+/// **近端截断守卫（TR-151）**：连通域最低深度 ≤ `depthZMin + kAnchorNearClipTolMm`
+/// ⇒ 该面片被近端量程切掉，真实深度与真实面积都不可知，一律不作锚点。
+struct AnchorSweep
+{
+    cv::Mat depthRoi;                 // ROI 视图（共享像素，不拷贝）
+    cv::Mat validRoi;
+    int     width   = 0;
+    int     height  = 0;
+    double  lo      = 0.0;            // 起点 = `nearestPercentile` 分位（TR-149）
+    double  hi      = 0.0;            // ROI 内最大有效深度
+    double  zMin    = 0.0;
+    int     minArea = 0;
+    int     edge    = 0;
+
+    int     it         = 0;           // 下一个待算层号
+    bool    finished   = false;
+    size_t  pendingPos = 0;
+    std::vector<double> pending;      // 当前层待产出（升序）
+    std::vector<double> yielded;      // 已产出（按深度去重）
+};
+
+/// 初始化枚举器。返回 false = ROI 内无有效像素。
+bool InitAnchorSweep(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect& roi,
+                     const AlgorithmParams& p, AnchorSweep& s)
 {
     if (roi.width <= 0 || roi.height <= 0)
         return false;
 
-    // ROI 视图：深度 / 有效掩码都只在本区域内遍历，连通域也在 ROI 尺寸上做（更快）。
-    const cv::Mat depthRoi = depthMm(roi);
-    const cv::Mat validRoi = validMask(roi);
+    s.depthRoi = depthMm(roi);
+    s.validRoi = validMask(roi);
+    s.width    = roi.width;
+    s.height   = roi.height;
+    s.zMin     = p.depthZMin;
+    s.edge     = p.edgeMargin;
+    s.minArea  = std::max(kSeedMinPixels, p.minArea);
 
-    double lo = std::numeric_limits<double>::max();
     double hi = std::numeric_limits<double>::lowest();
-    for (int y = 0; y < validRoi.rows; ++y) {
-        const uchar* validRow = validRoi.ptr<uchar>(y);
-        const float* depthRow = depthRoi.ptr<float>(y);
-        for (int x = 0; x < validRoi.cols; ++x) {
+    std::vector<float> values;
+    values.reserve(static_cast<size_t>(cv::countNonZero(s.validRoi)));
+    for (int y = 0; y < s.height; ++y) {
+        const uchar* validRow = s.validRoi.ptr<uchar>(y);
+        const float* depthRow = s.depthRoi.ptr<float>(y);
+        for (int x = 0; x < s.width; ++x) {
             if (!validRow[x])
                 continue;
-            lo = std::min(lo, static_cast<double>(depthRow[x]));
+            values.push_back(depthRow[x]);
             hi = std::max(hi, static_cast<double>(depthRow[x]));
         }
     }
-    if (lo > hi)
+    if (values.empty())
         return false;
 
-    const int minArea = std::max(kSeedMinPixels, p.minArea);
-    const int edge = p.edgeMargin;
-
-    cv::Mat mask(validRoi.size(), CV_8UC1);
-    for (int it = 0; it < kAnchorMaxIters; ++it) {
-        const double cut = lo + it * kAnchorStepMm;
-        if (cut > hi)
-            break;
-
-        // 掩膜 = ROI 内有效 且 深度 ≤ cut
-        for (int y = 0; y < validRoi.rows; ++y) {
-            const uchar* validRow = validRoi.ptr<uchar>(y);
-            const float* depthRow = depthRoi.ptr<float>(y);
-            uchar* maskRow = mask.ptr<uchar>(y);
-            for (int x = 0; x < validRoi.cols; ++x)
-                maskRow[x] = (validRow[x] && depthRow[x] <= cut) ? 255 : 0;
-        }
-
-        cv::Mat labels, stats, centroids;
-        const int labelCount = cv::connectedComponentsWithStats(
-            mask, labels, stats, centroids, 8, CV_32S);
-        if (labelCount <= 1)
-            continue;
-
-        double best = std::numeric_limits<double>::max();
-        for (int label = 1; label < labelCount; ++label) {
-            if (stats.at<int>(label, cv::CC_STAT_AREA) < minArea)
-                continue;
-
-            const int bx = stats.at<int>(label, cv::CC_STAT_LEFT);
-            const int by = stats.at<int>(label, cv::CC_STAT_TOP);
-            const int bw = stats.at<int>(label, cv::CC_STAT_WIDTH);
-            const int bh = stats.at<int>(label, cv::CC_STAT_HEIGHT);
-            // 贴 ROI 边界的面片被裁断，其最低点不可信（散热器 / 背景残片都在这一侧）。
-            if (bx <= edge || by <= edge ||
-                bx + bw >= validRoi.cols - edge || by + bh >= validRoi.rows - edge)
-                continue;
-
-            double minDepth = std::numeric_limits<double>::max();
-            for (int y = by; y < by + bh; ++y) {
-                const int* labelRow = labels.ptr<int>(y);
-                const float* depthRow = depthRoi.ptr<float>(y);
-                for (int x = bx; x < bx + bw; ++x) {
-                    if (labelRow[x] == label)
-                        minDepth = std::min(minDepth, static_cast<double>(depthRow[x]));
-                }
-            }
-            best = std::min(best, minDepth);
-        }
-
-        if (best != std::numeric_limits<double>::max()) {
-            nearestDepthMm = best;
-            return true;
-        }
-    }
-    return false;
+    // 起点 = `nearestPercentile` 分位（TR-149）：跳过零星噪声，避免迭代预算被耗在噪声带。
+    // ⚠ 分位在这里**只定起点**，锚点仍由下面的「面积 + 边界 + 近端截断」过滤给出。
+    const double pct = std::clamp(p.nearestPercentile,
+                                  kNearestPercentileMin, kNearestPercentileMax);
+    const size_t nth = static_cast<size_t>((values.size() - 1) * pct);
+    std::nth_element(values.begin(), values.begin() + nth, values.end());
+    s.lo = values[nth];
+    s.hi = hi;
+    return s.lo <= s.hi;
 }
 
-/// ② 种子提取 + 最近深度（TR-144，2026-10-20）。返回 false = 无有效像素 / 无合格种子。
+/// 取下一个锚点（近→远）。返回 false = 扫描结束。
+bool NextAnchor(AnchorSweep& s, double& anchorMm)
+{
+    for (;;) {
+        if (s.pendingPos < s.pending.size()) {
+            anchorMm = s.pending[s.pendingPos++];
+            return true;
+        }
+        if (s.finished)
+            return false;
+
+        s.pending.clear();
+        s.pendingPos = 0;
+
+        // 逐层抬高截断深度，直到本层出现「合格面片」为止
+        bool produced = false;
+        while (!produced) {
+            if (s.it >= kAnchorMaxIters) {
+                s.finished = true;
+                return false;
+            }
+            // 分级步长（TR-149）：前 kAnchorFineIters 次 2 mm 精扫近处，之后 10 mm 粗扫。
+            const int fine   = std::min(s.it, kAnchorFineIters);
+            const int coarse = std::max(0, s.it - kAnchorFineIters);
+            const double cut = s.lo + fine * kAnchorStepMm + coarse * kAnchorCoarseStepMm;
+            ++s.it;
+            if (cut > s.hi) {
+                s.finished = true;
+                return false;
+            }
+
+            cv::Mat mask(s.validRoi.size(), CV_8UC1);
+            for (int y = 0; y < s.height; ++y) {
+                const uchar* validRow = s.validRoi.ptr<uchar>(y);
+                const float* depthRow = s.depthRoi.ptr<float>(y);
+                uchar* maskRow = mask.ptr<uchar>(y);
+                for (int x = 0; x < s.width; ++x)
+                    maskRow[x] = (validRow[x] && depthRow[x] <= cut) ? 255 : 0;
+            }
+
+            cv::Mat labels, stats, centroids;
+            const int labelCount = cv::connectedComponentsWithStats(
+                mask, labels, stats, centroids, 8, CV_32S);
+            if (labelCount <= 1)
+                continue;
+
+            for (int label = 1; label < labelCount; ++label) {
+                if (stats.at<int>(label, cv::CC_STAT_AREA) < s.minArea)
+                    continue;
+
+                const int bx = stats.at<int>(label, cv::CC_STAT_LEFT);
+                const int by = stats.at<int>(label, cv::CC_STAT_TOP);
+                const int bw = stats.at<int>(label, cv::CC_STAT_WIDTH);
+                const int bh = stats.at<int>(label, cv::CC_STAT_HEIGHT);
+                // 贴 ROI 边界的面片被裁断，其最低点不可信（散热器 / 背景残片都在这一侧）。
+                if (bx <= s.edge || by <= s.edge ||
+                    bx + bw >= s.width - s.edge || by + bh >= s.height - s.edge)
+                    continue;
+
+                double minDepth = std::numeric_limits<double>::max();
+                for (int y = by; y < by + bh; ++y) {
+                    const int* labelRow = labels.ptr<int>(y);
+                    const float* depthRow = s.depthRoi.ptr<float>(y);
+                    for (int x = bx; x < bx + bw; ++x) {
+                        if (labelRow[x] == label)
+                            minDepth = std::min(minDepth, static_cast<double>(depthRow[x]));
+                    }
+                }
+                if (minDepth == std::numeric_limits<double>::max())
+                    continue;
+
+                // TR-151 近端截断守卫：被近端量程切掉的面片，深度与面积都不可信。
+                if (minDepth <= s.zMin + kAnchorNearClipTolMm)
+                    continue;
+
+                // 同一面片会在相邻层重复出现（最低深度不变）⇒ 按深度去重。
+                bool dup = false;
+                for (double v : s.yielded) {
+                    if (std::abs(v - minDepth) <= kAnchorDedupMm) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (dup)
+                    continue;
+
+                s.yielded.push_back(minDepth);
+                s.pending.push_back(minDepth);
+            }
+            produced = !s.pending.empty();
+        }
+
+        std::sort(s.pending.begin(), s.pending.end());
+    }
+}
+
+/// ② 种子提取（TR-144，2026-10-20）：给定**一个**锚点深度，取 `[anchor, anchor+band]`
+/// 内的连通面片作为候选目标顶点。返回 false = 无合格种子。
 ///
 /// **旧实现的问题**：顶层上限锚在**全 ROI 有效深度的分位**上（`nearestPercentile` 默认
 /// 0.03）——目标只占画面一小块时，分位落在背景面上，顶层把背景一起圈进来。实测
@@ -277,46 +364,20 @@ bool ComponentNearestDepth(const cv::Mat& depthMm, const cv::Mat& validMask,
 /// 91×102）。根因是基准随「目标占画面比例」漂移；去掉右侧深度传感器遮挡后背景有效
 /// 像素变多，分位从球顶掉到背景面，问题才暴露。
 ///
-/// **新做法**：分位只用来定「**种子**」——最近层的一小块面片（`nearest + kSeedBandMm`）。
+/// **新做法**：锚点只用来定「**种子**」——该锚点附近的一小块面片（`anchor + kSeedBandMm`）。
 /// 每个种子代表一个目标顶点；后续每个目标**各自**以 `种子最低深度 + heightBandMm` 定带，
 /// 不再受其它目标 / 背景占画面比例的影响。
 ///
 /// ⚠ 贴 ROI 边界的种子一律丢弃：被裁掉的目标顶点不可信，且实测会在 ROI 边界产生
 ///   细长条假种子（背景面被边界切断）。
 ///
-/// **锚点来源（TR-145，2026-10-21）**：优先「连通域级」（`ComponentNearestDepth`，近→远
-/// 逐层抬高截断深度 + 面积/边界过滤），仅在迭代上限内找不到任何合格面片时回退全局分位
-/// （TR-144 行为，防御性兜底）。实测 67 帧真机数据全部走连通域分支。
-bool BuildSeeds(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect& roi,
-                const AlgorithmParams& p, std::vector<Seed>& seeds, double& nearestDepthMm,
-                bool& anchorFromComponent)
+/// **锚点来源（TR-145 + TR-151，2026-10-21）**：由 `AnchorSweep` 逐层扫描逐个产出，
+/// 调用方对每个锚点各跑一遍「种子 → 生长 → 过滤」，取第一个出结果的。
+bool BuildSeedsForAnchor(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect& roi,
+                         const AlgorithmParams& p, double anchorMm, std::vector<Seed>& seeds)
 {
-    // ① 锚点：连通域级优先，失败回退全局分位（TR-145）。
-    anchorFromComponent = ComponentNearestDepth(depthMm, validMask, roi, p, nearestDepthMm);
-    if (!anchorFromComponent) {
-        std::vector<float> values;
-        values.reserve(static_cast<size_t>(cv::countNonZero(validMask)));
-
-        for (int y = 0; y < depthMm.rows; ++y) {
-            const float* depthRow = depthMm.ptr<float>(y);
-            const uchar* maskRow = validMask.ptr<uchar>(y);
-            for (int x = 0; x < depthMm.cols; ++x) {
-                if (maskRow[x])
-                    values.push_back(depthRow[x]);
-            }
-        }
-        if (values.empty())
-            return false;
-
-        const double percentile = std::clamp(p.nearestPercentile,
-                                             kNearestPercentileMin, kNearestPercentileMax);
-        const size_t nth = static_cast<size_t>((values.size() - 1) * percentile);
-        std::nth_element(values.begin(), values.begin() + nth, values.end());
-        nearestDepthMm = values[nth];
-    }
-
     cv::Mat seedMask = cv::Mat::zeros(depthMm.size(), CV_8UC1);
-    const double seedCutMm = nearestDepthMm + kSeedBandMm;
+    const double seedCutMm = anchorMm + kSeedBandMm;
     for (int y = roi.y; y < roi.y + roi.height; ++y) {
         const float* depthRow = depthMm.ptr<float>(y);
         const uchar* validRow = validMask.ptr<uchar>(y);
@@ -382,6 +443,35 @@ bool BuildSeeds(const cv::Mat& depthMm, const cv::Mat& validMask, const cv::Rect
     std::sort(seeds.begin(), seeds.end(),
               [](const Seed& a, const Seed& b) { return a.minDepthMm < b.minDepthMm; });
     return true;
+}
+
+/// ②b 兜底锚点（TR-144 全局分位）：整帧连一个合格连通面片都扫不出来时才会走到这里
+/// （防御性路径，正常场景由 `AnchorSweep` 覆盖）。
+bool BuildSeedsFromPercentile(const cv::Mat& depthMm, const cv::Mat& validMask,
+                              const cv::Rect& roi, const AlgorithmParams& p,
+                              std::vector<Seed>& seeds, double& anchorMm)
+{
+    std::vector<float> values;
+    values.reserve(static_cast<size_t>(cv::countNonZero(validMask)));
+
+    for (int y = 0; y < depthMm.rows; ++y) {
+        const float* depthRow = depthMm.ptr<float>(y);
+        const uchar* maskRow = validMask.ptr<uchar>(y);
+        for (int x = 0; x < depthMm.cols; ++x) {
+            if (maskRow[x])
+                values.push_back(depthRow[x]);
+        }
+    }
+    if (values.empty())
+        return false;
+
+    const double percentile = std::clamp(p.nearestPercentile,
+                                         kNearestPercentileMin, kNearestPercentileMax);
+    const size_t nth = static_cast<size_t>((values.size() - 1) * percentile);
+    std::nth_element(values.begin(), values.begin() + nth, values.end());
+    anchorMm = values[nth];
+
+    return BuildSeedsForAnchor(depthMm, validMask, roi, p, anchorMm, seeds);
 }
 
 /// ③ 以种子为起点生长该目标的顶层区域（TR-144）。
@@ -994,19 +1084,13 @@ std::vector<PuffResult> DepthPuffAlgo::Detect(const CameraFrame& frame, const Al
         return results;
     }
 
-    std::vector<Seed> seeds;
-    double nearestDepthMm = 0.0;
-    bool anchorFromComponent = false;
-    if (!BuildSeeds(depthMm, validMask, roi, params, seeds, nearestDepthMm,
-                    anchorFromComponent)) {
+    // ---- TR-151：逐个锚点尝试，取第一个能出「过阈值目标」的锚点 ----
+    // 锚点 = 逐层扫描产出的合格连通面片最低深度（近→远）。某个锚点的候选**全被**
+    // `confidenceThreshold` 滤掉时换下一个，而不是直接报「未检出」——单个近景干扰物
+    // （机械臂末端、线缆、夹具）不再能否决整帧。
+    AnchorSweep sweep;
+    if (!InitAnchorSweep(depthMm, validMask, roi, params, sweep)) {
         lastError_ = "no seeds in ROI";
-        return results;
-    }
-
-    const std::vector<Candidate> cands =
-        SelectRegions(depthMm, validMask, roi, seeds, nearestDepthMm, params);
-    if (cands.empty()) {
-        lastError_ = "no candidate passed filtering";
         return results;
     }
 
@@ -1024,68 +1108,116 @@ std::vector<PuffResult> DepthPuffAlgo::Detect(const CameraFrame& frame, const Al
     const double sx = needScale ? static_cast<double>(cw) / dw : 1.0;
     const double sy = needScale ? static_cast<double>(ch) / dh : 1.0;
 
-    results.reserve(cands.size());
-    for (const auto& c : cands) {
-        PuffResult res;
-
-        // 契约 §11.3（TR-132）：`pixelU`/`pixelV` = **球顶**，与 `z` 同源。
-        // ⚠ 不是连通域质心——真机实测二者相距 ~47 px（≈23 mm）；若用质心配球顶深度，
-        //   `PixelToRobot` 会反投影出一个**不在目标表面上**的点。
-        res.pixelU = static_cast<int>(std::lround(c.apex.x * sx));
-        res.pixelV = static_cast<int>(std::lround(c.apex.y * sy));
-
-        // 包围框**独立给出原点**：球顶 ≠ 框中心，只给「中心 + 尺寸」画不出框（TR-132）。
-        res.bboxX  = static_cast<int>(std::lround(c.bbox.x      * sx));
-        res.bboxY  = static_cast<int>(std::lround(c.bbox.y      * sy));
-        res.width  = static_cast<int>(std::lround(c.bbox.width  * sx));
-        res.height = static_cast<int>(std::lround(c.bbox.height * sy));
-
-        // 契约 §11.3：`z` = **球顶**深度（抓取应取最高点），**不是**区域均值。
-        // ⚠ 取球顶**面片均值**而非单像素极小值——后者受噪点影响（实测某球 min 偏低 6 mm）。
-        res.z          = c.apexDepthMm;
-        res.minDepthMm = c.minDepthMm;   // 保留原始极小值供交叉校验（与 z 之差 = 噪点幅度）
-
-        // `area` 的坐标系 = **深度图**（不随像素坐标归一），见 §11.3 与 M2。
-        res.area = static_cast<double>(c.area);
-
-        // ⚠ 保真老实现：结果的 `confidence` 存的是三权重综合 `score` 的 clamp 值，
-        // **不是** `EstimateConfidence` 的单独输出（后者只是 score 的输入项）。
-        res.confidence = std::clamp(c.score, 0.0, 1.0);
-
-        // `x` / `y` 弃用（§十 裁定 2）：保留字段、恒 0；基座坐标由下游 `PixelToRobot` 算。
-        res.x   = 0.0;
-        res.y   = 0.0;
-        res.yaw = 0.0;
-
-        results.push_back(res);
-    }
-
-    {
-        const Candidate& best = cands.front();
-        // ⚠ `topDepth` = 原始最小深度（保留原名，兼容既有 grep 配方）；
-        //   `apexDepth` = 球顶面片均值 = 真正写进 `z` 的值；二者之差 = 该连通域的噪点幅度。
-        SPDLOG_INFO("[DepthPuffAlgo] {} seed(s) → {} candidate(s); best area={} meanDepth={:.1f}mm "
-                    "topDepth={:.1f}mm apexDepth={:.1f}mm apex=({:.0f},{:.0f})[{}px] score={:.3f}; "
-                    "nearestDepth={:.1f}mm anchor={} zRange=[{:.1f},{:.1f}]",
-                    seeds.size(), cands.size(), best.area, best.meanDepthMm, best.minDepthMm,
-                    best.apexDepthMm, best.apex.x, best.apex.y, best.apexCount, best.score,
-                    nearestDepthMm, anchorFromComponent ? "component" : "percentile",
-                    params.depthZMin, params.depthZMax);
-    }
-
-    // 置信度过滤：低于阈值**丢弃**（契约 §11.3 约定 3「过滤即丢弃」，TR-103 语义）。
-    // ⚠ 两套算法的 `confidence` 语义不同（`SimAlgo` 是面积覆盖率、本算法是加权综合分）
-    // ⇒ 同一个 `confidenceThreshold` 在两者上的松紧并不等价（移植方案 §七 M1）。
+    std::vector<Seed> seeds;
+    std::vector<Candidate> cands;
+    double nearestDepthMm = 0.0;
+    bool anchorFromComponent = true;
+    bool triedPercentile = false;
+    int attempt = 0;
     const double thr = params.confidenceThreshold;
-    if (thr > 0.0) {
-        const auto before = results.size();
-        results.erase(std::remove_if(results.begin(), results.end(),
-                                     [thr](const PuffResult& r) { return r.confidence < thr; }),
-                      results.end());
-        if (results.size() != before) {
-            SPDLOG_INFO("[DepthPuffAlgo] confidenceThreshold={:.3f}: filtered {} of {} detection(s)",
-                        thr, before - results.size(), before);
+
+    while (attempt < kAnchorMaxAttempts) {
+        seeds.clear();
+
+        if (NextAnchor(sweep, nearestDepthMm)) {
+            ++attempt;
+            anchorFromComponent = true;
+            if (!BuildSeedsForAnchor(depthMm, validMask, roi, params, nearestDepthMm, seeds))
+                continue;   // 该锚点长不出合格种子 → 换下一个锚点
+        } else if (!triedPercentile) {
+            // 扫描结束仍无任何合格面片 ⇒ 回退全局分位（TR-144 防御性路径），整帧只试一次。
+            triedPercentile = true;
+            anchorFromComponent = false;
+            if (!BuildSeedsFromPercentile(depthMm, validMask, roi, params, seeds, nearestDepthMm)) {
+                lastError_ = "no seeds in ROI";
+                break;
+            }
+        } else {
+            break;
         }
+
+        cands = SelectRegions(depthMm, validMask, roi, seeds, nearestDepthMm, params);
+        if (cands.empty()) {
+            lastError_ = "no candidate passed filtering";
+            continue;   // 该锚点无合格候选 → 换下一个锚点
+        }
+
+        results.clear();
+        results.reserve(cands.size());
+        for (const auto& c : cands) {
+            PuffResult res;
+
+            // 契约 §11.3（TR-132）：`pixelU`/`pixelV` = **球顶**，与 `z` 同源。
+            // ⚠ 不是连通域质心——真机实测二者相距 ~47 px（≈23 mm）；若用质心配球顶深度，
+            //   `PixelToRobot` 会反投影出一个**不在目标表面上**的点。
+            res.pixelU = static_cast<int>(std::lround(c.apex.x * sx));
+            res.pixelV = static_cast<int>(std::lround(c.apex.y * sy));
+
+            // 包围框**独立给出原点**：球顶 ≠ 框中心，只给「中心 + 尺寸」画不出框（TR-132）。
+            res.bboxX  = static_cast<int>(std::lround(c.bbox.x      * sx));
+            res.bboxY  = static_cast<int>(std::lround(c.bbox.y      * sy));
+            res.width  = static_cast<int>(std::lround(c.bbox.width  * sx));
+            res.height = static_cast<int>(std::lround(c.bbox.height * sy));
+
+            // 契约 §11.3：`z` = **球顶**深度（抓取应取最高点），**不是**区域均值。
+            // ⚠ 取球顶**面片均值**而非单像素极小值——后者受噪点影响（实测某球 min 偏低 6 mm）。
+            res.z          = c.apexDepthMm;
+            res.minDepthMm = c.minDepthMm;   // 保留原始极小值供交叉校验（与 z 之差 = 噪点幅度）
+
+            // `area` 的坐标系 = **深度图**（不随像素坐标归一），见 §11.3 与 M2。
+            res.area = static_cast<double>(c.area);
+
+            // ⚠ 保真老实现：结果的 `confidence` 存的是三权重综合 `score` 的 clamp 值，
+            // **不是** `EstimateConfidence` 的单独输出（后者只是 score 的输入项）。
+            res.confidence = std::clamp(c.score, 0.0, 1.0);
+
+            // `x` / `y` 弃用（§十 裁定 2）：保留字段、恒 0；基座坐标由下游 `PixelToRobot` 算。
+            res.x   = 0.0;
+            res.y   = 0.0;
+            res.yaw = 0.0;
+
+            results.push_back(res);
+        }
+
+        {
+            const Candidate& best = cands.front();
+            // ⚠ `topDepth` = 原始最小深度（保留原名，兼容既有 grep 配方）；
+            //   `apexDepth` = 球顶面片均值 = 真正写进 `z` 的值；二者之差 = 该连通域的噪点幅度。
+            SPDLOG_INFO("[DepthPuffAlgo] attempt#{}/{} {} seed(s) → {} candidate(s); "
+                        "best area={} meanDepth={:.1f}mm "
+                        "topDepth={:.1f}mm apexDepth={:.1f}mm apex=({:.0f},{:.0f})[{}px] score={:.3f}; "
+                        "nearestDepth={:.1f}mm anchor={} zRange=[{:.1f},{:.1f}]",
+                        attempt, kAnchorMaxAttempts, seeds.size(), cands.size(),
+                        best.area, best.meanDepthMm, best.minDepthMm,
+                        best.apexDepthMm, best.apex.x, best.apex.y, best.apexCount, best.score,
+                        nearestDepthMm, anchorFromComponent ? "component" : "percentile",
+                        params.depthZMin, params.depthZMax);
+        }
+
+        // 置信度过滤：低于阈值**丢弃**（契约 §11.3 约定 3「过滤即丢弃」，TR-103 语义）。
+        // ⚠ 两套算法的 `confidence` 语义不同（`SimAlgo` 是面积覆盖率、本算法是加权综合分）
+        // ⇒ 同一个 `confidenceThreshold` 在两者上的松紧并不等价（移植方案 §七 M1）。
+        if (thr > 0.0) {
+            const auto before = results.size();
+            results.erase(std::remove_if(results.begin(), results.end(),
+                                         [thr](const PuffResult& r) { return r.confidence < thr; }),
+                          results.end());
+            if (results.size() != before) {
+                SPDLOG_INFO("[DepthPuffAlgo] attempt#{}/{} anchor={:.1f}mm: confidenceThreshold={:.3f} "
+                            "filtered {} of {} detection(s) → 换下一个锚点",
+                            attempt, kAnchorMaxAttempts, nearestDepthMm, thr,
+                            before - results.size(), before);
+            }
+        }
+
+        if (!results.empty())
+            break;
+        lastError_ = "all candidates below confidenceThreshold";
+    }
+
+    if (results.empty() && attempt >= kAnchorMaxAttempts) {
+        SPDLOG_WARN("[DepthPuffAlgo] 锚点尝试达上限 {} 仍未出目标 → 停止扫描"
+                    "（检查 ROI 内近景干扰物，或收紧 `roi` / `depthZMin`）", kAnchorMaxAttempts);
     }
 
     return results;

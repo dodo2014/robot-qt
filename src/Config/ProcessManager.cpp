@@ -80,6 +80,11 @@ ActionData readNode(const nlohmann::json& nj)
     a.sourceActionId = nj.value("sourceActionId", 0);
     a.offsetZ = nj.value("offsetZ", 0.0);
     a.guideR = nj.value("guideR", 179.9);
+    // 上下移动（ZMove）：缺键取「上移 10 mm」——旧文件里不存在 type=6 的节点，
+    // 该默认值只在「类型被手改成 6 但参数缺失」时起作用，取一个可执行的值比 0 更安全
+    // （0 会让执行期直接报「距离必须大于 0」，用户还得再进一次面板）。
+    a.zMoveUp = nj.value("zMoveUp", true);
+    a.zMoveDistance = nj.value("zMoveDistance", 10.0);
 
     if (nj.contains("points") && nj["points"].is_array()) {
         for (const auto& pj : nj["points"]) {
@@ -151,6 +156,10 @@ nlohmann::json writeNode(const ActionData& a)
     aj["sourceActionId"] = a.sourceActionId;
     aj["offsetZ"] = a.offsetZ;
     aj["guideR"] = a.guideR;
+    // 上下移动（ZMove）：方向 + 距离。距离恒正，方向单独存——不存「带符号距离」，
+    // 否则 UI 的下拉框与数值会互相覆盖（改方向就改符号，改数值又把符号写回方向）。
+    aj["zMoveUp"] = a.zMoveUp;
+    aj["zMoveDistance"] = a.zMoveDistance;
     aj["points"] = nlohmann::json::array();
 
     for (const auto& pt : a.points) {
@@ -193,6 +202,7 @@ QString ProcessManager::actionTypeName(ActionType t)
     case ActionType::Delay:       return QStringLiteral("延时");
     case ActionType::Gripper:     return QStringLiteral("夹爪");
     case ActionType::VisionGuide: return QStringLiteral("视觉引导");
+    case ActionType::ZMove:       return QStringLiteral("上下移动");
     }
     return QStringLiteral("未知");
 }
@@ -323,6 +333,10 @@ QStringList ProcessManager::resourceKeysOf(ActionType t)
     case ActionType::Extrude: return { QStringLiteral("Axis_Extruder") };
     case ActionType::Vision:  return { QStringLiteral("Camera") };
     case ActionType::Delay:   return {};   // §6.3：不占硬件资源，同组多个等价于取最大值
+    case ActionType::ZMove:
+        // 只占 Z 轴：与「移动 / 视觉引导」同组时**必须**互斥（它们也下发 Axis_Z 的绝对目标，
+        // 两个绝对目标同时下发会让轴按后到者走）；与夹爪 / 挤出同组**合法**（不同轴）。
+        return { QStringLiteral("Axis_Z") };
     }
     return {};
 }

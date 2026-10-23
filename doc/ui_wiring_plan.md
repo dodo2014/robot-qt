@@ -51,6 +51,7 @@ MainWindow
 **文件**：`src/UI/ProcessPage.h`、`src/UI/ProcessPage.cpp`
 
 - OnTeachRead：GetPosition() → Kinematics::Forward() → 填充 PointData 新行到 m_pointTable
+  - **2026-10-23 追加（TR-156）**：读值后先对 J1/J2/Z/R 逐个 `IsWithinSoftLimits`（舵机轴先 `NormalizeRotationAngle`），任一越界 → 弹窗 + **拒绝入库**（不夹紧、不改写）。判据与 `MoveAbs` 同源、无额外容差；说明见 `doc/process.md` PointData 注意事项与 `AGENTS.md` 软限位节
 
 ## T10 — ConfigPage 参数喂入
 

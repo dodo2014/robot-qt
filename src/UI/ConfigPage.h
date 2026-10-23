@@ -38,6 +38,10 @@ private:
     // 两处必须双向同步 —— 否则改完视觉页再切回本页看到的仍是旧值，
     // 更糟的是误触 editingFinished 会把陈旧值写回 config。同样在每次显示时回填。
     void RefreshVisionFields();
+    // 手眼矩阵回填（2026-10-23）：16 个输入框的初值。读法与
+    // `SequenceWorker::ReloadFromConfig`（:201-206）逐条一致——长度必须正好 16，否则不回填
+    // （保持现状而非刷成半截数据）。与上面两个 Refresh 同理，每次页面显示时重读。
+    void RefreshHandEyeFields();
     void showEvent(QShowEvent* event) override;
 
     QWidget* CreateTab1Comm();
@@ -63,4 +67,10 @@ private:
         double     fallback = 0.0;
     };
     QVector<VisionField> visionInputs_;
+
+    // 手眼矩阵 4×4 输入控件（row-major，16 个，索引 = 行*4+列），供 RefreshHandEyeFields 回填。
+    // 末行（索引 12~15）恒为 [0,0,0,1] 且只读——齐次变换矩阵的末行不是可标定量。
+    QVector<QLineEdit*> handEyeInputs_;
+    // 矩阵写入的即时反馈（成功绿 / 非法红）。16 个框共用一行提示，避免逐框弹窗。
+    QLabel* handEyeHint_ = nullptr;
 };

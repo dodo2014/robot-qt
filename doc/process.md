@@ -36,7 +36,7 @@
 | `nodeType` | string | 节点类型：`"action"`（动作，默认）/ `"group"`（分组）。**P6 新增**。与 `type` **正交**——`Group` 不进 `ActionType` 枚举（见下文「分组节点与组内并发」） |
 | `children` | array | **分组内的子节点**（仅 `nodeType == "group"` 非空，元素结构与 `ActionData` 相同）。**不允许嵌套**——分组只能在一级 |
 | `name` | string | 动作名称 |
-| `type` | int | 0=移动, 1=识别, 2=挤压, 3=延时, 4=夹爪, **5=视觉引导**（⚠ 只能追加在末尾，见下文） |
+| `type` | int | 0=移动, 1=识别, 2=挤压, 3=延时, 4=夹爪, 5=视觉引导, **6=上下移动**（⚠ 只能追加在末尾，见下文） |
 | `points` | array | 点位列表（仅 type=0 有效，结构见 PointData） |
 | `visionType` | string | 识别类型（仅 type=1 有效: CCD/深度/激光） |
 | `exposure` | double | 曝光时间（仅 type=1，当前默认 30.0） |
@@ -55,6 +55,8 @@
 | `sourceActionId` | int | **引用的识别动作编号**（仅 type=5，P5 新增）。必须指向**本方案内**类型为 `Vision` 的动作；**不允许跨方案引用** |
 | `offsetZ` | double | 「目标上方」相对目标的 Z 偏移，单位 mm，**正值向上**（仅 type=5）。按**末端高度 `Pose.z`** 算，与 `PointData.j3`（Z 电机坐标）**不是同一个量**，不可混用 |
 | `guideR` | double | 构造路径点的**轴 4(R) 固定值**，单位 °，默认 **179.9**（仅 type=5）。**与 `PuffResult.yaw` 无关** |
+| `zMoveUp` | bool | 移动方向：`true` = 上移（+Z）/ `false` = 下移（−Z）（仅 type=6）。**缺键默认 `true`** |
+| `zMoveDistance` | double | 相对当前 Z 的位移距离，单位 mm，**恒为正值**（仅 type=6）。**缺键默认 `10.0`**；执行期 ≤ 0 直接拒绝 |
 | `speedPercent` | int | 速度百分比（所有动作通用，当前 100） |
 
 ---
@@ -94,6 +96,26 @@
 
 ---
 
+## 上下移动动作（type=6，2026-10-22 定，TR-153）
+
+**权威定义在 `doc/z_move_action_plan.md`**，此处只记 `process.json` 侧与校验侧的落点。
+
+| 项 | 规则 |
+| :--- | :--- |
+| 存什么 | **只存动作定义**——`zMoveUp`（方向）+ `zMoveDistance`（距离 mm，恒正）+ 通用字段 |
+| 位移基准 | 执行到本动作时的**当前** `Axis_Z` 位置（不是方案启动位、不是上一个点位） |
+| 作用轴 | **只有逻辑轴 `Axis_Z`**（= `PointData.j3` 坐标系：回零后 0、向下为负 ⇒ 上移 = `+distance`）；J1/J2/R 不动，**不走 IK** |
+| 执行 | `PrepareRunnerSegment` 现读当前 Z → 算绝对目标 → `IsWithinSoftLimits` 校验 → `MoveAbs(Axis_Z, …)` → 按 `GetAxisBusyMs` 动态兜底超时 |
+| 续走 | `ReissueRunnerSegment` 重发**已算好的绝对目标**，**不按当前 Z 重算**（否则暂停后会把整段距离再走一遍） |
+| 越软限位 | **拒绝执行并报错**，不夹到限位（静默夹会让实走距离与设定值不一致） |
+| 重试 | **不可重试**（相对位移不满足「重跑一次结果不变」）；`production.loop.retryCount` 对它无效 |
+| 资源占用 | `{Axis_Z}`——与「移动 / 视觉引导」同组**被拒**，与「夹爪 / 挤压 / 延时 / 识别」同组**合法** |
+| 编号 | 走统一编号机制，与其它动作一致 |
+
+> ⚠ `ZMove = 6` 占用了 `doc/third_party_integration_plan.md`（⏳ 未实施）为「拍照」预留的 `Capture = 6`；重启该篇时 `Capture` 改取 `7`。
+
+---
+
 ## 分组节点与组内并发（2026-09-20 定，P6）
 
 **权威定义在 `doc/action_tree_concurrency_plan.md`**（§六 校验 / §七 数据模型 / §九 执行层 / §Q1~§Q5），此处只记 `process.json` 侧与校验侧的落点。
@@ -104,7 +126,7 @@
 | 分组与编号 | 分组**占一个方案内编号**（与动作同一编号空间，§7.2）；删除后编号**不复用**（计数器只增不减） |
 | `Group` 不进枚举 | `nodeType` 是独立字段。理由：`ActionType` 整数持久化且 `VisionGuide` 已占 `5`，且类型下拉的**索引直接就是枚举值**（§7.1） |
 | 组内并发 | **同时下发、统一汇合**——组内子动作在同一 20 ms 轮询节拍内推进，等待时间重叠，故整组耗时 ≈ **最长子动作**而非各子动作之和 |
-| 资源互斥 | 校验**按资源不按类型**：`Move` → `{Axis_J1, Axis_J2, Axis_Z, Axis_R}`；`Gripper` → `{Axis_Gripper}`；`Extrude` → `{Axis_Extruder}`；`Vision` → `{Camera}`；**`VisionGuide` 与 `Move` 共用四轴集合**；`Delay` → **空集**（多个延时同组**合法**，§6.3） |
+| 资源互斥 | 校验**按资源不按类型**：`Move` → `{Axis_J1, Axis_J2, Axis_Z, Axis_R}`；`Gripper` → `{Axis_Gripper}`；`Extrude` → `{Axis_Extruder}`；`Vision` → `{Camera}`；**`VisionGuide` 与 `Move` 共用四轴集合**；**`ZMove` → `{Axis_Z}`**（只占一根轴，故与「移动」冲突、与「夹爪 / 挤压」合法）；`Delay` → **空集**（多个延时同组**合法**，§6.3） |
 | 数据依赖 | 同组内**不允许**「`Vision` + 引用该 `Vision` 编号的 `VisionGuide`」（§6.4）——并发时移动目标尚未算出 |
 | 失败归因 | **首个失败者**：其失败原因写入 `Impl::lastError`，其余子动作的失败仅记日志；分组失败**先安全停下全部子动作再上报**（§Q2），绝不提前返回 |
 | 重试 | `production.loop.retryCount` 重试的是**整个分组**（§Q3） |
@@ -162,6 +184,7 @@
 - 内存中 `PointData` 仍为扁平字段（`x,y,z,r,posture,hasJoints,j1~j4`），嵌套只影响 JSON 序列化格式。
 - **加载只读取 `coord` 下的 `x/y/z/r`**，不支持旧版扁平 `x/y/z/r` 格式。
 - ~~`joints` 目前为占位（保存恒为 0.0）~~ **已落地（TR-071，2026-09-04）**：示教读取落盘真实关节角 + `hasJoints=true`；执行 `ResolveRunnerJoints` 优先按 joints 直发（FK 一致性校验 ±0.5mm/0.5°，不匹配回退 IK——拦截旧版全 0 占位残留）；表格手改坐标保存 → 该点 joints **删字段**（非置 0，0 是合法关节角）。
+- **示教读取前置软限位校验（TR-156，2026-10-23）**：`OnTeachRead` 读到的 J1/J2/Z/R 逐个过 `IsWithinSoftLimits`，舵机轴先过 `NormalizeRotationAngle`（R 边界读数 wrap）；任一越界即弹窗提示并**拒绝入库**，不夹紧、不静默改写。判据与 `MoveAbs` 同源、**无额外容差**——示教能存进去的点，执行期必须能下发。**触发背景**：方案 `_409` 的「灌装位」点 `j3=+0.1832`（Z 点动冲过 `limitMax=0` 停在 +0.18 mm 后被示教入库），执行到该动作时 `MoveAbs` 报 `axis 2 target 0.2 out of soft limits [-165.0, 0.0]`，整个方案停在最后一个动作。
 
 ---
 
@@ -189,7 +212,7 @@ class ProcessManager {
 ### 数据模型 (定义在 ProcessManager.h 中)
 
 ```
-ActionType: Move=0, Vision=1, Extrude=2, Delay=3, Gripper=4, VisionGuide=5
+ActionType: Move=0, Vision=1, Extrude=2, Delay=3, Gripper=4, VisionGuide=5, ZMove=6
             （⚠ 只能追加在末尾——type 是整数持久化的，插中间会让所有已保存方案错位）
 
 SchemeData
@@ -210,7 +233,8 @@ SchemeData
     ├── saveRgb, saveDepth, saveOverlay                (仅 Vision，TR-138 运行存图开关)
     ├── extrudeAmount, extrudeSpeed, suckBackAmount, suckBackSpeed  (仅 Extrude)
     ├── delayMs  (仅 Delay)
-    └── isGripperOpen, gripperTarget  (仅 Gripper)
+    ├── isGripperOpen, gripperTarget  (仅 Gripper)
+    └── zMoveUp, zMoveDistance        (仅 ZMove：方向 + 距离 mm，恒正)
 ```
 
 ### 依赖

@@ -85,11 +85,37 @@ void ConfigPage::RefreshVisionFields()
     }
 }
 
+void ConfigPage::RefreshHandEyeFields()
+{
+    if (handEyeInputs_.size() != 16) return;
+
+    // 读法与 `SequenceWorker::ReloadFromConfig`（:201-206）、`VisionTestPage`
+    // 构造处（`VisionTestPage.cpp:238-250`）完全一致，三处必须同源。
+    std::vector<double> m;
+    try {
+        m = ConfigManager::instance().getValue<std::vector<double>>(
+            "tcpCalibration.handEyeMatrix", std::vector<double>{});
+    } catch (...) {
+        return;
+    }
+    if (m.size() != 16) {
+        SPDLOG_WARN("[ConfigPage] handEyeMatrix 长度 {} != 16，矩阵输入框不回填", m.size());
+        return;
+    }
+
+    for (int i = 0; i < 16; ++i) {
+        if (!handEyeInputs_[i]) continue;
+        // setText 不触发 editingFinished（只触发 textChanged），不会反向写入 config
+        handEyeInputs_[i]->setText(QString::number(m[i], 'g', 6));
+    }
+}
+
 void ConfigPage::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     RefreshSafePosFields();
     RefreshVisionFields();
+    RefreshHandEyeFields();
 }
 
 // ---------------------------------------------------------------------------
@@ -654,7 +680,7 @@ QWidget* ConfigPage::CreateTab4TCP()
         layout->addWidget(row);
     }
 
-    // Row 2: calibration button + label
+    // Row 2: calibration button（矩阵标题已移入下方矩阵框，见 Row 3）
     {
         auto* row = new QWidget();
         auto* rl = new QHBoxLayout(row);
@@ -668,33 +694,115 @@ QWidget* ConfigPage::CreateTab4TCP()
                 SPDLOG_INFO("[Calibration] 九点标定按钮 pressed (stub)");
         });
 
-        auto* matrixLabel = new QLabel(QStringLiteral("外参矩阵 (4x4)"));
-        matrixLabel->setStyleSheet("color: #7f9fc0; background: transparent; border: none;");
-
         rl->addWidget(calibBtn);
-        rl->addWidget(matrixLabel);
         rl->addStretch();
         layout->addWidget(row);
     }
 
-    // Row 3: matrix display
+    // Row 3: 手眼矩阵 4×4 编辑网格（2026-10-23，方案 A）
+    //
+    // 原为 4 行**硬编码** QLabel（`[ 1.000  0.000  0.000  12.300 ]` 等），既不是 config 现值
+    // （`[0,-1,0,200, -1,0,0,141, 0,0,-1,623]`）、也不是文档记的占位值 —— 是纯装饰文本，
+    // 与真实换算链路无关，属于「界面在撒谎」。本次改为 16 个输入框直接读写
+    // `tcpCalibration.handEyeMatrix`（row-major），顺带消掉这处缺陷。
+    //
+    // 生效链路（已全部现成，本次只补控件）：
+    //   editingFinished → ConfigManager::set()（含 scheduleSave 自动落盘）
+    //   → emit paramsChanged → MainWindow.cpp:248 → SequenceWorker::ReloadFromConfig()
+    //   → SequenceWorker.cpp:201-206 → CoordTransform::SetHandEyeMatrix()
     {
-        auto* matrixBox = new QWidget();
-        matrixBox->setStyleSheet("background: #0d141c; padding: 8px; border-radius: 8px;");
-        auto* ml = new QVBoxLayout(matrixBox);
-        ml->setSpacing(2);
+        auto* box = new QWidget();
+        box->setStyleSheet("background: #0d141c; border-radius: 8px;");
+        auto* outer = new QVBoxLayout(box);
+        outer->setContentsMargins(12, 10, 12, 12);
+        outer->setSpacing(8);
 
-        auto makeRow = [](const QString& text) {
-            auto* lbl = new QLabel(text);
-            lbl->setStyleSheet("color: #799bbf; font-family: 'Consolas', monospace; font-size: 13px; background: transparent; border: none;");
-            return lbl;
+        auto* title = new QLabel(QStringLiteral("外参矩阵 T_cam→robot（4×4，row-major）"));
+        title->setStyleSheet("color: #7f9fc0; font-size: 12px; background: transparent; border: none;");
+        outer->addWidget(title);
+
+        // 整组一次写入：任一格非法则整组不写（避免落一个半截矩阵）；值未变化则不写盘、
+        // 不 emit paramsChanged（否则 Tab 走一遍 16 个框会触发 16 次 ReloadFromConfig）。
+        auto commit = [this]() {
+            if (handEyeInputs_.size() != 16) return;
+
+            std::vector<double> vals;
+            vals.reserve(16);
+            for (int i = 0; i < 16; ++i) {
+                auto* e = handEyeInputs_[i];
+                if (!e) return;
+                bool ok = false;
+                const double v = e->text().trimmed().toDouble(&ok);
+                if (!ok) {
+                    SPDLOG_WARN("[ConfigPage] handEyeMatrix 第 {} 项不是合法数字（'{}'），整组不写入",
+                                i, e->text().toStdString());
+                    if (handEyeHint_) {
+                        handEyeHint_->setStyleSheet("color: #e07a5f; font-size: 12px; background: transparent; border: none;");
+                        handEyeHint_->setText(QStringLiteral("第 %1 项不是合法数字，未写入").arg(i + 1));
+                    }
+                    return;
+                }
+                vals.push_back(v);
+            }
+            // 末行固定 [0,0,0,1]：控件已只读，此处再兜一层（防程序化 setText 带入偏差）
+            vals[12] = 0.0; vals[13] = 0.0; vals[14] = 0.0; vals[15] = 1.0;
+
+            auto& cfg = ConfigManager::instance();
+            const auto cur = cfg.getValue<std::vector<double>>(
+                "tcpCalibration.handEyeMatrix", std::vector<double>{});
+            if (cur.size() == 16 && std::equal(cur.begin(), cur.end(), vals.begin())) {
+                return;   // 未变化：不写盘、不触发重载
+            }
+
+            nlohmann::json arr = nlohmann::json::array();
+            for (double v : vals) arr.push_back(v);
+            cfg.set("tcpCalibration.handEyeMatrix", arr);
+            emit paramsChanged();
+
+            if (handEyeHint_) {
+                handEyeHint_->setStyleSheet("color: #6fbf8f; font-size: 12px; background: transparent; border: none;");
+                handEyeHint_->setText(QStringLiteral("已写入并生效"));
+            }
+            SPDLOG_INFO("[ConfigPage] handEyeMatrix updated (16 elements, row-major)");
         };
-        ml->addWidget(makeRow(QStringLiteral("[ 1.000  0.000  0.000  12.300 ]")));
-        ml->addWidget(makeRow(QStringLiteral("[ 0.000  1.000  0.000  -5.700 ]")));
-        ml->addWidget(makeRow(QStringLiteral("[ 0.000  0.000  1.000  38.100 ]")));
-        ml->addWidget(makeRow(QStringLiteral("[ 0.000  0.000  0.000  1.000  ]")));
 
-        layout->addWidget(matrixBox);
+        auto* grid = new QGridLayout();
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(8);
+        grid->setVerticalSpacing(5);
+
+        handEyeInputs_.clear();
+        handEyeInputs_.reserve(16);
+
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                const int idx = r * 4 + c;   // row-major 下标，与 config 数组元素一一对应
+                auto* edit = new QLineEdit();
+                edit->setFixedWidth(80);
+                edit->setAlignment(Qt::AlignRight);
+
+                const bool fixedRow = (r == 3);   // 齐次矩阵末行 [0,0,0,1]：只读
+                edit->setReadOnly(fixedRow);
+                edit->setStyleSheet(fixedRow
+                    ? "background: #0a1016; border: 1px solid #26313d; color: #5d6d7d; padding: 4px 8px; border-radius: 6px;"
+                    : "background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; padding: 4px 8px; border-radius: 6px;");
+                if (fixedRow) {
+                    edit->setText(QString::number(idx == 15 ? 1.0 : 0.0));
+                } else {
+                    QObject::connect(edit, &QLineEdit::editingFinished, this, commit);
+                }
+
+                handEyeInputs_.append(edit);
+                grid->addWidget(edit, r, c);
+            }
+        }
+        outer->addLayout(grid);
+
+        handEyeHint_ = new QLabel(QStringLiteral("改完按 Enter 或移开焦点即写入；方案运行中不生效"));
+        handEyeHint_->setStyleSheet("color: #5f7183; font-size: 12px; background: transparent; border: none;");
+        outer->addWidget(handEyeHint_);
+
+        layout->addWidget(box);
     }
 
     layout->addStretch();

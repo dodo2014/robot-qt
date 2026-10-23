@@ -232,21 +232,10 @@ VisionTestPage::VisionTestPage(QWidget* parent)
 
     ConfigPaths::ensureConfigLoaded();   // 本页构造早于 config 加载（MainWindow 先 SetupUI 后 Initialize）
 
-    // 手眼矩阵（2026-10-19）：读法与 `SequenceWorker::ReloadFromConfig`（:201-206）逐条一致
-    // ——`getValue<std::vector<double>>` + 长度必须正好 16，否则整块跳过。
-    // 不读的话本页的「基座 X/Y/Z」三列只能显示 `--`。
-    {
-        auto m = ConfigManager::instance().getValue<std::vector<double>>(
-            "tcpCalibration.handEyeMatrix", std::vector<double>{});
-        if (m.size() == 16) {
-            std::array<double, 16> arr{};
-            for (size_t i = 0; i < 16; ++i) arr[i] = m[i];
-            coord_.SetHandEyeMatrix(arr);
-            coordMatrixLoaded_ = true;
-        } else {
-            SPDLOG_WARN("[VisionTest] handEyeMatrix 长度 {} != 16，基座坐标列不可用", m.size());
-        }
-    }
+    // 手眼矩阵（2026-10-19）：构造时读一次。
+    // 2026-10-23 起配置页可编辑该矩阵 ⇒ 由 MainWindow 在 paramsChanged 里调
+    // ReloadHandEyeMatrix() 重读，否则本页基座三列会与自动运行页不一致（见 .h 注释）。
+    ReloadHandEyeMatrix();
 
     auto camTypes = CameraFactory::Instance().AvailableTypes();
     if (camTypes.empty()) camTypes.push_back("SimCamera");
@@ -370,6 +359,26 @@ VisionTestPage::~VisionTestPage()
             saverThread_->setParent(nullptr);
             SPDLOG_WARN("[VisionTestPage] 存图线程 2s 内未退出，跳过 FrameSaver 回收（避免跨线程 delete）");
         }
+    }
+}
+
+// 手眼矩阵重读（2026-10-23）：构造时调用一次；配置页改矩阵后由 MainWindow 再调。
+// 读法与 `SequenceWorker::ReloadFromConfig`（:201-206）逐条一致 —— `getValue<std::vector<double>>`
+// + 长度必须正好 16，否则整块跳过。
+// ⚠ 长度异常时**保持上一次的矩阵**（不清 `coordMatrixLoaded_`）：一次坏配置不该把已在用的
+//   好矩阵废掉；基座三列继续按旧矩阵换算，与自动运行页的行为差异留给日志暴露。
+// 线程：只在 UI 线程调用；`coord_` 的读点（`ToBase` / 结果表填充）同样在 UI 线程，无需加锁。
+void VisionTestPage::ReloadHandEyeMatrix()
+{
+    auto m = ConfigManager::instance().getValue<std::vector<double>>(
+        "tcpCalibration.handEyeMatrix", std::vector<double>{});
+    if (m.size() == 16) {
+        std::array<double, 16> arr{};
+        for (size_t i = 0; i < 16; ++i) arr[i] = m[i];
+        coord_.SetHandEyeMatrix(arr);
+        coordMatrixLoaded_ = true;
+    } else {
+        SPDLOG_WARN("[VisionTest] handEyeMatrix 长度 {} != 16，基座坐标列不可用", m.size());
     }
 }
 

@@ -150,6 +150,12 @@ private:
     double m_lastOpenTarget = -3.0;
     double m_lastCloseTarget = 0.0;
 
+    // ---- 上下移动（ZMove = 6，2026-10-22）----
+    // 方向下拉（上移 / 下移）+ 距离输入（mm，恒正）。两个控件**分开**表达方向与数值，
+    // 不用「带符号距离」——那样改方向会覆盖用户已填的数值，反之亦然。
+    QComboBox* m_zMoveDirCombo = nullptr;
+    QDoubleSpinBox* m_zMoveDistanceSpin = nullptr;
+
     QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
     QPushButton* m_runSelectedBtn = nullptr;
     QPushButton* m_stepBtn = nullptr;

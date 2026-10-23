@@ -46,6 +46,17 @@ public:
     // **签名不可变**：`MainWindow.cpp` 在模式切换时调用（`SetParamsLocked(bool)`）。
     void SetParamsLocked(bool locked);
 
+    // 手眼矩阵重读（2026-10-23）：配置页改 `tcpCalibration.handEyeMatrix` 后由 MainWindow
+    // 在 `paramsChanged` 里调用。
+    //
+    // 为什么需要它：本页 `coord_` 的矩阵只在**构造时**读一次（见下方成员注释），而
+    // `SequenceWorker` 每次 `ReloadFromConfig` 都重读 ⇒ 不改这里的话，配置页改完矩阵后
+    // 自动运行页用新值、本页「基座 X/Y/Z」三列仍按旧值换算，必须重启才一致。
+    //
+    // ⚠ 只影响**后续**检测：已显示的结果行不重算（要更新须重跑识别）。
+    // ⚠ 读法与 `SequenceWorker::ReloadFromConfig`（:201-206）必须逐条一致。
+    void ReloadHandEyeMatrix();
+
 private slots:
     void OnRefreshDevices();
     void OnStartStream();

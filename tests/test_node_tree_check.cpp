@@ -143,6 +143,14 @@ void TestResourcesAndValidation()
           "Move 与 VisionGuide 资源集合相同");
     checkEq(ProcessManager::resourceKeysOf(ActionType::Delay).size(), 0, "Delay 不占硬件资源");
 
+    // ZMove（上下移动，TR-153）：只占 Z 一根轴 —— 与 Move 冲突、与夹爪/挤出合法
+    checkEq(ProcessManager::resourceKeysOf(ActionType::ZMove).size(), 1, "ZMove 只占 1 项轴资源");
+    check(ProcessManager::resourceKeysOf(ActionType::ZMove)
+              == QStringList{ QStringLiteral("Axis_Z") },
+          "ZMove 占用的正是 Axis_Z");
+    checkEqStr(ProcessManager::actionTypeName(ActionType::ZMove),
+               QStringLiteral("上下移动"), "ZMove 显示名为「上下移动」");
+
     const auto move1 = makeAction(1, "移动A", ActionType::Move);
     const auto move2 = makeAction(2, "移动B", ActionType::Move);
     const auto guide = makeAction(3, "引导", ActionType::VisionGuide);
@@ -150,6 +158,7 @@ void TestResourcesAndValidation()
     const auto extr  = makeAction(5, "挤出", ActionType::Extrude);
     const auto delay = makeAction(6, "延时", ActionType::Delay);
     const auto vis   = makeAction(7, "识别", ActionType::Vision);
+    const auto zmove = makeAction(11, "上移10", ActionType::ZMove);
 
     check(ProcessManager::validateGroupChildren({ move1, grip }).isEmpty(),
           "移动 + 夹爪 → 合法（不同资源）");
@@ -167,6 +176,16 @@ void TestResourcesAndValidation()
           "移动 + 识别 → 合法（轴 vs 相机）");
     check(ProcessManager::validateGroupChildren({ grip, extr, delay }).isEmpty(),
           "夹爪 + 挤出 + 延时 → 合法（三资源互不相交）");
+
+    // ZMove 的资源互斥（TR-153）：与移动争 Axis_Z、与夹爪/延时合法、两个上下移动互斥
+    check(!ProcessManager::validateGroupChildren({ move1, zmove }).isEmpty(),
+          "上下移动 + 移动 → 拒绝（争用 Axis_Z）");
+    check(ProcessManager::validateGroupChildren({ zmove, grip }).isEmpty(),
+          "上下移动 + 夹爪 → 合法（不同轴）");
+    check(ProcessManager::validateGroupChildren({ zmove, delay }).isEmpty(),
+          "上下移动 + 延时 → 合法（Delay 不占资源）");
+    check(!ProcessManager::validateGroupChildren({ zmove, zmove }).isEmpty(),
+          "上下移动 + 上下移动 → 拒绝（都下发 Axis_Z 绝对目标）");
 
     // §6.4 数据依赖：识别不能与**引用它编号**的视觉引导同组
     ActionData dependent = makeAction(8, "引导引用7", ActionType::VisionGuide);
@@ -362,6 +381,13 @@ void TestJsonRoundTrip(const QString& path)
                                       QStringLiteral("组内夹爪"), ActionType::Gripper);
         grp.children.push_back(child);
         scheme.nodes.insert(1, grp);
+
+        // ZMove（上下移动，TR-153）参数往返：方向 false（下移）+ 非默认距离 7.5 mm
+        ActionData zmove = makeAction(ProcessManager::allocateActionId(scheme),
+                                      QStringLiteral("下移7.5"), ActionType::ZMove);
+        zmove.zMoveUp = false;
+        zmove.zMoveDistance = 7.5;
+        scheme.nodes.push_back(zmove);
     }
     pm.save();
 
@@ -370,17 +396,24 @@ void TestJsonRoundTrip(const QString& path)
     check(dumped.find("\"nodeType\"") != std::string::npos, "落盘写入 nodeType");
     check(dumped.find("\"group\"") != std::string::npos, "分组以 nodeType=group 落盘");
     check(dumped.find("\"children\"") != std::string::npos, "分组子节点写入 children");
+    check(dumped.find("\"zMoveUp\": false") != std::string::npos, "落盘写入 zMoveUp=false");
+    check(dumped.find("\"zMoveDistance\": 7.5") != std::string::npos, "落盘写入 zMoveDistance=7.5");
 
     pm.load(true);
     checkEq(pm.schemes().size(), 1, "重新载入 1 个方案");
     if (pm.schemes().isEmpty()) return;
     const SchemeData& s2 = pm.schemes()[0];
-    checkEq(s2.nodes.size(), 4, "树形往返：一级节点 4 个");
+    checkEq(s2.nodes.size(), 5, "树形往返：一级节点 5 个");
     check(s2.nodes[1].isGroup(), "第 2 个一级节点是分组");
     checkEq(s2.nodes[1].children.size(), 1, "分组保留 1 个子节点");
     checkEqStr(s2.nodes[1].children[0].name, QStringLiteral("组内夹爪"), "组内子节点名称往返一致");
     checkEq(s2.nodes[1].children[0].id, 5, "组内子节点编号往返一致");
-    checkEq(s2.nextActionId, 6, "nextActionId 往返一致");
+    checkEq(static_cast<int>(s2.nodes[4].type), static_cast<int>(ActionType::ZMove),
+            "上下移动类型往返一致（type=6）");
+    check(!s2.nodes[4].zMoveUp, "zMoveUp=false 往返一致");
+    check(s2.nodes[4].zMoveDistance > 7.49 && s2.nodes[4].zMoveDistance < 7.51,
+          "zMoveDistance=7.5 往返一致");
+    checkEq(s2.nextActionId, 7, "nextActionId 往返一致");
 
     // 再存一次 → 内容稳定（幂等：不会每次保存都改编号）
     const std::string first = readFile(path);

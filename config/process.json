@@ -43,7 +43,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 0,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -68,7 +70,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 4,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -93,7 +97,9 @@
                     "templateName": "template_a",
                     "threshold": 0.85,
                     "type": 1,
-                    "visionType": "CCD"
+                    "visionType": "CCD",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -118,7 +124,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 5,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 1000,
@@ -143,7 +151,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 3,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -195,7 +205,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 0,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -220,7 +232,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 4,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -294,7 +308,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 0,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 }
             ],
             "schemeName": "方案_1"
@@ -325,7 +341,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 3,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -350,7 +368,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 3,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -375,7 +395,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 1,
-                    "visionType": "CCD"
+                    "visionType": "CCD",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -400,7 +422,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 5,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "delayMs": 0,
@@ -425,7 +449,9 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 4,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
                     "children": [
@@ -452,7 +478,9 @@
                             "templateName": "",
                             "threshold": 0.0,
                             "type": 1,
-                            "visionType": "CCD"
+                            "visionType": "CCD",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
                         },
                         {
                             "delayMs": 5000,
@@ -477,7 +505,9 @@
                             "templateName": "",
                             "threshold": 0.0,
                             "type": 3,
-                            "visionType": ""
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
                         },
                         {
                             "delayMs": 0,
@@ -502,7 +532,9 @@
                             "templateName": "",
                             "threshold": 0.0,
                             "type": 4,
-                            "visionType": ""
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
                         },
                         {
                             "delayMs": 0,
@@ -538,7 +570,9 @@
                             "templateName": "",
                             "threshold": 0.0,
                             "type": 0,
-                            "visionType": ""
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
                         },
                         {
                             "delayMs": 0,
@@ -563,7 +597,9 @@
                             "templateName": "",
                             "threshold": 0.0,
                             "type": 2,
-                            "visionType": ""
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
                         }
                     ],
                     "id": 14,
@@ -574,7 +610,7 @@
             "schemeName": "方案_2"
         },
         {
-            "nextActionId": 4,
+            "nextActionId": 13,
             "nodes": [
                 {
                     "delayMs": 0,
@@ -616,32 +652,70 @@
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 0,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 },
                 {
-                    "delayMs": 0,
-                    "exposure": 0.0,
-                    "extrudeAmount": 0.0,
-                    "extrudeSpeed": 0.0,
-                    "gripperTarget": 0.0,
-                    "guideR": 179.9,
-                    "id": 2,
-                    "isGripperOpen": false,
-                    "name": "泡芙识别",
-                    "nodeType": "action",
-                    "offsetZ": 0.0,
-                    "points": [],
-                    "saveDepth": true,
-                    "saveOverlay": true,
-                    "saveRgb": true,
-                    "sourceActionId": 0,
-                    "speedPercent": 100,
-                    "suckBackAmount": 0.0,
-                    "suckBackSpeed": 0.0,
-                    "templateName": "",
-                    "threshold": 0.0,
-                    "type": 1,
-                    "visionType": "CCD"
+                    "children": [
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": 0.0,
+                            "guideR": 179.9,
+                            "id": 5,
+                            "isGripperOpen": false,
+                            "name": "泡芙识别",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "saveDepth": true,
+                            "saveOverlay": true,
+                            "saveRgb": true,
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 1,
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
+                        },
+                        {
+                            "delayMs": 0,
+                            "exposure": 0.0,
+                            "extrudeAmount": 0.0,
+                            "extrudeSpeed": 0.0,
+                            "gripperTarget": -4.0,
+                            "guideR": 179.9,
+                            "id": 6,
+                            "isGripperOpen": true,
+                            "name": "打开夹爪",
+                            "nodeType": "action",
+                            "offsetZ": 0.0,
+                            "points": [],
+                            "saveDepth": false,
+                            "saveOverlay": false,
+                            "saveRgb": false,
+                            "sourceActionId": 0,
+                            "speedPercent": 100,
+                            "suckBackAmount": 0.0,
+                            "suckBackSpeed": 0.0,
+                            "templateName": "",
+                            "threshold": 0.0,
+                            "type": 4,
+                            "visionType": "",
+                            "zMoveDistance": 10.0,
+                            "zMoveUp": true
+                        }
+                    ],
+                    "id": 4,
+                    "name": "并发组",
+                    "nodeType": "group"
                 },
                 {
                     "delayMs": 0,
@@ -659,14 +733,179 @@
                     "saveDepth": false,
                     "saveOverlay": false,
                     "saveRgb": false,
-                    "sourceActionId": 2,
+                    "sourceActionId": 5,
                     "speedPercent": 100,
                     "suckBackAmount": 0.0,
                     "suckBackSpeed": 0.0,
                     "templateName": "",
                     "threshold": 0.0,
                     "type": 5,
-                    "visionType": ""
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 8,
+                    "isGripperOpen": false,
+                    "name": "下移",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "saveDepth": false,
+                    "saveOverlay": false,
+                    "saveRgb": false,
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 6,
+                    "visionType": "",
+                    "zMoveDistance": 20.0,
+                    "zMoveUp": false
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": -1.8,
+                    "guideR": 179.9,
+                    "id": 7,
+                    "isGripperOpen": false,
+                    "name": "抓紧泡芙",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "saveDepth": false,
+                    "saveOverlay": false,
+                    "saveRgb": false,
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 4,
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 9,
+                    "isGripperOpen": false,
+                    "name": "上移",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [],
+                    "saveDepth": false,
+                    "saveOverlay": false,
+                    "saveRgb": false,
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 6,
+                    "visionType": "",
+                    "zMoveDistance": 30.0,
+                    "zMoveUp": true
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 11,
+                    "isGripperOpen": false,
+                    "name": "安全位",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 180.1,
+                                "x": 307.46,
+                                "y": 47.96,
+                                "z": 126.95
+                            },
+                            "joints": {
+                                "j1": -29.474062500000002,
+                                "j2": 61.400001525878906,
+                                "j3": -38.04736328125,
+                                "j4": 180.09999084472656
+                            },
+                            "name": "点_001",
+                            "posture": "elbow_up"
+                        }
+                    ],
+                    "saveDepth": false,
+                    "saveOverlay": false,
+                    "saveRgb": false,
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
+                },
+                {
+                    "delayMs": 0,
+                    "exposure": 0.0,
+                    "extrudeAmount": 0.0,
+                    "extrudeSpeed": 0.0,
+                    "gripperTarget": 0.0,
+                    "guideR": 179.9,
+                    "id": 12,
+                    "isGripperOpen": false,
+                    "name": "灌装位",
+                    "nodeType": "action",
+                    "offsetZ": 0.0,
+                    "points": [
+                        {
+                            "coord": {
+                                "r": 79.7,
+                                "x": 351.47,
+                                "y": 57.8,
+                                "z": 165.0
+                            },
+                            "name": "点_001",
+                            "posture": "elbow_up"
+                        }
+                    ],
+                    "saveDepth": false,
+                    "saveOverlay": false,
+                    "saveRgb": false,
+                    "sourceActionId": 0,
+                    "speedPercent": 100,
+                    "suckBackAmount": 0.0,
+                    "suckBackSpeed": 0.0,
+                    "templateName": "",
+                    "threshold": 0.0,
+                    "type": 0,
+                    "visionType": "",
+                    "zMoveDistance": 10.0,
+                    "zMoveUp": true
                 }
             ],
             "schemeName": "方案_409"

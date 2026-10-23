@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>手眼标定反解工具 · 轻触法</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#ffffff; --line:#dfe3e8; --line2:#eef1f4;
+    --text:#1b2129; --dim:#5d6875; --dim2:#8b96a3;
+    --accent:#1a6dd4; --accent-bg:#eaf2fd;
+    --ok:#128a4b; --ok-bg:#e7f6ee;
+    --warn:#a86900; --warn-bg:#fdf3e0;
+    --bad:#c0392b; --bad-bg:#fdeceb;
+    --mono:"Cascadia Mono","Consolas","SFMono-Regular",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:22px 26px 60px;background:var(--bg);color:var(--text);
+       font:14px/1.62 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  h1{font-size:19px;margin:0 0 4px;font-weight:650;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:18px}
+  .wrap{max-width:1180px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 12px;font-weight:650;color:var(--dim);
+           text-transform:uppercase;letter-spacing:.9px}
+  textarea{width:100%;min-height:132px;font-family:var(--mono);font-size:12.5px;
+           line-height:1.55;padding:10px 12px;border:1px solid var(--line);
+           border-radius:8px;background:#fbfcfd;color:var(--text);resize:vertical}
+  textarea:focus,input:focus,select:focus{outline:2px solid var(--accent-bg);border-color:var(--accent)}
+  input[type=text],input[type=number],select{font-family:var(--mono);font-size:12.5px;
+           padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--text)}
+  .grid{display:grid;gap:10px 18px}
+  .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  label.f{display:block;font-size:11.5px;color:var(--dim2);margin-bottom:3px;letter-spacing:.3px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  button{font:inherit;font-size:13px;padding:7px 15px;border-radius:7px;border:1px solid var(--line);
+         background:#fff;color:var(--text);cursor:pointer;transition:.12s}
+  button:hover{background:#f2f5f8;border-color:#c8d0d9}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover{background:#155cb5;border-color:#155cb5}
+  button.ghost{background:transparent;border-color:transparent;color:var(--accent);padding:5px 8px}
+  button.ghost:hover{background:var(--accent-bg)}
+  table{width:auto;min-width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px;
+        font-variant-numeric:tabular-nums}
+  th,td{padding:6px 13px;text-align:right;border-bottom:1px solid var(--line2);white-space:nowrap}
+  th{color:var(--dim2);font-weight:600;font-size:11.5px;text-align:right;border-bottom:1px solid var(--line);
+     letter-spacing:.3px;position:sticky;top:0;background:var(--panel)}
+  th:first-child,td:first-child{text-align:left}
+  tbody tr:hover{background:#f8fafc}
+  .neg{color:var(--bad)}
+  .kpi{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:6px}
+  .kpi .box{border:1px solid var(--line);border-radius:9px;padding:12px 14px;background:#fbfcfd}
+  .kpi .box .n{font-size:11.5px;color:var(--dim2);letter-spacing:.5px;margin-bottom:4px}
+  .kpi .box .v{font-family:var(--mono);font-size:25px;font-weight:600;letter-spacing:-.5px}
+  .kpi .box .m{font-family:var(--mono);font-size:11.5px;color:var(--dim);margin-top:3px}
+  .tag{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:20px;
+       font-weight:600;letter-spacing:.2px;vertical-align:middle}
+  .tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .tag.warn{background:var(--warn-bg);color:var(--warn)}
+  .tag.bad{background:var(--bad-bg);color:var(--bad)}
+  .note{font-size:12.5px;color:var(--dim);line-height:1.7}
+  .note b{color:var(--text);font-weight:600}
+  code,.mono{font-family:var(--mono);font-size:12px;background:#f1f4f7;padding:1px 5px;border-radius:4px}
+  pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.65;background:#fbfcfd;
+      border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto;color:var(--text)}
+  .alert{border-radius:8px;padding:11px 14px;font-size:12.5px;line-height:1.7;margin-top:12px}
+  .alert.bad{background:var(--bad-bg);color:#8c2a20;border:1px solid #f3c9c4}
+  .alert.warn{background:var(--warn-bg);color:#7d4f00;border:1px solid #f0dcb8}
+  .alert.ok{background:var(--ok-bg);color:#0d6237;border:1px solid #c3e7d3}
+  .tblbox{max-height:420px;overflow:auto;border:1px solid var(--line2);border-radius:8px}
+  .hidden{display:none}
+  .sep{height:1px;background:var(--line2);margin:14px 0}
+  .legend{font-size:11.5px;color:var(--dim2);margin-top:8px;line-height:1.75}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>手眼标定反解 · 轻触法</h1>
+  <div class="sub">像素 + 深度 → 相机系 → 基座系，反解平移分量 Ox / Oy / Oz。全离线单文件，无外部依赖。</div>
+
+  <!-- ========== 1 内参 ========== -->
+  <div class="card">
+    <h2>1 · 相机内参</h2>
+    <div class="grid g4">
+      <div><label class="f">fx</label><input type="text" id="fx" value="1037.46" style="width:100%"></div>
+      <div><label class="f">fy</label><input type="text" id="fy" value="1037.70" style="width:100%"></div>
+      <div><label class="f">cx</label><input type="text" id="cx" value="966.17" style="width:100%"></div>
+      <div><label class="f">cy</label><input type="text" id="cy" value="542.81" style="width:100%"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="legend" style="margin:0">可直接粘贴日志里的内参行 →</span>
+      <input type="text" id="intrLine" placeholder="[OrbbecCamera] 彩色内参: fx=1037.46 fy=1037.70 cx=966.17 cy=542.81 ..." style="flex:1;min-width:320px">
+      <button class="ghost" onclick="applyIntr()">提取</button>
+    </div>
+  </div>
+
+  <!-- ========== 2 数据 ========== -->
+  <div class="card">
+    <h2>2 · 采点数据</h2>
+    <div class="note" style="margin-bottom:10px">
+      每行一个点，<b>Tab 分隔</b>（从 Excel 直接复制即可）。第 1 列是轻触时的机械臂位姿，后面 1~3 列是识别结果（每列一条）。<br>
+      每格都能直接粘日志原文，解析器认这些写法：
+      <code>(358.69, 1.15, 38.29)</code> ·
+      <code>358.69, 1.15, 38.29</code> ·
+      <code>u=1224 v=273 w=74 h=69 box=(1191,248) z=583.9mm conf=0.702 base=(351.8,-4.1,39.1)mm</code> ·
+      <code>u=1224 v=273 z=583.9</code> ·
+      <code>1224 273 583.9</code>
+    </div>
+    <textarea id="data" spellcheck="false" placeholder="(358.69, 1.15, 38.29)&#9;u=1224 v=273 z=583.9mm&#9;u=1228 v=270 z=583.9mm&#9;u=1230 v=266 z=584.0mm
+(321.72, 115.90, 39.45)&#9;u=1073 v=324 z=585.0mm&#9;u=1075 v=320 z=584.0mm&#9;u=1071 v=327 z=585.0mm"></textarea>
+    <div class="row" style="margin-top:11px">
+      <button class="primary" onclick="run()">计算 Ox / Oy / Oz</button>
+      <button onclick="loadDemo()">载入 2026-10-21 实测 9 点</button>
+      <button onclick="document.getElementById('data').value='';document.getElementById('out').innerHTML='';">清空</button>
+      <span style="flex:1"></span>
+      <label class="f" style="margin:0">聚合</label>
+      <select id="agg" onchange="run()">
+        <option value="median">中位数（方案 §6.2 默认）</option>
+        <option value="mean">均值（最小二乘）</option>
+      </select>
+      <label class="f" style="margin:0">求解模式</label>
+      <select id="mode" onchange="run()">
+        <option value="A">A · 面内 180°（现行，解 3 个平移）</option>
+        <option value="B">B · 面内角 φ 自由（解 φ + 3 个平移）</option>
+        <option value="C">C · 全 3D 刚体 Kabsch（解 6 自由度）</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ========== 输出 ========== -->
+  <div id="out"></div>
+
+  <!-- ========== 判据 ========== -->
+  <div class="card">
+    <h2>判据（来自 doc/hand_eye_calibration_plan.md §6）</h2>
+    <div class="note">
+      <b>残差</b>：用解出的 t 回代每个点，与轻触真值比较。XY ≤ <b>1.0 mm</b>、Z ≤ <b>2.0 mm</b> 才算合格。<br>
+      <b>数据自洽</b>：刚体变换保距。视觉点集与真值点集的<b>成对距离</b>差应 ≤ 5 mm；若远超此值，说明两侧测的不是同一批物理点（靶标被碰移 / 关节回差 / 位姿读数时刻不一致），此时任何矩阵都拟合不上。<br>
+      <b>Ox/Oy 的统计不确定度</b>按标准误 SE = std/√n 给出；逐点极差更能反映真实离散，通常远大于 SE。
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* ---------- 解析 ---------- */
+function nums(s){
+  return (s.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+}
+function parsePose(s){
+  var m = nums(s);
+  if (m.length < 3) return null;
+  return {x:m[0], y:m[1], z:m[2]};
+}
+function parseDet(s){
+  if (!s || !s.trim()) return null;
+  var u = s.match(/u\s*=\s*(-?\d+(?:\.\d+)?)/i);
+  var v = s.match(/v\s*=\s*(-?\d+(?:\.\d+)?)/i);
+  var z = s.match(/z\s*=\s*(-?\d+(?:\.\d+)?)/i);
+  if (u && v && z) return {u:+u[1], v:+v[1], z:+z[1]};
+  // 退化为纯数字：u v z
+  var m = nums(s);
+  if (m.length >= 3) return {u:m[0], v:m[1], z:m[2]};
+  return null;
+}
+function applyIntr(){
+  var s = document.getElementById('intrLine').value;
+  var g = function(k){
+    var m = s.match(new RegExp(k + '\\s*=\\s*(-?\\d+(?:\\.\\d+)?)', 'i'));
+    return m ? m[1] : null;
+  };
+  ['fx','fy','cx','cy'].forEach(function(k){
+    var val = g(k);
+    if (val !== null) document.getElementById(k).value = val;
+  });
+  run();
+}
+
+/* ---------- 数值小工具 ---------- */
+function mean(a){ return a.reduce(function(p,c){return p+c;},0)/a.length; }
+function median(a){
+  var b = a.slice().sort(function(x,y){return x-y;});
+  var n = b.length;
+  return n % 2 ? b[(n-1)/2] : (b[n/2-1] + b[n/2])/2;
+}
+function std(a, ddof){
+  ddof = ddof === undefined ? 1 : ddof;
+  var m = mean(a), n = a.length;
+  if (n - ddof <= 0) return 0;
+  return Math.sqrt(a.reduce(function(p,c){return p+(c-m)*(c-m);},0)/(n-ddof));
+}
+function fmt(v, d){ d = d === undefined ? 2 : d; return (v>=0?' ':'') + v.toFixed(d); }
+function f2(v){ return v.toFixed(2); }
+
+/* ---------- 主计算 ---------- */
+function run(){
+  var fx = +document.getElementById('fx').value;
+  var fy = +document.getElementById('fy').value;
+  var cx = +document.getElementById('cx').value;
+  var cy = +document.getElementById('cy').value;
+  var mode = document.getElementById('mode').value;
+  var agg = (document.getElementById('agg') || {value:'median'}).value;
+  var out = document.getElementById('out');
+
+  var lines = document.getElementById('data').value.split(/\r?\n/);
+  var pts = [];
+  var skipped = 0;
+  lines.forEach(function(line){
+    if (!line.trim()) return;
+    var cells = line.split('\t');
+    if (cells.length < 2) cells = line.split(/\s*[;|]\s*/);
+    var pose = parsePose(cells[0]);
+    var dets = [];
+    for (var i = 1; i < cells.length; i++){
+      var d = parseDet(cells[i]);
+      if (d) dets.push(d);
+    }
+    if (!pose || dets.length === 0){ skipped++; return; }
+    // 同一行的多次识别取均值（先做一致性检查）
+    var us = dets.map(function(d){return d.u;});
+    var vs = dets.map(function(d){return d.v;});
+    var zs = dets.map(function(d){return d.z;});
+    pts.push({
+      truth: pose,
+      n: dets.length,
+      u: mean(us), v: mean(vs), z: mean(zs),
+      uSpread: Math.max.apply(null,us) - Math.min.apply(null,us),
+      vSpread: Math.max.apply(null,vs) - Math.min.apply(null,vs),
+      zSpread: Math.max.apply(null,zs) - Math.min.apply(null,zs)
+    });
+  });
+
+  if (pts.length < 1){
+    out.innerHTML = '<div class="card"><div class="alert bad">没有解析到有效数据。每行需要「位姿 + 至少 1 条识别结果」，用 Tab 分隔。</div></div>';
+    return;
+  }
+
+  // 相机系反投影
+  pts.forEach(function(p){
+    p.xc = (p.u - cx) * p.z / fx;
+    p.yc = (p.v - cy) * p.z / fy;
+    p.zc = p.z;
+  });
+
+  var res = solve(pts, mode, agg);
+  render(out, pts, res, mode, skipped, agg);
+}
+
+/* ---------- 三种求解 ---------- */
+function solve(pts, mode, agg){
+  agg = agg || 'median';
+  var n = pts.length;
+
+  // --- 模式 A：旋转固定 (x,y)->(-y_c,-x_c)，z->-z_c，只解平移 ---
+  var OxA = pts.map(function(p){ return p.truth.x + p.yc; });
+  var OyA = pts.map(function(p){ return p.truth.y + p.xc; });
+  var OzA = pts.map(function(p){ return p.truth.z + p.zc; });
+
+  var out = {mode:mode, n:n, OxA:OxA, OyA:OyA, OzA:OzA};
+
+  if (mode === 'A'){
+    var pick = (agg === 'mean') ? mean : median;
+    out.Ox = pick(OxA); out.Oy = pick(OyA); out.Oz = pick(OzA);
+    out.M = [[0,-1],[-1,0]];
+  }
+
+  // --- 模式 B：base_xy = Rz(φ)·(-yc,-xc) + O ---
+  if (mode === 'B'){
+    var u = pts.map(function(p){ return [-p.yc, -p.xc]; });
+    var b = pts.map(function(p){ return [p.truth.x, p.truth.y]; });
+    var mu = [mean(u.map(function(q){return q[0];})), mean(u.map(function(q){return q[1];}))];
+    var mb = [mean(b.map(function(q){return q[0];})), mean(b.map(function(q){return q[1];}))];
+    // H = Σ (u-mu)(b-mb)^T
+    var H = [[0,0],[0,0]];
+    for (var i=0;i<n;i++){
+      var du = [u[i][0]-mu[0], u[i][1]-mu[1]];
+      var db = [b[i][0]-mb[0], b[i][1]-mb[1]];
+      for (var r=0;r<2;r++) for (var c=0;c<2;c++) H[r][c] += du[r]*db[c];
+    }
+    var phi = Math.atan2(H[0][1]-H[1][0], H[0][0]+H[1][1]);
+    var cp = Math.cos(phi), sp = Math.sin(phi);
+    var R = [[cp,-sp],[sp,cp]];
+    out.phi = phi*180/Math.PI;
+    out.Ox = mb[0] - (R[0][0]*mu[0] + R[0][1]*mu[1]);
+    out.Oy = mb[1] - (R[1][0]*mu[0] + R[1][1]*mu[1]);
+    out.Oz = ((agg === 'mean') ? mean : median)(OzA);
+    // M = Rz(φ)·[[0,-1],[-1,0]]
+    out.M = [[sp, -cp], [-cp, -sp]];
+  }
+
+  // --- 模式 C：全 3D Kabsch ---
+  if (mode === 'C'){
+    var A = pts.map(function(p){ return [p.xc, p.yc, p.zc]; });
+    var B = pts.map(function(p){ return [p.truth.x, p.truth.y, p.truth.z]; });
+    var cA = [0,1,2].map(function(k){ return mean(A.map(function(q){return q[k];})); });
+    var cB = [0,1,2].map(function(k){ return mean(B.map(function(q){return q[k];})); });
+    var H3 = [[0,0,0],[0,0,0],[0,0,0]];
+    for (var j=0;j<n;j++)
+      for (var r2=0;r2<3;r2++)
+        for (var c2=0;c2<3;c2++)
+          H3[r2][c2] += (A[j][r2]-cA[r2]) * (B[j][c2]-cB[c2]);
+    var svd = svd3(H3);
+    // R = V·diag(1,1,d)·U^T
+    var V = svd.V, U = svd.U;
+    var VtU = mul3(transpose3(V), transpose3(U));
+    var det = det3(VtU);
+    var D = [[1,0,0],[0,1,0],[0,0,det<0?-1:1]];
+    var R3 = mul3(mul3(V, D), transpose3(U));
+    var t3 = [0,1,2].map(function(k){
+      return cB[k] - (R3[k][0]*cA[0] + R3[k][1]*cA[1] + R3[k][2]*cA[2]);
+    });
+    out.R3 = R3; out.t3 = t3;
+    out.Ox = t3[0]; out.Oy = t3[1]; out.Oz = t3[2];
+    out.M = [[R3[0][0], R3[0][1]], [R3[1][0], R3[1][1]]];
+    out.sing = svd.s;
+  }
+
+  // --- 统一回代残差 ---
+  var res = [];
+  pts.forEach(function(p){
+    var pb;
+    if (mode === 'C'){
+      pb = [0,1,2].map(function(k){
+        return out.R3[k][0]*p.xc + out.R3[k][1]*p.yc + out.R3[k][2]*p.zc + out.t3[k];
+      });
+    } else {
+      var M = out.M;
+      pb = [ M[0][0]*p.xc + M[0][1]*p.yc + out.Ox,
+             M[1][0]*p.xc + M[1][1]*p.yc + out.Oy,
+             -p.zc + out.Oz ];
+    }
+    // 符号与 doc/hand_eye_calibration_plan.md §6.2 一致：Δ = 真值 − 预测 = O_i − O
+    res.push({dx: p.truth.x - pb[0], dy: p.truth.y - pb[1], dz: p.truth.z - pb[2],
+              pred: pb});
+  });
+  out.res = res;
+
+  // 统计
+  var eXY = res.map(function(r){ return Math.hypot(r.dx, r.dy); });
+  var eZ  = res.map(function(r){ return Math.abs(r.dz); });
+  out.rmsXY = Math.sqrt(mean(res.map(function(r){return r.dx*r.dx + r.dy*r.dy;})));
+  out.rmsZ  = Math.sqrt(mean(res.map(function(r){return r.dz*r.dz;})));
+  out.maxXY = Math.max.apply(null, eXY);
+  out.maxZ  = Math.max.apply(null, eZ);
+
+  // 保距一致性：视觉点集 vs 真值点集
+  var dmax = 0, acc = 0, cnt = 0;
+  for (var i2=0;i2<n;i2++) for (var j2=i2+1;j2<n;j2++){
+    var d1 = Math.hypot(pts[i2].xc-pts[j2].xc, pts[i2].yc-pts[j2].yc);
+    var d2 = Math.hypot(pts[i2].truth.x-pts[j2].truth.x, pts[i2].truth.y-pts[j2].truth.y);
+    var e = d2 - d1;
+    acc += e*e; cnt++;
+    dmax = Math.max(dmax, Math.abs(e));
+  }
+  out.distRms = cnt ? Math.sqrt(acc/cnt) : 0;
+  out.distMax = dmax;
+
+  out.stats = {
+    Ox:{mean:mean(OxA), med:median(OxA), std:std(OxA), se:std(OxA)/Math.sqrt(n), ptp:Math.max.apply(null,OxA)-Math.min.apply(null,OxA)},
+    Oy:{mean:mean(OyA), med:median(OyA), std:std(OyA), se:std(OyA)/Math.sqrt(n), ptp:Math.max.apply(null,OyA)-Math.min.apply(null,OyA)},
+    Oz:{mean:mean(OzA), med:median(OzA), std:std(OzA), se:std(OzA)/Math.sqrt(n), ptp:Math.max.apply(null,OzA)-Math.min.apply(null,OzA)}
+  };
+  return out;
+}
+
+/* ---------- 3x3 线性代数（Kabsch 用） ---------- */
+function transpose3(A){
+  return [[A[0][0],A[1][0],A[2][0]],[A[0][1],A[1][1],A[2][1]],[A[0][2],A[1][2],A[2][2]]];
+}
+function mul3(A,B){
+  var C=[[0,0,0],[0,0,0],[0,0,0]];
+  for(var i=0;i<3;i++)for(var j=0;j<3;j++)for(var k=0;k<3;k++)C[i][j]+=A[i][k]*B[k][j];
+  return C;
+}
+function det3(A){
+  return A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+       - A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+       + A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
+}
+// Jacobi 特征分解对称阵 → 用于对 H 做 SVD（H = U S V^T 通过 H^T H 与 H H^T 得到）
+function jacobiSym(Ain){
+  var A = [[Ain[0][0],Ain[0][1],Ain[0][2]],[Ain[1][0],Ain[1][1],Ain[1][2]],[Ain[2][0],Ain[2][1],Ain[2][2]]];
+  var V = [[1,0,0],[0,1,0],[0,0,1]];
+  for (var sweep=0; sweep<60; sweep++){
+    var off = Math.abs(A[0][1])+Math.abs(A[0][2])+Math.abs(A[1][2]);
+    if (off < 1e-14) break;
+    for (var p=0;p<2;p++) for (var q=p+1;q<3;q++){
+      if (Math.abs(A[p][q]) < 1e-18) continue;
+      var theta = (A[q][q]-A[p][p])/(2*A[p][q]);
+      var t = Math.sign(theta||1)/(Math.abs(theta)+Math.sqrt(theta*theta+1));
+      var c = 1/Math.sqrt(t*t+1), s = t*c;
+      for (var k=0;k<3;k++){
+        var akp = A[k][p], akq = A[k][q];
+        A[k][p] = c*akp - s*akq; A[k][q] = s*akp + c*akq;
+      }
+      for (var k2=0;k2<3;k2++){
+        var apk = A[p][k2], aqk = A[q][k2];
+        A[p][k2] = c*apk - s*aqk; A[q][k2] = s*apk + c*aqk;
+      }
+      for (var k3=0;k3<3;k3++){
+        var vkp = V[k3][p], vkq = V[k3][q];
+        V[k3][p] = c*vkp - s*vkq; V[k3][q] = s*vkp + c*vkq;
+      }
+    }
+  }
+  return {val:[A[0][0],A[1][1],A[2][2]], vec:V};
+}
+function svd3(H){
+  // H = U S V^T ; 用 H^T H 求 V 与 s，再 U = H V S^-1
+  var Ht = transpose3(H);
+  var HtH = mul3(Ht, H);
+  var e = jacobiSym(HtH);
+  var order = [0,1,2].sort(function(a,b){ return e.val[b]-e.val[a]; });
+  var s = order.map(function(k){ return Math.sqrt(Math.max(0,e.val[k])); });
+  var V = [[0,0,0],[0,0,0],[0,0,0]];
+  order.forEach(function(k, col){
+    for (var r=0;r<3;r++) V[r][col] = e.vec[r][k];
+  });
+  var U = [[0,0,0],[0,0,0],[0,0,0]];
+  for (var c=0;c<3;c++){
+    if (s[c] < 1e-12){ U[0][c]=1; U[1][c]=0; U[2][c]=0; continue; }
+    for (var r2=0;r2<3;r2++)
+      U[r2][c] = (H[r2][0]*V[0][c] + H[r2][1]*V[1][c] + H[r2][2]*V[2][c]) / s[c];
+  }
+  return {U:U, V:V, s:s};
+}
+
+/* ---------- 渲染 ---------- */
+function render(out, pts, r, mode, skipped, agg){
+  agg = agg || 'median';
+  var st = r.stats;
+  var okXY = r.rmsXY <= 1.0;
+  var okZ  = r.rmsZ  <= 2.0;
+  var selfConsistent = r.distRms <= 5.0;
+
+  var html = '';
+
+  /* KPI：显示所选模式解出的 t；统计量只在模式 A 下对逐点 O 有意义 */
+  var solved = { Ox: r.Ox, Oy: r.Oy, Oz: r.Oz };
+  html += '<div class="card"><h2>结果</h2><div class="kpi">';
+  ['Ox','Oy','Oz'].forEach(function(k){
+    var s = st[k];
+    var tail = (mode === 'A')
+      ? '中位 ' + s.med.toFixed(2) + ' · 均值 ' + s.mean.toFixed(2)
+        + '<br>std ' + s.std.toFixed(2) + ' · SE ' + s.se.toFixed(2)
+        + ' · 极差 ' + s.ptp.toFixed(2)
+      : '逐点离散见下方明细';
+    html += '<div class="box"><div class="n">' + k + '</div>'
+         +  '<div class="v">' + solved[k].toFixed(2) + ' <span style="font-size:13px;color:#8b96a3">mm</span></div>'
+         +  '<div class="m">' + tail + '</div></div>';
+  });
+  html += '</div>';
+  if (mode === 'B') html += '<div class="note">面内旋转角 φ = <b>' + r.phi.toFixed(2) + '°</b>（现行矩阵对应 φ = 0°）</div>';
+  if (mode === 'C') html += '<div class="note">Kabsch 奇异值 = ' + r.sing.map(function(v){return v.toFixed(1);}).join(' / ')
+        + '（第三值 ≪ 前两者 ⇒ z 跨度不足，俯仰/横滚不可辨识）</div>';
+
+  /* 质量门 */
+  html += '<div class="row" style="margin-top:14px">';
+  html += '<span class="tag ' + (okXY?'ok':'bad') + '">XY RMS ' + r.rmsXY.toFixed(2) + ' mm ' + (okXY?'✓':'✗ 判据 1.0') + '</span>';
+  html += '<span class="tag ' + (okZ?'ok':'warn') + '">Z RMS ' + r.rmsZ.toFixed(2) + ' mm ' + (okZ?'✓':'△ 判据 2.0') + '</span>';
+  html += '<span class="tag ' + (selfConsistent?'ok':'bad') + '">数据自洽 ' + r.distRms.toFixed(1) + ' mm ' + (selfConsistent?'✓':'✗ 判据 5') + '</span>';
+  html += '<span class="tag warn">最大 XY ' + r.maxXY.toFixed(1) + ' mm</span>';
+  html += '<span class="tag warn">最大 Z ' + r.maxZ.toFixed(1) + ' mm</span>';
+  html += '</div>';
+
+  if (!selfConsistent){
+    html += '<div class="alert bad"><b>数据不自洽，这个结果不能当标定值用。</b><br>'
+         +  '视觉点集与轻触点集的成对距离差 RMS = <b>' + r.distRms.toFixed(1)
+         +  ' mm</b>（最大 ' + r.distMax.toFixed(1) + ' mm）。刚体变换保距，所以两组点若描述同一批物理点，这个值只能是 1~2 mm 的测量噪声。'
+         +  '现在它远超该量级，说明两侧测的不是同一个点。常见原因：靶标在轻触时被碰移 / 关节回差使实际位姿偏离读数 / 位姿读数与轻触不是同一时刻。'
+         +  '<br>在这种状态下，无论取均值还是中位数，Ox/Oy 的不确定度都在 ±20 mm 量级——先把上面三条消掉再采点。</div>';
+  } else if (!okXY){
+    html += '<div class="alert warn">数据自洽（' + r.distRms.toFixed(1) + ' mm），但 XY 残差 ' + r.rmsXY.toFixed(2)
+         +  ' mm 超过 1.0 mm 判据。可先看下方逐点表里是否有单点离群，剔除后重算。</div>';
+  } else {
+    html += '<div class="alert ok">三项判据全部通过，这组 t 可以写入配置。</div>';
+  }
+
+  /* 矩阵 */
+  html += '<div class="sep"></div><h2 style="font-size:13px;margin:0 0 10px;font-weight:650;color:#5d6875;text-transform:uppercase;letter-spacing:.9px">可直接写入 config.json 的 handEyeMatrix</h2>';
+  var M = r.M;
+  var rows;
+  if (mode === 'C'){
+    rows = r.R3.map(function(row,k){ return [row[0], row[1], row[2], r.t3[k]]; });
+    rows.push([0, 0, 0, 1]);
+  } else {
+    rows = [[M[0][0], M[0][1], 0, r.Ox],
+            [M[1][0], M[1][1], 0, r.Oy],
+            [0, 0, -1, r.Oz],
+            [0, 0, 0, 1]];
+  }
+  var flat = [];
+  rows.forEach(function(row){ row.forEach(function(v){ flat.push(Number(v.toFixed(6))); }); });
+  var json = '[\n  ' + flat.slice(0,4).join(', ') + ',\n  ' + flat.slice(4,8).join(', ') + ',\n  '
+           + flat.slice(8,12).join(', ') + ',\n  ' + flat.slice(12,16).join(', ') + '\n]';
+  html += '<pre id="matrixOut">' + json + '</pre>';
+  html += '<div class="row" style="margin-top:9px"><button onclick="copyMatrix(this)">复制矩阵</button>'
+       +  '<span class="legend" style="margin:0">语义 p_base = T · p_cam（row-major，16 个数）</span></div>';
+
+  /* 逐点表 */
+  html += '</div>';
+
+  var showO = (mode === 'A');   // 逐点 O 只在「旋转固定」下才有物理意义
+  html += '<div class="card"><h2>逐点明细</h2><div class="tblbox"><table><thead><tr>'
+       + '<th>#</th><th>u</th><th>v</th><th>z/mm</th><th>x_c</th><th>y_c</th>'
+       + '<th>真值 X</th><th>真值 Y</th><th>真值 Z</th>'
+       + (showO ? '<th>Ox</th><th>Oy</th><th>Oz</th>' : '')
+       + '<th>ΔX</th><th>ΔY</th><th>ΔZ</th><th>|ΔXY|</th></tr></thead><tbody>';  pts.forEach(function(p, i){
+    var e = r.res[i];
+    var dxy = Math.hypot(e.dx, e.dy);
+    var cls = dxy > 5 ? ' class="neg"' : '';
+    html += '<tr><td>' + (i+1) + '</td>'
+         + '<td>' + p.u.toFixed(0) + '</td><td>' + p.v.toFixed(0) + '</td><td>' + p.z.toFixed(1) + '</td>'
+         + '<td>' + fmt(p.xc,1) + '</td><td>' + fmt(p.yc,1) + '</td>'
+         + '<td>' + f2(p.truth.x) + '</td><td>' + f2(p.truth.y) + '</td><td>' + f2(p.truth.z) + '</td>'
+         + (showO ? '<td>' + f2(r.OxA[i]) + '</td><td>' + f2(r.OyA[i]) + '</td><td>' + f2(r.OzA[i]) + '</td>' : '')
+         + '<td' + cls + '>' + fmt(e.dx,2) + '</td><td' + cls + '>' + fmt(e.dy,2) + '</td><td' + cls + '>' + fmt(e.dz,2) + '</td>'
+         + '<td' + cls + '>' + dxy.toFixed(2) + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  /* 同一行多次识别的离散 */
+  var multi = pts.filter(function(p){ return p.n > 1; });
+  if (multi.length){
+    var maxSpread = 0;
+    multi.forEach(function(p){ maxSpread = Math.max(maxSpread, p.uSpread, p.vSpread, p.zSpread); });
+    html += '<div class="legend">同一位置多次识别的离散（检测重复性）：u 最大 ' 
+         +  Math.max.apply(null, multi.map(function(p){return p.uSpread;})).toFixed(0) + ' px · v 最大 '
+         +  Math.max.apply(null, multi.map(function(p){return p.vSpread;})).toFixed(0) + ' px · z 最大 '
+         +  Math.max.apply(null, multi.map(function(p){return p.zSpread;})).toFixed(1) + ' mm。'
+         +  '该值若远小于 ΔXY，说明误差来自真值侧（机械/对位），不是检测抖动。</div>';
+  }
+  if (skipped) html += '<div class="legend">有 ' + skipped + ' 行未能解析，已跳过。</div>';
+  html += '<div class="legend">Δ 的符号按方案 §6.2 定义：<b>Δ = 真值 − 预测 = O_i − O</b>。'
+       +  '回代关系 <code>pred = M·(x_c, y_c) + O</code>，其中模式 A 的 <code>M = [[0,−1],[−1,0]]</code>。</div>';
+  html += '</div>';
+
+  out.innerHTML = html;
+}
+
+function copyMatrix(btn){
+  var el = document.getElementById('matrixOut');
+  var txt = el.textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){
+      var old = btn.textContent;
+      btn.textContent = '已复制'; setTimeout(function(){ btn.textContent = old; }, 1200);
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+  }
+}
+
+function loadDemo(){
+  document.getElementById('data').value = [
+    '(358.69, 1.15, 38.29)\tu=1224 v=273 z=583.9mm\tu=1228 v=270 z=583.9mm\tu=1230 v=266 z=584.0mm',
+    '(321.72, 115.90, 39.45)\tu=1073 v=324 z=585.0mm\tu=1075 v=320 z=584.0mm\tu=1071 v=327 z=585.0mm',
+    '(242.49, 113.38, 39.99)\tu=1110 v=461 z=586.0mm\tu=1107 v=463 z=586.9mm\tu=1103 v=463 z=586.9mm',
+    '(198.84, 123.60, 39.46)\tu=1110 v=551 z=586.0mm\tu=1108 v=558 z=587.0mm\tu=1110 v=556 z=586.0mm',
+    '(320.47, -69.84, 40.05)\tu=1389 v=378 z=580.0mm\tu=1390 v=382 z=581.0mm\tu=1391 v=382 z=581.0mm',
+    '(320.06, -161.92, 37.99)\tu=1534 v=357 z=579.8mm\tu=1541 v=355 z=579.0mm\tu=1533 v=365 z=580.0mm',
+    '(338.77, -117.86, 38.43)\tu=1455 v=325 z=580.0mm\tu=1456 v=321 z=580.0mm\tu=1453 v=325 z=580.0mm',
+    '(240.77, -211.32, 40.07)\tu=1625 v=544 z=576.8mm\tu=1623 v=543 z=577.0mm\tu=1623 v=543 z=577.9mm',
+    '(215.85, 6.56, 39.69)\tu=1320 v=573 z=581.0mm\tu=1322 v=574 z=582.0mm\tu=1322 v=575 z=581.0mm'
+  ].join('\n');
+  run();
+}
+</script>
+</body>
+</html>

@@ -720,7 +720,7 @@ bool SequenceWorker::WaitRetryDelay(int ms)
 
 namespace {
 
-// 一个动作节点的「段」数：Move/VisionGuide 按点位，Extrude 按挤出/回抽两段，Gripper 恒 1 段。
+// 一个动作节点的「段」数：Move/VisionGuide 按点位，Extrude 按挤出/回抽两段，Gripper / ZMove 恒 1 段。
 // 段 = 「一次下发 + 一次等待」的最小单元——这正是并发时可以被重叠的部分（§5.1）。
 int SegmentCountOf(const ActionData& a)
 {
@@ -728,6 +728,7 @@ int SegmentCountOf(const ActionData& a)
     case ActionType::Move:        return a.points.size();
     case ActionType::VisionGuide: return 2;          // 目标上方 → 目标
     case ActionType::Gripper:     return 1;
+    case ActionType::ZMove:       return 1;          // 一次「读当前 Z → 算目标 → 下发」
     case ActionType::Extrude: {
         int n = 0;
         if (a.extrudeAmount > 0.0)  ++n;             // 挤出段
@@ -771,6 +772,9 @@ bool SequenceWorker::ExecuteNodeWithRetry(const ActionData& node, int index)
         return ExecuteNode(node, index);
 
     const int maxTry = impl_->loopCfg.retryCount + 1;
+    // ⚠ `ZMove`（上下移动）**刻意不在可重试列表**：它是**相对**位移，重试会重新读当前 Z
+    // 再走一遍全距离——已走一半时重试等于走 1.5 倍。相对动作不满足「重跑一次结果不变」
+    // 这一重试前提，只能失败上报。
     const bool retryable = node.isGroup()
                                || node.type == ActionType::Vision
                                || node.type == ActionType::Move;
@@ -812,6 +816,7 @@ bool SequenceWorker::ExecuteAction(const ActionData& action, int index)
     case ActionType::Extrude:
     case ActionType::Delay:
     case ActionType::Gripper:
+    case ActionType::ZMove:
         break;
     default:
         SPDLOG_WARN("[SequenceWorker] Unknown action type {}", static_cast<int>(action.type));
@@ -962,7 +967,7 @@ bool SequenceWorker::RunScheduler(std::vector<RunnerState>& runners)
 // 推进一个子状态机一次（§5.2）。三种形态：
 //   · Delay（含"无相机视觉"的模拟延时）—— 纯计时，无轴参与；
 //   · Vision —— 同步检测（数十 ms 量级，§5.4 单线程足够），一次 Step 走完；
-//   · 其余（Move / VisionGuide / Extrude / Gripper）—— 归约为「段序列」：
+//   · 其余（Move / VisionGuide / Extrude / Gripper / ZMove）—— 归约为「段序列」：
 //     Begin（解析目标）→ Dispatch（下发）→ Wait（等到位）→ 下一段。
 bool SequenceWorker::StepRunner(RunnerState& r)
 {
@@ -1094,7 +1099,7 @@ bool SequenceWorker::StepRunner(RunnerState& r)
         return true;
     }
 
-    // ---- 段序列（Move / VisionGuide / Extrude / Gripper）----
+    // ---- 段序列（Move / VisionGuide / Extrude / Gripper / ZMove）----
     for (;;) {
         if (r.phase == RunnerState::PhaseBegin) {
             if (!PrepareRunnerSegment(r)) { r.failed = true; return false; }
@@ -1233,6 +1238,49 @@ bool SequenceWorker::PrepareRunnerSegment(RunnerState& r)
         r.timeoutMs = 0;    // 下发后按 MarkAxisBusy 估算的耗时动态兜底（见 DispatchRunnerSegment）
         return true;
     }
+    case ActionType::ZMove: {
+        // 上下移动 = **相对**位移：只动 `Axis_Z`，J1/J2/R 不参与（不经过 IK）。
+        // 目标每次 Begin 都按**当前**轴位现算——前序动作（移动 / 视觉引导 / 上一轮循环）
+        // 已经改过 Z，缓存启动位会走错距离。
+        // ⚠ 但目标**一旦算出就固定进 `r.segTarget`**：暂停恢复走 `ReissueRunnerSegment`，
+        //   必须重发同一个绝对目标；若在那里重算，已走一半时会再把整段距离走一遍。
+        const double dist = action.zMoveDistance;
+        if (!(dist > 0.0)) {
+            r.failReason = QStringLiteral("上下移动：距离必须大于 0 mm（当前 %1 mm）")
+                               .arg(QString::number(dist, 'f', 2));
+            return false;
+        }
+        const double cur    = InMainThread([&] { return hw.GetPosition(LogicalAxis::Z); });
+        const double target = cur + (action.zMoveUp ? dist : -dist);
+        // 软限位硬性拦截（与夹爪 / MoveAbs 内部同源）：越界拒绝，**绝不静默改写目标**——
+        // 悄悄夹到限位会让「上移 20 mm」实际只走 5 mm，工艺数据与实走距离不一致。
+        if (!InMainThread([&] { return hw.IsWithinSoftLimits(LogicalAxis::Z, target); })) {
+            const double lo = InMainThread([&] { return hw.GetLimitMin(LogicalAxis::Z); });
+            const double hi = InMainThread([&] { return hw.GetLimitMax(LogicalAxis::Z); });
+            SPDLOG_WARN("[SequenceWorker] ZMove target {:.2f} out of soft limits [{:.2f}, {:.2f}]",
+                        target, lo, hi);
+            r.failReason = QStringLiteral("上下移动：目标 Z %1 mm 超出轴 Z 软限位（%2 ~ %3 mm），"
+                                          "当前 %4 mm，%5 %6 mm")
+                               .arg(QString::number(target, 'f', 2),
+                                    QString::number(lo, 'f', 2), QString::number(hi, 'f', 2),
+                                    QString::number(cur, 'f', 2),
+                                    action.zMoveUp ? QStringLiteral("上移") : QStringLiteral("下移"),
+                                    QString::number(dist, 'f', 2));
+            return false;
+        }
+        r.speedScale = qBound(0.01, action.speedPercent / 100.0, 1.0);
+        r.segTarget  = target;
+        r.segSpeed   = InMainThread([&] { return hw.GetMaxSpeed(LogicalAxis::Z); }) * r.speedScale;
+        emit logMessage(QStringLiteral("上下移动：%1 %2 mm（Z %3 → %4 mm，速度 %5 mm/s）")
+                            .arg(action.zMoveUp ? QStringLiteral("上移") : QStringLiteral("下移"),
+                                 QString::number(dist, 'f', 2),
+                                 QString::number(cur, 'f', 2),
+                                 QString::number(target, 'f', 2),
+                                 QString::number(r.segSpeed, 'f', 2)));
+        r.axes = { LogicalAxis::Z };
+        r.timeoutMs = 0;    // 下发后按 MarkAxisBusy 估算的耗时动态兜底（见 DispatchRunnerSegment）
+        return true;
+    }
     default:
         return true;
     }
@@ -1323,6 +1371,19 @@ bool SequenceWorker::DispatchRunnerSegment(RunnerState& r)
         r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
         return true;
     }
+    case ActionType::ZMove: {
+        // 只下发 Z 一根轴（J1/J2/R 一律不碰）。`r.segTarget` 是 Begin 阶段算好的**绝对**目标，
+        // 不是「相对量」——续走重发靠的正是这一点（见 ReissueRunnerSegment）。
+        if (!InMainThread([&] {
+                return hw.MoveAbs(LogicalAxis::Z, r.segTarget, r.segSpeed);
+            }))
+            return false;
+        // 超时同夹爪：按 MarkAxisBusy 估算 ×1.2 + 3 s 余量，下限 3000 ms（防 est=0 无限等待）。
+        // Z 是卡轴（开环步进），低速走长距离时固定 30 s 会误判超时。
+        const int estMs = InMainThread([&] { return hw.GetAxisBusyMs(LogicalAxis::Z); });
+        r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
+        return true;
+    }
     default:
         return true;
     }
@@ -1356,6 +1417,14 @@ void SequenceWorker::ReissueRunnerSegment(RunnerState& r)
     case ActionType::Gripper:
         if (hw.MoveAbs(LogicalAxis::Gripper, r.segTarget, r.segSpeed)) {
             const int estMs = hw.GetAxisBusyMs(LogicalAxis::Gripper);
+            r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
+        }
+        break;
+    case ActionType::ZMove:
+        // ⚠ 重发的是 Begin 阶段算好的**绝对目标** `r.segTarget`，**不得**在这里按当前 Z 重算：
+        // 暂停时轴已走了一部分，重算会从半路再走一整段距离（相对动作最常见的续走错误）。
+        if (hw.MoveAbs(LogicalAxis::Z, r.segTarget, r.segSpeed)) {
+            const int estMs = hw.GetAxisBusyMs(LogicalAxis::Z);
             r.timeoutMs = qMax(3000, static_cast<int>(estMs * 1.2) + 3000);
         }
         break;

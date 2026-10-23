@@ -151,6 +151,7 @@ PollTick(50ms) ─┬─ CheckAxisBusy：忙超时兜底 → axisMoveFinished（
 
 - IMotionCard 契约：接口层一律脉冲；物理↔脉冲换算只在 AxisConverter 与 BoPaiCard::PulsePerUnit（两处公式必须一致，含 gearRatio）
 - 软限位拦截语义：仅拦"正在点动且朝越界方向"；静止停在边界、反向离开、回零中的轴均放行
+- **软限位有两道、职责不同（TR-156）**：① HAL 入口门禁（`MoveAbs`/`MoveJog`）是**运动安全**的唯一权威；② `ProcessPage::OnTeachRead` 的入库前校验（`IsWithinSoftLimits` + 舵机轴先 `NormalizeRotationAngle`）只保证**落盘数据**能被下发。**UI 侧校验不得被当作门禁替代，也不要因「HAL 已拦」而删除**——删掉它只是把失败点从示教时刻推迟到执行期（越界点静默入库，跑到该动作才报错）。判据必须与 `MoveAbs` 同源、不加容差
 - 回零：MC_HomeStart 到卡端 running 有启动间隙 → 完成判定必须有 1s 保护期；reject 必须 MC_HomeStop+MC_Stop 收尾 HOME 状态机
 - StopJog 门禁：仅 `jogInProgress_ && jogAxis_==axis` 放行（回零中松点动键不得打断回零）
 - 舵机重连：两实例共享句柄必须一起断开；重连后使能复位（门禁要求人工重新使能）
