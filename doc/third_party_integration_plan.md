@@ -1,10 +1,10 @@
 # 第三方对接方案（第三方调用方案 + 拍照动作）
 
-> **性质**：⏳ **计划中**（2026-10-09 成稿）——本文是**方案**，不是已落地实现。技术事实（架构、参数、行为、踩坑）一律以 `AGENTS.md` 与源码为唯一权威源；本文与二者冲突时以二者为准。
+> **性质**：🟡 **部分实施**（2026-10-09 成稿；**2026-10-26 拍照动作已落地，TR-157**）——已落地的是**动作层**（`ActionType::Capture = 7` + 8 个 `capture*` 字段 + 详情页 + `ExecuteCapture` 执行体）；**`src/Interface/` 本地 TCP 接口层（§八）、多相机（`captureCameraId` 仅预留）、点云内容均未实施**。技术事实（架构、参数、行为、踩坑）一律以 `AGENTS.md` 与源码为唯一权威源；本文与二者冲突时以二者为准。
 >
 > **需求来源**：2026-10-09 用户提出「第三方软件调用工艺流程方案执行动作 + 采集流程中拍摄的照片做模型分析」，并分三批对 **21 项**议题作出裁定（第一批 13 项 + 第二批 8 项，见 §一）。
 >
-> **实施状态**：未实施。**前置阻塞项**见 §十一（`CaptureFrame()` 并发互斥），须先修。
+> **实施状态**：**拍照动作 ✅（TR-157，2026-10-26）**；TCP 接口层 ⏳ 未实施。**前置阻塞项**（`CaptureFrame()` 并发互斥）已于 **TR-123**（2026-10-12）修复——取帧收敛为 `ICamera::TakeLatestFrame()`，`CaptureFrame()` 只剩采集线程一个调用者，`ExecuteCapture` 走的就是 `TakeLatestFrame()`。
 >
 > **配套文档**：`doc/process.md`（`process.json` schema）、`doc/config.md`（`config.json` schema）、`doc/architecture.md`（分层依赖）、`doc/camera_integration_plan.md`（相机 HAL）、`doc/multi_camera_plan.md`（`cameraId` 字段）、`doc/action_tree_concurrency_plan.md`（资源互斥校验）。
 
@@ -76,11 +76,113 @@
 | 4  | **`CaptureFrame()` 无管线级互斥**  | `CameraCaptureWorker.cpp:58` 的 `CaptureTick` 在**独立采集线程**按 fps 调 `camera_->CaptureFrame()`；`SequenceWorker.cpp:999` 在 worker 线程也调同一个 `camera->CaptureFrame()`。而 `OrbbecCamera::CaptureFrame()`（`:623`）内部直接操作 `pipeline_` / `align_` / `colorConv_`，**只有 `frameMutex_`（护 `lastGoodFrame_`）与 `errMutex_`（护 `lastError_`），没有管线级互斥**；`HandleGrabFailure()` 还会 `DestroyPipeline()` | **前置阻塞项**（§十一）：两个线程可同时进入同一 pipeline，且其中一个可能正在重建管线 → UB / 随机崩溃。拍照动作会把这个路径高频化，**必须先修**                                   |
 | 5  | **点云没有数据源**                  | `pointCloud` 全库仅 `ICamera.h:41` 一处**声明**，无任何实现填充                                                                                                                                                                                                                                                                                                                             | 界面上的「点云」勾选框若先上线，勾了也拿不到数据 → **已裁定本期不做**（§1.4 裁定 7），该选项不上线                                                               |
 | 6  | **`FrameSaver` 是异步队列且超限丢最旧** | `FrameSaver` 队列上限 30 张，超限丢最旧                                                                                                                                                                                                                                                                                                                                                 | 拍照动作**不复用它**，改**同步落盘**（§五）——「丢图不可接受」且需保证「落盘完成才能发通知」                                                                    |
-| 7  | **`ProcessPage` 详情页索引会撞号**   | `ProcessPage.cpp:93` 的 `kGroupPageIndex = 7`；`:917` 用 `static_cast<int>(node->type) + 1` 当 stack 索引                                                                                                                                                                                                                                                                          | 新增 `Capture = 6` → 索引 7 **与分组页撞号**，`setCurrentIndex` 越界被 Qt 静默忽略 → 界面错显。必须把分组页挪到 8（§3.3）                               |
+| 7  | **`ProcessPage` 详情页索引会撞号**   | `ProcessPage.cpp:96` 的 `kGroupPageIndex = 8`（ZMove 落地后已由 7 挪到 8）；`:989` 用 `static_cast<int>(node->type) + 1` 当 stack 索引                                                                                                                                                                                                                                                                          | 新增 `Capture = 7` → 索引 8 **与分组页撞号**，`setCurrentIndex` 越界被 Qt 静默忽略 → 界面错显。必须把分组页挪到 **9**（§3.3）                               |
 | 8  | **相机持有登记是「消费前置」**            | `AutoRunPage.cpp:651` 在启动时 `AcquireCamera("AutoRun")`，`:955` 在 Idle / Fault 释放。现有「识别」动作靠这条登记让流保持运行（`SequenceWorker` 取帧是直接 `hw.camera()->CaptureFrame()`，不自己登记）                                                                                                                                                                                                               | **第三方调用不经 `AutoRunPage`，这个登记不会发生** → 接口层必须**自持** `AcquireCamera` 登记（§4.2）                                              |
 | 9  | **相机内参由 SDK 真实填充**           | `OrbbecCamera.cpp:388-397` 在 `Open()` 后从 SDK 写入 `intrinsics_.fx/fy/cx/cy/k1/k2/p1/p2/width/height`；`GetIntrinsics()`（`:833`）返回该成员                                                                                                                                                                                                                                            | 元数据契约里的 `intrinsics` **可取到真值**（`SimCamera` 为默认值 640×480）                                                               |
 | 10 | **手眼矩阵来源明确**                 | `CoordTransform.h` 的 `SetHandEyeMatrix` 注明源为 `config.tcpCalibration.handEyeMatrix`（4×4 row-major，16 元素）                                                                                                                                                                                                                                                                      | 元数据契约里的 `handEyeMatrix` 直接读该配置键                                                                                        |
 
+
+## 三、拍照动作设计
+
+> **2026-10-26 整章重写**。原文从 §二 直接跳到 §四，而 §3.3 / §3.4 / §3.5 被 §1.4、§二、§9.2、§十 反复引用却从未写出 —— 字段表、序列化、测试用例全部无锚点。本章按当日九轮裁定补齐（裁定明细见 `.workbuddy-ai/memory/2026-10-26.md`，界面原型见 `ui_desgin/capture_action_page_prototype.html`）。
+
+### 3.1 定位与资源模型
+
+拍照动作 = **纯采集 + 落盘 + 通知**，不产生任何运动。不读点位表、不下发目标、不参与正逆运动学。
+
+| 项 | 取值 | 依据 |
+| :--- | :--- | :--- |
+| `ActionType` | **`Capture = 7`** | `ZMove = 6` 已于 2026-10-22 落地占用 6（`doc/process.md:115`）。枚举**只能追加末尾**——新建对话框用 `static_cast<ActionType>(typeCombo->currentIndex())`（`ProcessPage.cpp:1647`），插在中间会让所有已存 `process.json` 的 `type` 整数整体错位 |
+| `resourceKeysOf` | **`{"Camera"}`** | 与 `Vision` **完全相同**（`ProcessManager.cpp:334`：`case ActionType::Vision: return {"Camera"}`）。相机是「**当前帧**」这一**逻辑资源**，同组只允许一个消费者。与 `Move` / `VisionGuide` 的 `{Axis_J1, Axis_J2, Axis_Z, Axis_R}` **不相交** |
+| 节点级重试 | **不参与** | §3.4 |
+| 分组 | 可作为组员 | 并发校验按**资源集合**判冲突（`ProcessManager::validateGroupChildren`，`ProcessManager.cpp:344-377`），不按类型 |
+
+**由 `{"Camera"}` 推出的三条组合结论**（须与实现一致）：
+
+| 同组组合 | 结果 | 原因 |
+| :--- | :--- | :--- |
+| 拍照 + 移动 / 视觉引导 / 夹爪 / 挤压 / 上下移动 | ✅ 允许 | 资源集合不相交 |
+| 拍照 + 识别（`Vision`） | ❌ 拒绝 | 都占 `Camera`，报「争用同一资源（Camera）」 |
+| 拍照 + 拍照 | ❌ 拒绝 | 同上 —— 两个拍照同组会在同一瞬间取同一帧，只是 tag 不同，语义上是重复采集 |
+
+⚠ **不要图省事填 `{}`（空集）**。空集能通过校验，但会让「拍照 + 识别」和「两个拍照」都放行：前者两路消费者抢同一个「最新帧」，后者产生两张几乎相同的图。`Delay` 之所以是空集，是因为它真的不碰任何资源。
+
+⚠ **通过资源校验 ≠ 语义正确**。资源校验只管硬件占用，管不住**时间一致性**：`sidecar` 的 `pose` / `joints` 与图像帧**不是原子采集**的——取帧（`TakeLatestFrame`，取最近一帧，延迟 ≤ `1/fps`）与读位姿（`GetPosition`）是两次独立调用，中间机械臂可能已动。与运动动作同组时这个错位被放大，`pose` 会指向一个「图上工件并不在那里」的位置。**使用约束：拍照动作建议独立成组或置于运动节点之后** —— 这条写进对接说明，**并发校验拦不住，只能靠约定**。
+
+### 3.2 执行路径
+
+完整时序见 §五（① ~ ⑧）。要点：取帧走 `ICamera::TakeLatestFrame()`（**不得新增 `CaptureFrame()` 调用**，TR-123 已把取帧收敛到采集线程，`CameraCaptureWorker.cpp:64`），落盘**不复用 `FrameSaver`**（异步队列超限丢最旧，见 §5 约束 3），落盘目录**固定且不可配**（§7.1）。
+
+### 3.3 详情页与索引
+
+`ProcessPage` 的详情页栈用 `static_cast<int>(node->type) + 1` 当索引（`ProcessPage.cpp:989`），故页序与枚举值**强绑定**：
+
+| 类型 | `ActionType` | stack index | 页序 |
+| :--- | :--- | :--- | :--- |
+| 移动 | 0 | 1 | Page 1 |
+| 识别 | 1 | 2 | Page 2 |
+| 挤压 | 2 | 3 | Page 3 |
+| 延时 | 3 | 4 | Page 4 |
+| 夹爪 | 4 | 5 | Page 5 |
+| 视觉引导 | 5 | 6 | Page 6 |
+| 上下移动 | 6 | 7 | Page 7 |
+| **拍照** | **7** | **8** | **Page 8（新增）** |
+| 分组 | — | **9** | Page 9（`kGroupPageIndex`，**8 → 9**） |
+
+改动点三处：
+
+1. **`ProcessPage.cpp:96`**：`constexpr int kGroupPageIndex = 8;` → **`9`**。⚠ 最容易漏且**漏了不报错**：拍照页存在时 `setCurrentIndex(8)` 会"恰好"指向拍照页 → 选中分组节点显示拍照面板；拍照页未加时 8 越界被 Qt 静默忽略 → 界面停在上一节点面板（`:92-93` 的注释已记此坑）。
+2. **`ProcessPage.cpp:1647`**：`typeCombo->addItems({...})` 末尾追加 `"拍照"`。
+3. 新增 Page 8 构建代码，沿用 `makeFormPage` / `makeLabel` / `makeFieldEdit`（`:156-180`）。
+
+界面一致性（2026-10-26 裁定）：沿用 Page 1~7 的**无分组平铺 `QFormLayout`**，不引入分组标题；右栏加**与动作树同宽（28px）**的 `QScrollBar`（复用树的选择器样式，不自造宽度）。
+
+### 3.4 节点级重试：`Capture` 不参与
+
+现有机制：`SequenceWorker::ExecuteNodeWithRetry`（`:769-795`），总尝试 = `retryCount + 1`，间隔 `retryDelayMs`。可重试白名单**只有三项**（`:778-780`）：
+
+| 白名单 | 重试语义 |
+| :--- | :--- |
+| `Vision` | 重新采图 + 重新定位 |
+| `Move` | 重新下发目标 |
+| 分组（`isGroup()`） | 整组重跑 |
+
+`Capture` **天然不在白名单内** ⇒ **不改一行代码**，只在 `:762` 附近补注释 + 补用例（14.44）。
+
+**为什么不重试**：拍照失败的三类原因（取帧无效 / 空帧 / 落盘失败）**都不会因重试而自愈**；磁盘满、相机掉线时重试只会拖长节拍、放大故障。
+
+⚠ **残留边界（已知行为，不修）**：分组重试会**连带重跑组内拍照** —— 组内某个 `Move` 失败 + `retryCount = 1` ⇒ 拍照执行两次、产生第二份图与第二条通知。第三方按 `timestamp` 区分；需严格"一图一时"就把拍照放在分组外（与 §3.1 的使用约束同一条）。
+
+⚠ **当前实际值 = 0**：`config/config.json` 的 `production.loop` 里**没有** `retryCount` 键，`AutoRunPage.cpp:1051` 取默认 `0` ⇒ 节点级重试整体关闭，与改造前逐字节一致。
+
+### 3.5 `ActionData` 新增字段（8 个）
+
+全部 `capture*` 前缀，**新增键、缺省即默认值**，旧 `process.json` 升级惰性（§9.2）。**总数 8 个**，与 §9.2 声称的数量一致。
+
+| # | 字段 | 类型 | 默认 | 界面控件 | 语义 / 约束 |
+| :- | :--- | :--- | :--- | :--- | :--- |
+| 1 | `captureCameraId` | string | `""` | 下拉 | 相机设备标识（`communication.camera.sn`，P1 已收敛为单一键）。**空 = 用当前唯一相机**；多相机方案落地后必填。悬垂引用（设备已不存在 / 未启用）**编辑期拒绝保存 + 执行期报错**，下拉显式列出"已不存在"，**不静默回落第一个合法项** |
+| 2 | `captureTag` | string | `""` | 文本框 | **必填**；同方案内**唯一**（全树扫描，含分组子动作）；字符集 `[A-Za-z0-9_-]`；长度 ≤ 32。三处共用：文件名 / 通知载荷 / sidecar。⚠ 已**合并**原"图片标识"（语义相同），故只剩一个唯一性约束 |
+| 3 | `captureContent` | enum string | `"color"` | 下拉 | `"color"` \| `"color_depth"`。`"color_depth_cloud"` **不上线**（§1.4 裁定 7：点云无数据源） |
+| 4 | `captureFormat` | enum string | `"png"` | 下拉 | `"png"` \| `"jpeg"`，**只作用于推送通道**；本地留存恒 PNG。JPEG 质量写死常量，不进任何配置（§6.4） |
+| 5 | `captureDeliverEnabled` | bool | `false` | 复选框 | **远程交付总开关**。关闭 = 只落盘、不发任何事件。与 `config.interface.enabled`（全局服务开关）**两个都开**才真正发事件 |
+| 6 | `captureDeliverPath` | bool | `true` | 复选框 | 通道①：`emit captureReady`（只发路径 + 元信息，不传字节）。受 #5 约束 |
+| 7 | `captureDeliverStream` | bool | `false` | 复选框 | 通道②：`emit captureData`（JSON 描述帧 + 二进制图像帧）。受 #5 约束 |
+| 8 | `captureRequired` | bool | `true` | 开关 | fail-closed 语义，见 §5.6 |
+
+**刻意不设的字段**（曾有、已删，**勿再补**）：
+
+| 曾用名 | 删除理由 |
+| :--- | :--- |
+| 动作级"存储路径" / `outputDir` | Q8：与识别动作 TR-138 存图**共用**固定目录（§7.1），不再可配 |
+| "图片标识" | 与 `captureTag` 语义相同，已合并（分设要维护两套唯一性，值不一致时第三方归因断裂） |
+| 动作级"远程 IP / 远程端口" | Q11：TCP **只做 server 端**，动作不发起任何连接 |
+| "本地存储"开关 | 落盘是 §5 时序的**必经步骤 ⑤**，按**常量**处理，不占字段 |
+| "TCP 传输"三态枚举 | 裁定为两个独立 bool（可单选可同选），**不是**枚举 |
+
+⚠ **序列化往返必须逐字段覆盖**：`ProcessManager` 读写各加 8 个键，缺一个就**静默丢配置**（`process.json` 是 `type` 整数 + 键值对，无 schema 校验、无未知键告警）。用例须做"存盘 → 重载 → 逐字段比对"。
+
+---
 
 ## 四、接口层（新增 `src/Interface/`）
 
@@ -347,16 +449,27 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
 ### 7.1 目录结构
 
 ```
-<interface.capture.outputDir>/<sessionId>/<cycleIndex>/
-├── 7_20261009_173012_345.png            彩色图
-├── 7_20261009_173012_345.depth.png      深度图（captureContent 含深度时）
-├── 7_20261009_173012_345.json           sidecar 元数据（与图同名）
-└── manifest.json                        本轮汇总（含该轮全部拍照记录）
+<exe目录>/saves/autorun/rgb/<sessionId>/<cycleIndex>/
+├── RGB_A02_20261009_173012_345.png            彩色图
+├── DEPTH_A02_20261009_173012_345.png          深度图（captureContent 含深度时）
+├── RGB_A02_20261009_173012_345.json           sidecar 元数据（与彩色图同名）
+└── manifest.json                              本轮汇总（含该轮全部拍照记录）
 ```
 
+- **基准目录固定，不可配**：`QCoreApplication::applicationDirPath() + "/saves/autorun/rgb"`，与识别动作的运行存图（TR-138）**共用同一基准**（`AutoRunPage.cpp:59-60` + `doc/process.md:45`）。`interface.capture.outputDir` 已**作废**（2026-10-26 裁定 Q8）。
 - `sessionId`：一次 `run` → `schemeFinished` 为一段会话，格式 `YYYYMMDD-HHMMSS-<4 位随机>`。
 - `cycleIndex`：循环轮次（从 1 起）。
-- 文件名前缀 = `nodeId`（**持久化节点编号**），中段 = 拍照时刻，尾段 = 毫秒。同节点同轮多次拍照不覆盖。
+- 文件名 = **`RGB_<拍照标识>_<14 位时间戳>_<序号>.后缀`**（原 `nodeId_时刻_毫秒.png` 已废弃）。文件名**不含 `nodeId`**，归因靠 `captureTag` + sidecar；深度图与 sidecar 沿用同一标识与时间戳，只换前缀 / 后缀。
+
+⚠ **与 TR-138 的边界（共用基准，不共用子结构）**：
+
+| | 识别动作（TR-138） | 拍照动作 |
+| :--- | :--- | :--- |
+| 目录 | `<exe>/saves/autorun/rgb/`（**平铺**） | `<exe>/saves/autorun/rgb/<sessionId>/<cycleIndex>/`（**多一层**） |
+| 文件名 | `rgb_<14 位时间戳>_<编号>.png`（小写） | `RGB_<拍照标识>_<14 位时间戳>_<序号>.png`（大写） |
+| 清理 | `FrameSaver::EnforceDiskGuard`（磁盘水位触发） | 本方案的会话目录轮转（§7.4） |
+
+这个不对称是**有意的**：拍照的保留策略只删 `YYYYMMDD-HHMMSS-xxxx` 形态的会话目录 ⇒ **结构上不可能误删识别动作的平铺文件**。反过来，`EnforceDiskGuard` 的清理白名单正则是小写 `^(rgb|depth|overlay|snapshots|frame)_\d{14}_\d+\.png$`（大小写敏感），拍照文件名是大写 `RGB_…` ⇒ 守卫**不认**拍照图，不会误删，但也**不会替它清理**（`FrameSaver.cpp:72-77`）。**两者都不越界，但也都保护不了对方，各自的清理责任必须各自落实。**
 
 ### 7.2 sidecar JSON 字段
 
@@ -402,10 +515,10 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
     "cycleIndex": 3,
     "nodeId": 7,
     "tag": "A02",
-    "fileName": "7_20261009_173012_345.png",
-    "filePath": "D:/.../capture/20261009-173012-4f2a/3/7_20261009_173012_345.png",
+    "fileName": "RGB_A02_20261009_173012_345.png",
+    "filePath": "D:/.../CreamPuffRobot/saves/autorun/rgb/20261009-173012-4f2a/3/RGB_A02_20261009_173012_345.png",
     "width": 1280, "height": 720,
-    "depthFile": "7_20261009_173012_345.depth.png",
+    "depthFile": "DEPTH_A02_20261009_173012_345.png",
     "timestamp": "2026-10-09T17:30:12.345+08:00"
 }
 ```
@@ -414,8 +527,11 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
 
 ### 7.4 容量保留
 
-
 `interface.capture.retentionDays`（默认 30 天）。轮转策略参照 `src/main.cpp` 的 `PurgeOldLogs`——⚠ **用「最近 N 个会话目录」而非「N 天前」**：现场机器是间歇开机的，按「N 天」判会在长假后一次性清空（TR-122 已踩过同类问题，日志保留判据即因此从「7 天」改为「最近 7 个日期文件」）。
+
+⚠ **清理边界**：只删 `rgb/` 下**名字匹配 `\d{8}-\d{6}-[0-9a-f]{4}` 的目录**，且只删拍照自己的 `<sessionId>/`。**绝不递归删 `saves/autorun/` 本身、绝不按通配符删 `rgb/*.png`** —— 后者会连带删掉识别动作的平铺存图（§7.1 边界表）。这条与 `EnforceDiskGuard` 的「只认固定子目录 + 固定文件名格式」是同一条纪律。
+
+⚠ **两套清理互不覆盖**：`storage.autorunMinFreePercent`（默认 5%）管磁盘水位、由 `FrameSaver` 执行、只认小写文件名；本节管拍照图的保留时长、由 `CaptureStore` 执行、只认会话目录。**磁盘满时拍照图不会被自动腾空间**，须靠本节先删；两者阈值不要互相指望。
 
 ---
 
@@ -463,7 +579,6 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
     "allowedClients": [],
     "idleTimeoutSec": 30,
     "capture": {
-        "outputDir": "capture",
         "retentionDays": 30
     }
 }
@@ -477,8 +592,7 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
 | `authToken`             | string | `""`        | 空 = **拒绝所有 `hello`**（宁可连不上，不可无认证放行）                                                                                                                     |
 | `allowedClients`        | array  | `[]`        | 空 = 不启用白名单。每项为单机 `192.168.0.50` 或网段 `192.168.0.0/24`                                                                                                    |
 | `idleTimeoutSec`        | int    | `30`        | 未 `hello` 或空闲超时后关闭连接                                                                                                                                    |
-| `capture.outputDir`     | string | `"capture"` | 相对**工程根**的目录（沿用 `ConfigPaths` 的路径解析约定）                                                                                                                  |
-| `capture.retentionDays` | int    | `30`        | 保留策略，见 §7.4                                                                                                                                             |
+| `capture.retentionDays` | int    | `30`        | 保留策略，见 §7.4。⚠ 目录**不可配**：固定 `<exe>/saves/autorun/rgb/`，与识别动作 TR-138 存图共用基准（§7.1）。原 `capture.outputDir` 键已作废 |
 
 ### 9.2 `config/process.json` 增量
 
@@ -495,7 +609,7 @@ PNG（Deflate）编码 1280×720 彩色约 **30 ~ 80 ms**。同步落盘时这�
 
 ### 9.4 UI 入口
 
-`ConfigPage` 新增 `QGroupBox("第三方接口")`，与该页现有的「硬件映射 / 安全与运动限制 / 传动与换算参数」三个分组并列（`ConfigPage.cpp:894` / `:912` / `:968`）。字段：启用开关、监听端口、绑定地址、token（密码框 + 显示按钮）、白名单（多行文本，一行一项）、留图目录、保留会话数。
+`ConfigPage` 新增 `QGroupBox("第三方接口")`，与该页现有的「硬件映射 / 安全与运动限制 / 传动与换算参数」三个分组并列（`ConfigPage.cpp:894` / `:912` / `:968`）。字段：启用开关、监听端口、绑定地址、token（密码框 + 显示按钮）、白名单（多行文本，一行一项）、保留会话数。⚠ **不再有「留图目录」** —— 路径已固定（§7.1 / §9.1），界面上给一行只读路径提示即可。
 
 ### 9.5 `bindAddress` 语义详解（§1.4 裁定 4 的澄清项）
 
@@ -547,14 +661,14 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 | `src/Config/ProcessManager.h`          | `ActionType` 追加 `Capture`；`ActionData` 增 **8 个** `capture*` 字段；`SchemeData` 增 `schemeId`                                                                                                                                                                      |
 | `src/Config/ProcessManager.cpp`        | `actionTypeName` / `resourceKeysOf` 各加一个 case；`schemeId` 生成（8 位 hex + 查重）与**即时落盘**；序列化往返                                                                                                                                                                      |
 | `src/Logic/SequenceWorker.h/.cpp`      | `SegmentCountOf` / `ExecuteNode` / `PrepareRunnerSegment` / `DispatchRunnerSegment` / `ReissueRunnerSegment` 各加 `Capture` 分支；拍照执行体（含 `captureRequired` 分支）；`captureReady` / `captureData` / `captureFailed` 信号；`:762` 注释补「`Capture` 不在重试白名单」（**逻辑无需改动**，§3.4） |
-| `src/UI/ProcessPage.cpp`               | 两处类型下拉加 `"拍照"`；新增 Page 8 拍照详情页；`kGroupPageIndex` 7 → 8；方案下拉旁 `schemeId` 只读显示                                                                                                                                                                                  |
+| `src/UI/ProcessPage.cpp`               | 两处类型下拉加 `"拍照"`；新增 Page 8 拍照详情页；`kGroupPageIndex` **8 → 9**（§3.3，⚠ 漏改不报错）；方案下拉旁 `schemeId` 只读显示                                                                                                                                                                                  |
 | `src/UI/ConfigPage.h/.cpp`             | 新增 `QGroupBox("第三方接口")` 及其控件与接线                                                                                                                                                                                                                               |
 | `src/UI/MainWindow.cpp`                | 装配 `InterfaceServer`（注入 `SequenceWorker*`）；生命周期管理                                                                                                                                                                                                             |
 | `src/Interface/*`（新增）                  | `InterfaceServer` / `InterfaceProtocol` / `CaptureStore`                                                                                                                                                                                                      |
 | `CMakeLists.txt`                       | `find_package` 补 `Network`；`target_link_libraries` 补 `Qt6::Network`；`add_subdirectory(src/Interface)`                                                                                                                                                         |
 | `config/config.json`                   | 新增 `interface` 节（§9.1）                                                                                                                                                                                                                                        |
 | `doc/config.md`                        | 新增 §interface                                                                                                                                                                                                                                                 |
-| `doc/process.md`                       | `ActionType` 表加 `6=拍照`；`ActionData` 字段表加 **8 项**；`SchemeData` 表加 `schemeId`                                                                                                                                                                                   |
+| `doc/process.md`                       | `ActionType` 表加 **`7=拍照`**（`6` 已被 `ZMove` 占用）；`ActionData` 字段表加 **8 项**；`SchemeData` 表加 `schemeId`                                                                                                                                                                                   |
 | `doc/architecture.md`                  | 新增 `src/Interface/` 子目录与依赖方向                                                                                                                                                                                                                                  |
 | `AGENTS.md`                            | 速查与架构节登记新子目录、新配置节、新动作类型                                                                                                                                                                                                                                       |
 | `doc/README.md`                        | 登记本文                                                                                                                                                                                                                                                          |
@@ -598,8 +712,8 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 | 14.4  | 白名单 IPv4-mapped 归一化：`::ffff:192.168.0.50` **命中** `192.168.0.50`                                            |
 | 14.5  | 白名单非法串：`192.168.0.0/99`、`abc` 等**不匹配任何地址**（前缀 -1 判据生效），且不崩溃                                                |
 | 14.6  | 白名单为空 ⇒ **放行全部**（不启用语义）                                                                                    |
-| 14.7  | `ActionType` 序列化往返：`Capture = 6` 写入后读回为 6；既有 0~5 不受影响（**整数持久化不错位**）                                        |
-| 14.8  | 详情页索引：`Capture` 节点的 stack 索引为 7、分组页为 8 —— 二者**不相等**（防 §3.3 撞号回归）                                           |
+| 14.7  | `ActionType` 序列化往返：`Capture = 7` 写入后读回为 7；既有 `0~6`（含 `ZMove = 6`）不受影响（**整数持久化不错位**）                                        |
+| 14.8  | 详情页索引：`Capture` 节点的 stack 索引为 **8**、分组页为 **9** —— 二者**不相等**（防 §3.3 撞号回归；漏改时表现为"选中分组显示拍照面板"）                                           |
 | 14.9  | `capture*` 字段序列化往返：**8 个**字段写入 → 读回逐字段一致；旧文件缺这些键时取默认值不报错                                                   |
 | 14.10 | `schemeId` 迁移**幂等**：无 `schemeId` 的旧 `process.json` 加载后 id 非空；**再次加载 id 不变**（§8.3 的核心判据）                    |
 | 14.11 | `schemeId` **即时落盘**：加载后**不做任何编辑**，`process.json` 已含 `schemeId`（与 `id` / `nextActionId` 的惰性升级**行为不同**，须专门验） |
@@ -662,7 +776,7 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 
 ## 十三、裁定状态
 
-### 13.1 已裁定 21 项
+### 13.1 已裁定 21 项 + 2026-10-26 批次
 
 第一批 13 项见 §1.2，第二批 8 项见 §1.4。**除 §13.2 一项澄清外，无遗留未决项。**
 
@@ -670,6 +784,22 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 | :--- | :--- | :--- |
 | 第一批 | 13 | 跨机 TCP、双通道可单选可同选、静态/运动由编排决定、稳定 `schemeId`、只允许启动/停止、token + 白名单 |
 | 第二批 | 8 | `captureRequired` 默认 `true`、`Capture` 不参与重试、`captureFormat` 默认 `png` 且 JPEG 质量不可配、`schemeId` 用 8 位 hex、不做 ACK 握手、点云本期不做、开放 `query` |
+| **2026-10-26 第三批** | **11** | 见下表（本轮补齐 §三、修正索引落点、确定 8 个字段） |
+
+| # | 项 | 裁定 |
+| :--- | :--- | :--- |
+| Q1 | §三 整章缺失 | **整章重写**（§三），字段表定为 8 个，与 §9.2 声称数量吻合 |
+| Q2 | 详情页索引撞号 | `Capture = 7`、拍照页 index 8、`kGroupPageIndex` **8 → 9** |
+| Q4 | PNG 编码耗时进节拍 | 取 a. **同步 PNG 落盘**（§6.3 / §6.4） |
+| Q5 | 拍照标识必填与唯一 | **必填**、同方案内**唯一**（全树扫描，含分组子动作） |
+| Q6' | 新文件名不再含 `nodeId` | 由「标识同方案唯一」补上归因缺口（§7.1） |
+| Q7 | 相机不存在 / 未启用 | **编辑期拒绝保存 + 执行期报错**两者都做；下拉不静默回落 |
+| Q8 | 与 TR-138 存图并存 | **共用同一存储路径** `<exe>/saves/autorun/rgb/`；界面删除「存储路径」，改只读描述 |
+| Q9 | 动作级路径 vs 全局 `outputDir` | **已作废** —— Q8 使路径固定，不再有两级优先级 |
+| Q10 | 标识字符集 | 限 `[A-Za-z0-9_-]`，编辑期校验 |
+| Q11 | TCP 连接方向 | **只做 server 端**；启动时 `listen()`（不能延迟到首个 `run`，否则死锁） |
+| 合并 | 「图片标识」→「拍照标识」 | 语义相同、去向不同，**合并为 `captureTag`**；一处填写、三处一致 |
+| 修正 | 标识默认值 | **默认留空、强制手填**；不用相机 ID 做默认（硬件维度 ≠ 业务维度） |
 
 ### 13.2 唯一待确认项
 
@@ -682,7 +812,7 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 | 步 | 内容 | 前置 |
 | :--- | :--- | :--- |
 | 1 | **TR-123**：`CaptureFrame()` 管线级互斥（§十一 ①） | 无。**必须先做**——否则拍照动作会在真机验收时以随机 `0xC0000005` 的形式暴露 |
-| 2 | 动作层：`ActionType::Capture` + 8 个字段 + 界面两处下拉 + `kGroupPageIndex` 7→8（§三） | 第 1 步 |
+| 2 | 动作层：`ActionType::Capture = 7` + 8 个字段 + 界面两处下拉 + `kGroupPageIndex` **8 → 9**（§三） | 第 1 步 |
 | 3 | `schemeId`（含即时落盘）+ `config.json` 的 `interface` 节 + `ConfigPage` 分组（§八 / §九） | 可与第 2 步并行 |
 | 4 | 接口层：帧协议 + 白名单 + 4 条命令 + 事件上行（§四） | 第 3 步 |
 | 5 | 拍照执行体：取帧校验 + 同步落盘 + 双通道交付 + `captureRequired` 分支（§五 / §七） | 第 2、4 步 |
@@ -700,7 +830,9 @@ bool QTcpServer::listen(const QHostAddress &address = QHostAddress::Any, quint16
 | 接口层成为新的攻击面 | 远程启动机械臂 = 可远程造成伤害 | 命令集极小（4 条）+ 单连接独占 + token + 白名单；`enabled` 默认关；不开放急停 / 单步 / 点动 |
 | 第三方网络抖动拖死产线 | 产线停摆 | 交付与执行**解耦**（§5.1 + §1.4 裁定 6）；事件缓存 + 重连补发 |
 | `schemeId` 每次重启变化 | 第三方引用失效，且故障表现滞后 | **即时落盘**（§8.3），并有用例 14.10 / 14.11 守住 |
-| 详情页索引撞号 | 界面错显（静默，不报错） | `kGroupPageIndex` 改 8 + 用例 14.8 |
+| 详情页索引撞号 | 界面错显（静默，不报错） | `kGroupPageIndex` 改 **9**（§3.3）+ 用例 14.8 |
+| **拍照与运动同组时 `pose` 与图像帧错位** | sidecar 的位姿指向"图上工件并不在那里"的位置，下游定位全错 | 资源校验拦不住（`resourceKeysOf(Capture)` 是空集，§3.1）；靠使用约定「拍照独立成组 / 置于运动之后」+ 对接说明写明 |
+| **拍照图不受 `EnforceDiskGuard` 保护** | 长期运行单调累积，磁盘被拍照图占满 | 会话目录轮转（§7.4）必须落实；两套清理互不覆盖，不能指望对方 |
 | **`captureRequired = false` 掩盖相机故障** | 相机掉线后整晚空转，第三方收到一长串 `captureFailed` 却不知硬件已没了 | 连续失败阈值（3 次）+ 流掉线判定仍中止（§5.6 约束 3）+ 用例 14.43 |
 | **分组重试连带重跑拍照** | 同节点同轮产生第二份图 + 第二条通知 | 已知行为（§3.4 残留边界）；第三方按 `timestamp` 区分；需严格一图一时把拍照放分组外；用例 14.44 |
 | **`schemeId` 32 bit 碰撞** | 两方案同 id → 第三方启动错方案 | 生成时**查重循环**（§8.2）+ 用例 14.37；本项目方案数量级下概率可忽略，但查重把「概率」变成「确定」 |

@@ -11,10 +11,8 @@
 // 往返）/ ProcessPage.cpp 的类型下拉项（**下拉框索引直接就是枚举值**，两处硬编码列表都要改）。
 // 漏了 resourceKeysOf 会让「上下移动 + 移动」同组时争用 `Axis_Z` 不被拦截。
 // ⚠ 另须核对 ProcessPage.cpp 的 `kGroupPageIndex`（stack 索引 = `type + 1`，分组页必须排在
-//   所有动作页之后并随类型数量顺延；`ZMove` 落地时已由 7 改为 8）。
-// ⚠ `ZMove = 6` 占用了 `doc/third_party_integration_plan.md` 曾预留的 `Capture = 6`；
-//   该篇状态为 ⏳ 未实施，重启该篇时改取 `7`（其余改动点同本篇，不涉及其它代码）。
-enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide, ZMove };
+//   所有动作页之后并随类型数量顺延；`ZMove` 落地时已由 7 改为 8，`Capture` 落地后改为 **9**）。
+enum class ActionType { Move = 0, Vision, Extrude, Delay, Gripper, VisionGuide, ZMove, Capture };
 
 // 节点类型（P6，doc/action_tree_concurrency_plan.md §7.1）。
 // **刻意不进 `ActionType` 枚举**：① `type` 是整数持久化的，插值会让既有方案错位；
@@ -101,6 +99,31 @@ struct ActionData {
     // 好处是「不动其它轴、不需要 IK」，故落点定为轴坐标，**不要**改成先 FK 再 IK。
     bool   zMoveUp = true;          // true = 上移（+Z），false = 下移（−Z）
     double zMoveDistance = 10.0;    // mm，恒正；执行期 ≤ 0 直接拒绝（不静默跳过）
+
+    // ---- 拍照（Capture = 7，2026-10-26）----
+    // 语义：取**当前帧** → 同步落盘 → 发通知。**不产生任何运动**，不读点位表，不参与运动学。
+    // 字段定义与裁定理由见 `doc/third_party_integration_plan.md` §3.5（共 8 个 capture*）。
+    //
+    // 相机设备标识（`communication.camera.sn`）。**空 = 用当前唯一相机**；多相机方案
+    // （`doc/multi_camera_plan.md`）落地后必填。非空但与实际设备不符 ⇒ 执行期报错。
+    QString captureCameraId;
+    // 拍照标识：**必填**、同方案内唯一（全树扫描）、字符集 `[A-Za-z0-9_-]`、≤ 32 字符。
+    // 一个值三处共用：文件名 / 通知载荷 / sidecar。原「图片标识」已并入本字段（语义相同）。
+    QString captureTag;
+    // 图像内容：`"color"`（默认）| `"color_depth"`。点云不上线（无数据源，§1.4 裁定 7）。
+    QString captureContent = QStringLiteral("color");
+    // 推送格式：`"png"`（默认）| `"jpeg"`，**只作用于推送通道**；本地留存恒 PNG。
+    QString captureFormat = QStringLiteral("png");
+    // 远程交付总开关。关闭 = 只落盘、不发任何事件。
+    // ⚠ 与 `config.interface.enabled`（全局服务开关）**两个都开**才真正发事件。
+    bool captureDeliverEnabled = false;
+    // 交付通道①：路径引用（`captureReady`，只发路径 + 元信息，不传字节）。
+    bool captureDeliverPath = true;
+    // 交付通道②：直接推送（`captureData`，JSON 描述帧 + 二进制图像帧）。
+    bool captureDeliverStream = false;
+    // fail-closed：true = 取帧 / 空帧 / 落盘失败即**中止整个方案**；
+    // false = 记 WARN + 发 `captureFailed` 后继续下一节点（**不复用 `errorOccurred`**）。
+    bool captureRequired = true;
 
     bool isGroup() const { return nodeType == NodeType::Group; }
 };

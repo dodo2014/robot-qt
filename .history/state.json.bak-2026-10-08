@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "lastCompactedAt": "2026-09-11T09:03:02+0800",
+  "lastCompaction": {
+    "reason": "workbuddy-auto",
+    "processedMessages": 3,
+    "remainingMessages": 0,
+    "processedBytes": 19300
+  },
+  "lastSyncedLogDate": "2026-09-10"
+}

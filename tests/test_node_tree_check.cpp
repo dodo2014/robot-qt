@@ -65,6 +65,28 @@ public:
     ProcessJsonGuard()
     {
         m_path = ConfigPaths::processJsonPath();
+
+        // 崩溃残留自愈：正常退出时 restore() 会删掉 .p6test_bak，它还在就说明**上次运行没跑完析构**
+        // （最典型 = save() 失败后按索引断言越界、Release 下直接段错误）。此时目标文件停在测试
+        // 写入的中间态（只剩测试造的那 3 个节点），若直接拍快照，退出时会把这份坏内容当"原始"
+        // 写回去 —— 等于用测试数据覆盖掉真实方案。故先还原，再拍快照。
+        const std::string bakPath = m_path.toStdString() + ".p6test_bak";
+        {
+            std::ifstream bakIn(bakPath, std::ios::binary);
+            if (bakIn) {
+                std::ostringstream bs;
+                bs << bakIn.rdbuf();
+                bakIn.close();
+                const std::string saved = bs.str();
+                std::ofstream fix(m_path.toStdString(), std::ios::binary | std::ios::trunc);
+                fix.write(saved.data(), static_cast<std::streamsize>(saved.size()));
+                fix.close();
+                std::fprintf(stderr,
+                             "[WARN] 发现上次运行残留的 .p6test_bak，已先还原 config/process.json"
+                             "（上次运行未正常退出）\n");
+            }
+        }
+
         std::ifstream in(m_path.toStdString(), std::ios::binary);
         if (in) {
             std::ostringstream ss;
@@ -74,7 +96,7 @@ public:
         }
         // 另存一份人工兜底副本
         if (m_hadFile) {
-            std::ofstream bak(m_path.toStdString() + ".p6test_bak", std::ios::binary);
+            std::ofstream bak(bakPath, std::ios::binary);
             bak.write(m_original.data(), static_cast<std::streamsize>(m_original.size()));
         }
     }
@@ -151,6 +173,17 @@ void TestResourcesAndValidation()
     checkEqStr(ProcessManager::actionTypeName(ActionType::ZMove),
                QStringLiteral("上下移动"), "ZMove 显示名为「上下移动」");
 
+    // Capture（拍照，TR-157）：占**相机**逻辑资源（与 Vision 同键，不是空集）
+    checkEq(static_cast<int>(ActionType::Capture), 7,
+            "Capture 枚举值为 7（末尾追加，既有 type 整数不变）");
+    checkEq(ProcessManager::resourceKeysOf(ActionType::Capture).size(), 1,
+            "Capture 只占 1 项资源");
+    check(ProcessManager::resourceKeysOf(ActionType::Capture)
+              == QStringList{ QStringLiteral("Camera") },
+          "Capture 占用的正是 Camera（与 Vision 同键）");
+    checkEqStr(ProcessManager::actionTypeName(ActionType::Capture),
+               QStringLiteral("拍照"), "Capture 显示名为「拍照」");
+
     const auto move1 = makeAction(1, "移动A", ActionType::Move);
     const auto move2 = makeAction(2, "移动B", ActionType::Move);
     const auto guide = makeAction(3, "引导", ActionType::VisionGuide);
@@ -159,6 +192,7 @@ void TestResourcesAndValidation()
     const auto delay = makeAction(6, "延时", ActionType::Delay);
     const auto vis   = makeAction(7, "识别", ActionType::Vision);
     const auto zmove = makeAction(11, "上移10", ActionType::ZMove);
+    const auto shot  = makeAction(12, "拍照1", ActionType::Capture);
 
     check(ProcessManager::validateGroupChildren({ move1, grip }).isEmpty(),
           "移动 + 夹爪 → 合法（不同资源）");
@@ -186,6 +220,18 @@ void TestResourcesAndValidation()
           "上下移动 + 延时 → 合法（Delay 不占资源）");
     check(!ProcessManager::validateGroupChildren({ zmove, zmove }).isEmpty(),
           "上下移动 + 上下移动 → 拒绝（都下发 Axis_Z 绝对目标）");
+
+    // Capture 的资源互斥（TR-157）：争 Camera（与识别同键）、与四轴动作合法
+    check(!ProcessManager::validateGroupChildren({ shot, vis }).isEmpty(),
+          "拍照 + 识别 → 拒绝（争用同一帧相机资源）");
+    check(!ProcessManager::validateGroupChildren({ shot, shot }).isEmpty(),
+          "拍照 + 拍照 → 拒绝（争用同一帧相机资源）");
+    check(ProcessManager::validateGroupChildren({ shot, move1 }).isEmpty(),
+          "拍照 + 移动 → 合法（相机 vs 四轴）");
+    check(ProcessManager::validateGroupChildren({ shot, zmove }).isEmpty(),
+          "拍照 + 上下移动 → 合法（相机 vs Axis_Z）");
+    check(ProcessManager::validateGroupChildren({ shot, delay }).isEmpty(),
+          "拍照 + 延时 → 合法（Delay 不占资源）");
 
     // §6.4 数据依赖：识别不能与**引用它编号**的视觉引导同组
     ActionData dependent = makeAction(8, "引导引用7", ActionType::VisionGuide);
@@ -388,6 +434,19 @@ void TestJsonRoundTrip(const QString& path)
         zmove.zMoveUp = false;
         zmove.zMoveDistance = 7.5;
         scheme.nodes.push_back(zmove);
+
+        // Capture（拍照，TR-157）8 个字段全用非默认值，验证键名与默认值之外的往返
+        ActionData shot = makeAction(ProcessManager::allocateActionId(scheme),
+                                     QStringLiteral("拍照-出料口"), ActionType::Capture);
+        shot.captureCameraId        = QStringLiteral("SN-TEST-0001");
+        shot.captureTag             = QStringLiteral("outlet_A");
+        shot.captureContent         = QStringLiteral("both");
+        shot.captureFormat          = QStringLiteral("jpg");
+        shot.captureDeliverEnabled  = true;
+        shot.captureDeliverPath     = false;
+        shot.captureDeliverStream   = true;
+        shot.captureRequired        = false;
+        scheme.nodes.push_back(shot);
     }
     pm.save();
 
@@ -398,22 +457,51 @@ void TestJsonRoundTrip(const QString& path)
     check(dumped.find("\"children\"") != std::string::npos, "分组子节点写入 children");
     check(dumped.find("\"zMoveUp\": false") != std::string::npos, "落盘写入 zMoveUp=false");
     check(dumped.find("\"zMoveDistance\": 7.5") != std::string::npos, "落盘写入 zMoveDistance=7.5");
+    // 8 个 capture* 键必须全部落盘（漏写任一 = 重启后静默回默认值）
+    check(dumped.find("\"captureCameraId\"") != std::string::npos, "落盘写入 captureCameraId");
+    check(dumped.find("\"captureTag\"") != std::string::npos, "落盘写入 captureTag");
+    check(dumped.find("\"captureContent\"") != std::string::npos, "落盘写入 captureContent");
+    check(dumped.find("\"captureFormat\"") != std::string::npos, "落盘写入 captureFormat");
+    check(dumped.find("\"captureDeliverEnabled\"") != std::string::npos,
+          "落盘写入 captureDeliverEnabled");
+    check(dumped.find("\"captureDeliverPath\"") != std::string::npos, "落盘写入 captureDeliverPath");
+    check(dumped.find("\"captureDeliverStream\"") != std::string::npos,
+          "落盘写入 captureDeliverStream");
+    check(dumped.find("\"captureRequired\"") != std::string::npos, "落盘写入 captureRequired");
 
     pm.load(true);
     checkEq(pm.schemes().size(), 1, "重新载入 1 个方案");
     if (pm.schemes().isEmpty()) return;
     const SchemeData& s2 = pm.schemes()[0];
-    checkEq(s2.nodes.size(), 5, "树形往返：一级节点 5 个");
+    checkEq(s2.nodes.size(), 6, "树形往返：一级节点 6 个");
+    // 下面按索引断言：节点数不足时直接越界（Release 无边界检查 → 段错误 → 兜底副本也来不及删）。
+    // 常见诱因是 pm.save() 的 QSaveFile commit 被外部短暂占用而失败（日志会打 Commit failed）。
+    if (s2.nodes.size() < 2) return;
     check(s2.nodes[1].isGroup(), "第 2 个一级节点是分组");
     checkEq(s2.nodes[1].children.size(), 1, "分组保留 1 个子节点");
+    if (s2.nodes[1].children.isEmpty()) return;
     checkEqStr(s2.nodes[1].children[0].name, QStringLiteral("组内夹爪"), "组内子节点名称往返一致");
     checkEq(s2.nodes[1].children[0].id, 5, "组内子节点编号往返一致");
+    if (s2.nodes.size() < 6) return;
     checkEq(static_cast<int>(s2.nodes[4].type), static_cast<int>(ActionType::ZMove),
             "上下移动类型往返一致（type=6）");
     check(!s2.nodes[4].zMoveUp, "zMoveUp=false 往返一致");
     check(s2.nodes[4].zMoveDistance > 7.49 && s2.nodes[4].zMoveDistance < 7.51,
           "zMoveDistance=7.5 往返一致");
-    checkEq(s2.nextActionId, 7, "nextActionId 往返一致");
+
+    // Capture 往返（TR-157）：8 个字段逐个比对，任一被吞都会在这里暴露
+    checkEq(static_cast<int>(s2.nodes[5].type), static_cast<int>(ActionType::Capture),
+            "拍照类型往返一致（type=7）");
+    checkEqStr(s2.nodes[5].captureCameraId, QStringLiteral("SN-TEST-0001"),
+               "captureCameraId 往返一致");
+    checkEqStr(s2.nodes[5].captureTag, QStringLiteral("outlet_A"), "captureTag 往返一致");
+    checkEqStr(s2.nodes[5].captureContent, QStringLiteral("both"), "captureContent 往返一致");
+    checkEqStr(s2.nodes[5].captureFormat, QStringLiteral("jpg"), "captureFormat 往返一致");
+    check(s2.nodes[5].captureDeliverEnabled, "captureDeliverEnabled=true 往返一致");
+    check(!s2.nodes[5].captureDeliverPath, "captureDeliverPath=false 往返一致");
+    check(s2.nodes[5].captureDeliverStream, "captureDeliverStream=true 往返一致");
+    check(!s2.nodes[5].captureRequired, "captureRequired=false 往返一致");
+    checkEq(s2.nextActionId, 8, "nextActionId 往返一致");
 
     // 再存一次 → 内容稳定（幂等：不会每次保存都改编号）
     const std::string first = readFile(path);

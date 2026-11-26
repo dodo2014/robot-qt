@@ -7,6 +7,20 @@
 #include <QElapsedTimer>
 #include <QMetaObject>
 #include <QHash>
+// 拍照（Capture = 7）：同步落盘用的文件与时间设施。
+// `QSaveFile` 是**原子写**——写同目录临时文件、`commit()` 时才 rename 到目标名，
+// 正好满足「第三方收到通知时不会读到半个文件」这条时序约束（无需自己拼临时名）。
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRandomGenerator>
+#include <QSaveFile>
+#include <QTimeZone>
 
 #include <atomic>
 #include <cmath>
@@ -17,6 +31,7 @@
 #include "Core/CoordTransform.h"
 #include "HAL/core/HardwareManager.h"
 #include "HAL/core/AxisMap.h"
+#include "HAL/camera/FrameConverter.h"
 #include "spdlog/spdlog.h"
 
 // 跨线程 Queued 传递 `detectionReady` 的实参注册（P3 S6 决策 6）。
@@ -25,6 +40,7 @@
 namespace {
 const int g_detectionMetaRegistered = []() {
     qRegisterMetaType<SequenceWorker::DetectionResult>("SequenceWorker::DetectionResult");
+    qRegisterMetaType<SequenceWorker::CaptureResult>("SequenceWorker::CaptureResult");
     return 0;
 }();
 }  // namespace
@@ -133,6 +149,16 @@ public:
     // · 循环生产：每轮识别覆盖同 id 的结果，语义正确（每轮重新识别）；
     // · 只在 worker 线程读写（UI 侧靠 visionResultReady 信号取副本）→ 无需加锁。
     QHash<int, Pose> visionResults_;
+
+    // ---- 拍照（Capture = 7，2026-10-26）----
+    // 会话标识：一次 `run` → `schemeFinished` 为一段会话，格式 `YYYYMMDD-HHMMSS-<4 位 hex>`。
+    // 由 StartExecution / StartSingleExecution 在**会话开始**生成（不在每张图时生成）——
+    // 同一会话的图必须落在同一目录，否则第三方无法按 run 归集。
+    QString captureSessionId;
+    // 会话内拍照序号（1 起）。跨会话重置。
+    // **用途只是让同秒内的文件名不撞**：同一秒拍两张（分组重试 / 循环两轮挤在同一秒）
+    // 时时间戳相同，靠序号区分；不用"文件已存在则 +1"的探测式方案——那在并发下不成立。
+    int captureSeq = 0;
 
     bool WaitForCancelOrTime(int ms)
     {
@@ -255,6 +281,14 @@ bool SequenceWorker::RunSequence(const SchemeData& scheme, const LoopConfig& loo
     // 会话视觉结果表清空（P5 §5.4）：上次会话识别出的坐标对本次无效——相机眼在手外，
     // 但物料已被取走/换位，复用旧坐标会把动作引到空处。
     impl_->visionResults_.clear();
+    // 拍照会话标识（Capture = 7）：**每次会话重新生成**，序号归零。
+    // 目录按会话分层，第三方按 run 归集；跨会话复用 id 会让两批图混进同一目录。
+    impl_->captureSessionId = QDateTime::currentDateTime()
+                                  .toString(QStringLiteral("yyyyMMdd-HHmmss")) +
+                              QLatin1Char('-') +
+                              QStringLiteral("%1").arg(QRandomGenerator::global()->bounded(0x10000),
+                                                       4, 16, QLatin1Char('0'));
+    impl_->captureSeq = 0;
     // 安全位数值快照（主线程）：循环间隔回安全位在 worker 线程执行，绝不能读 ConfigManager。
     // 未启用 → safePoseValid=false → 循环间隔回安全位判为故障（UI 侧另有启动门禁，此处兜底）。
     {
@@ -320,6 +354,13 @@ bool SequenceWorker::RunSingleAction(const SchemeData& scheme, int nodeId)
     // 同 RunSequence：单动作会话也是新会话，视觉结果表清空。
     // 直接单跑一条「视觉引导」必然取不到结果 → 报错且不运动（§4.3 执行期校验），这是预期行为。
     impl_->visionResults_.clear();
+    // 单动作会话同样另起一个拍照会话目录（与 RunSequence 同规则，见该处注释）。
+    impl_->captureSessionId = QDateTime::currentDateTime()
+                                  .toString(QStringLiteral("yyyyMMdd-HHmmss")) +
+                              QLatin1Char('-') +
+                              QStringLiteral("%1").arg(QRandomGenerator::global()->bounded(0x10000),
+                                                       4, 16, QLatin1Char('0'));
+    impl_->captureSeq = 0;
 
     SetState(WorkerState::Running);   // 原「执行选中动作」文案由 IsSingleActionSession() 还原
     const ActionData* node = ProcessManager::findNode(scheme.nodes, nodeId);
@@ -729,6 +770,7 @@ int SegmentCountOf(const ActionData& a)
     case ActionType::VisionGuide: return 2;          // 目标上方 → 目标
     case ActionType::Gripper:     return 1;
     case ActionType::ZMove:       return 1;          // 一次「读当前 Z → 算目标 → 下发」
+    case ActionType::Capture:     return 0;          // 拍照不走段模型（一次性同步完成，无等待段）
     case ActionType::Extrude: {
         int n = 0;
         if (a.extrudeAmount > 0.0)  ++n;             // 挤出段
@@ -775,6 +817,9 @@ bool SequenceWorker::ExecuteNodeWithRetry(const ActionData& node, int index)
     // ⚠ `ZMove`（上下移动）**刻意不在可重试列表**：它是**相对**位移，重试会重新读当前 Z
     // 再走一遍全距离——已走一半时重试等于走 1.5 倍。相对动作不满足「重跑一次结果不变」
     // 这一重试前提，只能失败上报。
+    // ⚠ `Capture`（拍照）同样**不在**列表：取帧无效 / 空帧 / 落盘失败三类原因都不会因重试
+    // 而自愈（磁盘满、相机掉线时重试只拖长节拍、放大故障）。这是既有白名单的自然结果，
+    // **不需要改代码**，只需要这条注释与用例（doc/third_party_integration_plan.md §3.4）。
     const bool retryable = node.isGroup()
                                || node.type == ActionType::Vision
                                || node.type == ActionType::Move;
@@ -817,6 +862,7 @@ bool SequenceWorker::ExecuteAction(const ActionData& action, int index)
     case ActionType::Delay:
     case ActionType::Gripper:
     case ActionType::ZMove:
+    case ActionType::Capture:
         break;
     default:
         SPDLOG_WARN("[SequenceWorker] Unknown action type {}", static_cast<int>(action.type));
@@ -1099,6 +1145,10 @@ bool SequenceWorker::StepRunner(RunnerState& r)
         return true;
     }
 
+    // ---- 拍照：取当前帧 → 同步落盘 → 发通知（Capture = 7）----
+    if (action.type == ActionType::Capture)
+        return ExecuteCapture(r);
+
     // ---- 段序列（Move / VisionGuide / Extrude / Gripper / ZMove）----
     for (;;) {
         if (r.phase == RunnerState::PhaseBegin) {
@@ -1135,6 +1185,292 @@ bool SequenceWorker::StepRunner(RunnerState& r)
 }
 
 // Begin：解析当前段的目标（IK / 软限位 / 日志）。失败返回 false 并写 r.failReason。
+// ============================================================
+// 拍照动作执行体（Capture = 7，2026-10-26）
+//
+// 时序：取帧 → 帧有效性校验 → 同步落盘（彩色 + 可选深度）→ 写 sidecar → 更新 manifest → 发通知。
+//
+// 四条硬约束（`doc/third_party_integration_plan.md` §五）：
+//   ① **交付与执行解耦**：只等本地落盘完成，**不等任何网络 ACK**；
+//   ② **通知前图必须已就绪**：`QSaveFile::commit()` 是原子替换（写临时文件 → rename），
+//      commit 成功之后才 emit，第三方不会读到半个文件；
+//   ③ **不复用 `FrameSaver`**：它是异步队列且超限丢最旧，「丢图不可接受」；
+//   ④ **取帧走 `TakeLatestFrame()`**，绝不新增 `CaptureFrame()` 调用（TR-123：
+//      pipeline 只允许采集线程进，否则与采集线程并发进同一管线 = UB）。
+//
+// 本函数**不 emit `errorOccurred`**（D17 方案 A），失败原因写 `r.failReason`。
+// ============================================================
+bool SequenceWorker::ExecuteCapture(RunnerState& r)
+{
+    auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用
+    const ActionData& action = r.action;
+
+    // 运行时偶发故障（取帧 / 空帧 / 落盘）：受 `captureRequired` 约束。
+    // false 时**只豁免拍照动作自身**——记 WARN + 发 captureFailed + 继续下一节点。
+    // 复用 errorOccurred 会破坏「errorOccurred ⟺ 会话中止」这个不变量（§5.6 约束 2）。
+    const auto onRuntimeFail = [&](const QString& reason) -> bool {
+        if (!action.captureRequired) {
+            SPDLOG_WARN("[SequenceWorker] Capture skipped (node #{} tag={}): {}",
+                        action.id, action.captureTag.toStdString(), reason.toStdString());
+            emit captureFailed(action.id, impl_->cycleIndex, action.captureTag, reason);
+            emit logMessage(QStringLiteral("拍照失败（已跳过）：%1").arg(reason));
+            r.phase = RunnerState::PhaseDone;
+            return true;
+        }
+        r.failReason = QStringLiteral("拍照失败：%1").arg(reason);
+        r.failed = true;
+        return false;
+    };
+    // 配置错误（标识为空 / 绑定的相机不是这台）：**不受 `captureRequired` 豁免**。
+    // 豁免面是"运行时偶发故障"，不是"配置写错了"——放过去只会让故障在第三方侧以
+    // "图呢？"的形式出现，更难查。
+    const auto onConfigError = [&](const QString& reason) -> bool {
+        r.failReason = QStringLiteral("拍照配置错误：%1").arg(reason);
+        r.failed = true;
+        return false;
+    };
+
+    // ---- 0. 配置自检 ----
+    const QString tag = action.captureTag.trimmed();
+    if (tag.isEmpty())
+        return onConfigError(QStringLiteral("节点 #%1 的拍照标识未填写").arg(action.id));
+
+    auto* camera = InMainThread([&] { return hw.camera(); });
+    if (!camera)
+        return onRuntimeFail(QStringLiteral("相机不可用"));
+
+    // 相机绑定校验（Q7「执行期报错」）：动作绑了具体 SN 就必须是这台设备，
+    // **不静默换相机**——换相机的后果是位姿换算整套错位，比直接失败危险得多。
+    const QString wantCam = action.captureCameraId.trimmed();
+    if (!wantCam.isEmpty()) {
+        const QString actual = InMainThread([] {
+            return QString::fromStdString(ConfigManager::instance().getValue<std::string>(
+                "communication.camera.sn", std::string()));
+        });
+        if (!actual.isEmpty() && actual != wantCam)
+            return onConfigError(
+                QStringLiteral("绑定的相机 %1 不是当前设备（当前 %2）").arg(wantCam, actual));
+    }
+
+    // ---- 1. 取帧（TR-123：只向采集线程取最近一帧）----
+    CameraFrame frame = InMainThread([&] { return camera->TakeLatestFrame(); });
+    if (frame.colorData.empty() || frame.width <= 0 || frame.height <= 0)
+        return onRuntimeFail(QStringLiteral("取帧无效（空帧或尺寸为 0）"));
+
+    // ---- 2. 帧有效性校验（TR-116 契约）----
+    // 彩色：size >= w × h × 3。深度：**必须按 depthWidth/depthHeight**（0 = 回落彩色尺寸），
+    // 按彩色 width 索引深度数据会越界闪退（0xC0000005，用例 11.35 实测）。
+    const auto needColor = static_cast<size_t>(frame.width) * static_cast<size_t>(frame.height) * 3u;
+    if (frame.colorData.size() < needColor)
+        return onRuntimeFail(QStringLiteral("彩色帧尺寸不符（%1 < %2 字节）")
+                                 .arg(frame.colorData.size()).arg(needColor));
+
+    const bool wantDepth = (action.captureContent == QStringLiteral("color_depth"));
+    const int dw = frame.depthWidth  > 0 ? frame.depthWidth  : frame.width;
+    const int dh = frame.depthHeight > 0 ? frame.depthHeight : frame.height;
+    if (wantDepth) {
+        const auto needDepth = static_cast<size_t>(dw) * static_cast<size_t>(dh);
+        if (frame.depthData.empty() || frame.depthData.size() < needDepth)
+            return onRuntimeFail(QStringLiteral("深度帧尺寸不符（%1 < %2）")
+                                     .arg(frame.depthData.size()).arg(needDepth));
+    }
+
+    // ---- 3. 目录与文件名 ----
+    // `<exe>/saves/autorun/rgb/<sessionId>/<cycleIndex>/`
+    // 与识别动作的运行存图（TR-138）**共用基准目录**，但多套一层会话/轮次——保留策略据此
+    // 只删会话目录，**结构上不可能误删**识别动作平铺在 `rgb/` 下的文件。
+    const int cycle = impl_->cycleIndex > 0 ? impl_->cycleIndex : 1;
+    const QString dir = QStringLiteral("%1/saves/autorun/rgb/%2/%3")
+                            .arg(QCoreApplication::applicationDirPath(),
+                                 impl_->captureSessionId)
+                            .arg(cycle);
+    if (!QDir().mkpath(dir))
+        return onRuntimeFail(QStringLiteral("无法创建目录 %1").arg(dir));
+
+    const QDateTime now = QDateTime::currentDateTime();
+    const QString stamp = now.toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    const int seq = ++impl_->captureSeq;
+    const QString seqStr = QStringLiteral("%1").arg(seq, 3, 10, QLatin1Char('0'));
+    const QString base = QStringLiteral("RGB_%1_%2_%3").arg(tag, stamp, seqStr);
+
+    // ---- 4. 同步落盘（QSaveFile = 写临时文件 + commit 时原子 rename）----
+    const auto writePng = [](const QImage& img, const QString& path) -> bool {
+        if (img.isNull()) return false;
+        QSaveFile f(path);
+        if (!f.open(QIODevice::WriteOnly)) return false;
+        if (!img.save(&f, "PNG")) { f.cancelWriting(); return false; }
+        return f.commit();
+    };
+
+    const QString colorPath = dir + QLatin1Char('/') + base + QStringLiteral(".png");
+    if (!writePng(FrameConverter::ColorToQImage(frame), colorPath))
+        return onRuntimeFail(QStringLiteral("彩色图落盘失败：%1").arg(colorPath));
+
+    QString depthPath;
+    QString depthFile;
+    if (wantDepth) {
+        depthFile = QStringLiteral("DEPTH_%1_%2_%3.png").arg(tag, stamp, seqStr);
+        depthPath = dir + QLatin1Char('/') + depthFile;
+        // 深度落盘必须走 DepthToQImage16（16-bit 原始 mm）；伪彩不可逆，只供预览（TR-125）。
+        if (!writePng(FrameConverter::DepthToQImage16(frame), depthPath))
+            return onRuntimeFail(QStringLiteral("深度图落盘失败：%1").arg(depthPath));
+    }
+
+    // ---- 5. sidecar（元数据契约 §7.2）----
+    // 位姿 / 关节角 / 内参 / 手眼矩阵一次取全：**位姿与关节角是「图 → 工件实际位置」的前提**，
+    // 缺了模型只能看图说话。全部在主线程取，与 HAL/Config 的既有线程边界一致。
+    struct CaptureSnapshot {
+        double j1 = 0.0, j2 = 0.0, jz = 0.0, jr = 0.0;
+        Pose pose;
+        CameraIntrinsics intr;
+        std::vector<double> handEye;
+        QString cameraSn;
+    };
+    const CaptureSnapshot snap = InMainThread([&] {
+        CaptureSnapshot s;
+        s.j1 = hw.GetPosition(LogicalAxis::J1);
+        s.j2 = hw.GetPosition(LogicalAxis::J2);
+        s.jz = hw.GetPosition(LogicalAxis::Z);
+        s.jr = hw.GetPosition(LogicalAxis::R);
+        Joints jj;
+        jj.j1 = s.j1; jj.j2 = s.j2; jj.z = s.jz; jj.r = s.jr;
+        s.pose = impl_->kin.Forward(jj);
+        s.intr = camera->GetIntrinsics();
+        auto& cfg = ConfigManager::instance();
+        s.handEye = cfg.getValue<std::vector<double>>("tcpCalibration.handEyeMatrix",
+                                                      std::vector<double>{});
+        s.cameraSn = QString::fromStdString(
+            cfg.getValue<std::string>("communication.camera.sn", std::string()));
+        return s;
+    });
+
+    const QString isoStamp = now.toString(Qt::ISODateWithMs);
+    QJsonObject side;
+    side[QStringLiteral("sessionId")]  = impl_->captureSessionId;
+    side[QStringLiteral("cycleIndex")] = cycle;
+    side[QStringLiteral("nodeId")]     = action.id;
+    side[QStringLiteral("nodeName")]   = action.name;
+    side[QStringLiteral("tag")]        = tag;
+    side[QStringLiteral("timestamp")]  = isoStamp;
+    side[QStringLiteral("cameraId")]   = wantCam.isEmpty() ? snap.cameraSn : wantCam;
+    side[QStringLiteral("colorPath")]  = base + QStringLiteral(".png");
+    side[QStringLiteral("colorWidth")]  = frame.width;
+    side[QStringLiteral("colorHeight")] = frame.height;
+    if (wantDepth) {
+        side[QStringLiteral("depthPath")]   = depthFile;
+        side[QStringLiteral("depthWidth")]  = dw;
+        side[QStringLiteral("depthHeight")] = dh;
+    }
+    QJsonObject jPose;
+    jPose[QStringLiteral("x")] = snap.pose.x;
+    jPose[QStringLiteral("y")] = snap.pose.y;
+    jPose[QStringLiteral("z")] = snap.pose.z;
+    jPose[QStringLiteral("r")] = snap.pose.r;
+    side[QStringLiteral("pose")] = jPose;
+    QJsonObject jJoints;
+    // ⚠ `joints.z` 是 **Z 电机坐标**（回零后 0、向下为负），与 `pose.z`（末端高度）不是同一个量，
+    // 两者差固定偏移 —— 第三方按 `pose.z` 定位工件，按 `joints.z` 复现轴位置，不可混用。
+    jJoints[QStringLiteral("j1")] = snap.j1;
+    jJoints[QStringLiteral("j2")] = snap.j2;
+    jJoints[QStringLiteral("z")]  = snap.jz;
+    jJoints[QStringLiteral("r")]  = snap.jr;
+    side[QStringLiteral("joints")] = jJoints;
+    QJsonObject jIntr;
+    jIntr[QStringLiteral("fx")] = snap.intr.fx;
+    jIntr[QStringLiteral("fy")] = snap.intr.fy;
+    jIntr[QStringLiteral("cx")] = snap.intr.cx;
+    jIntr[QStringLiteral("cy")] = snap.intr.cy;
+    jIntr[QStringLiteral("k1")] = snap.intr.k1;
+    jIntr[QStringLiteral("k2")] = snap.intr.k2;
+    jIntr[QStringLiteral("p1")] = snap.intr.p1;
+    jIntr[QStringLiteral("p2")] = snap.intr.p2;
+    side[QStringLiteral("intrinsics")] = jIntr;
+    if (snap.handEye.size() == 16) {
+        QJsonArray arr;
+        for (double v : snap.handEye) arr.append(v);
+        side[QStringLiteral("handEyeMatrix")] = arr;
+    }
+
+    const QString sidecarPath = dir + QLatin1Char('/') + base + QStringLiteral(".json");
+    {
+        QSaveFile f(sidecarPath);
+        if (!f.open(QIODevice::WriteOnly))
+            return onRuntimeFail(QStringLiteral("sidecar 写入失败：%1").arg(sidecarPath));
+        f.write(QJsonDocument(side).toJson(QJsonDocument::Indented));
+        if (!f.commit())
+            return onRuntimeFail(QStringLiteral("sidecar 提交失败：%1").arg(sidecarPath));
+    }
+
+    // ---- 6. manifest（本轮汇总）----
+    // 读-改-写。**并发安全的前提是"同组内不可能有两个拍照"**（`resourceKeysOf(Capture)` 与
+    // 识别动作同占 `Camera`，组内互斥），故本段不需要加锁；若将来放开该互斥，这里必须改。
+    {
+        const QString manifestPath = dir + QStringLiteral("/manifest.json");
+        QJsonArray captures;
+        QFile in(manifestPath);
+        if (in.open(QIODevice::ReadOnly)) {
+            const auto doc = QJsonDocument::fromJson(in.readAll());
+            in.close();
+            if (doc.isObject())
+                captures = doc.object().value(QStringLiteral("captures")).toArray();
+        }
+        QJsonObject entry = side;                 // 与 sidecar 同构，便于离线核对
+        entry.remove(QStringLiteral("intrinsics"));
+        entry.remove(QStringLiteral("handEyeMatrix"));
+        captures.append(entry);
+
+        QJsonObject root;
+        root[QStringLiteral("sessionId")]  = impl_->captureSessionId;
+        root[QStringLiteral("cycleIndex")] = cycle;
+        root[QStringLiteral("captures")]   = captures;
+        QSaveFile f(manifestPath);
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+            if (!f.commit())
+                SPDLOG_WARN("[SequenceWorker] Capture: manifest commit failed ({})",
+                            manifestPath.toStdString());
+        } else {
+            // manifest 只是汇总，**不是交付前提**——写不成不中止拍照（图与 sidecar 已就绪）。
+            SPDLOG_WARN("[SequenceWorker] Capture: manifest open failed ({})",
+                        manifestPath.toStdString());
+        }
+    }
+
+    // ---- 7. 发通知（图已 commit，此刻起第三方读到的一定是完整文件）----
+    SequenceWorker::CaptureResult res;
+    res.nodeId         = action.id;
+    res.cycleIndex     = cycle;
+    res.sessionId      = impl_->captureSessionId;
+    res.tag            = tag;
+    res.fileName       = base + QStringLiteral(".png");
+    res.filePath       = colorPath;
+    res.depthFile      = depthFile;
+    res.width          = frame.width;
+    res.height         = frame.height;
+    res.depthWidth     = wantDepth ? dw : 0;
+    res.depthHeight    = wantDepth ? dh : 0;
+    res.cameraId       = side.value(QStringLiteral("cameraId")).toString();
+    res.timestamp      = isoStamp;
+    res.deliverEnabled = action.captureDeliverEnabled;
+    res.deliverPath    = action.captureDeliverPath;
+    res.deliverStream  = action.captureDeliverStream;
+    res.format         = action.captureFormat;
+    // 只有真要「直接推送」时才把帧搬进共享指针：否则白白持有一份 4~6 MB 的引用。
+    if (action.captureDeliverEnabled && action.captureDeliverStream)
+        res.frame = std::make_shared<const CameraFrame>(std::move(frame));
+
+    SPDLOG_INFO("[SequenceWorker] Capture ok: node #{} tag={} file={} ({}x{}{})",
+                action.id, tag.toStdString(), res.filePath.toStdString(),
+                res.width, res.height, wantDepth ? " +depth" : "");
+    emit captureReady(res);
+    emit logMessage(QStringLiteral("拍照：%1（%2×%3%4）")
+                        .arg(res.fileName).arg(res.width).arg(res.height)
+                        .arg(wantDepth ? QStringLiteral(" + 深度") : QString()));
+
+    r.phase = RunnerState::PhaseDone;
+    return true;
+}
+
 bool SequenceWorker::PrepareRunnerSegment(RunnerState& r)
 {
     auto& hw = HardwareManager::instance();   // ⚠ 只在 InMainThread 内使用

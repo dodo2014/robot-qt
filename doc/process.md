@@ -36,7 +36,7 @@
 | `nodeType` | string | 节点类型：`"action"`（动作，默认）/ `"group"`（分组）。**P6 新增**。与 `type` **正交**——`Group` 不进 `ActionType` 枚举（见下文「分组节点与组内并发」） |
 | `children` | array | **分组内的子节点**（仅 `nodeType == "group"` 非空，元素结构与 `ActionData` 相同）。**不允许嵌套**——分组只能在一级 |
 | `name` | string | 动作名称 |
-| `type` | int | 0=移动, 1=识别, 2=挤压, 3=延时, 4=夹爪, 5=视觉引导, **6=上下移动**（⚠ 只能追加在末尾，见下文） |
+| `type` | int | 0=移动, 1=识别, 2=挤压, 3=延时, 4=夹爪, 5=视觉引导, **6=上下移动**, **7=拍照**（⚠ 只能追加在末尾，见下文） |
 | `points` | array | 点位列表（仅 type=0 有效，结构见 PointData） |
 | `visionType` | string | 识别类型（仅 type=1 有效: CCD/深度/激光） |
 | `exposure` | double | 曝光时间（仅 type=1，当前默认 30.0） |
@@ -57,6 +57,14 @@
 | `guideR` | double | 构造路径点的**轴 4(R) 固定值**，单位 °，默认 **179.9**（仅 type=5）。**与 `PuffResult.yaw` 无关** |
 | `zMoveUp` | bool | 移动方向：`true` = 上移（+Z）/ `false` = 下移（−Z）（仅 type=6）。**缺键默认 `true`** |
 | `zMoveDistance` | double | 相对当前 Z 的位移距离，单位 mm，**恒为正值**（仅 type=6）。**缺键默认 `10.0`**；执行期 ≤ 0 直接拒绝 |
+| `captureCameraId` | string | **相机设备标识**（`communication.camera.sn`，仅 type=7）。**缺键/空串 = 用当前唯一相机**；非空但与实机 SN 不符 ⇒ **执行期报错**（不静默换相机） |
+| `captureTag` | string | **拍照标识**（仅 type=7）。**必填**、同方案内**唯一**（全树扫描）、字符集 `[A-Za-z0-9_-]`、≤ 32 字符。一个值三处共用：文件名 / 通知载荷 / sidecar。**缺键 = 空串**（执行期拒绝） |
+| `captureContent` | string | 图像内容（仅 type=7）：`"color"`（默认）/ `"color_depth"`。点云选项不上线（无数据源） |
+| `captureFormat` | string | 推送格式（仅 type=7）：`"png"`（默认）/ `"jpeg"`。**只作用于推送通道**，本地留存恒 PNG |
+| `captureDeliverEnabled` | bool | **远程交付总开关**（仅 type=7），**缺键默认 `false`**。关闭 = 只落盘、不发事件 |
+| `captureDeliverPath` | bool | 交付通道①「路径引用」（`captureReady`），**缺键默认 `true`** |
+| `captureDeliverStream` | bool | 交付通道②「直接推送」（`captureData`），**缺键默认 `false`** |
+| `captureRequired` | bool | fail-closed 开关（仅 type=7），**缺键默认 `true`**：取帧 / 空帧 / 落盘失败即中止整个方案；`false` 时记 WARN + 发 `captureFailed` 后继续 |
 | `speedPercent` | int | 速度百分比（所有动作通用，当前 100） |
 
 ---
@@ -112,7 +120,27 @@
 | 资源占用 | `{Axis_Z}`——与「移动 / 视觉引导」同组**被拒**，与「夹爪 / 挤压 / 延时 / 识别」同组**合法** |
 | 编号 | 走统一编号机制，与其它动作一致 |
 
-> ⚠ `ZMove = 6` 占用了 `doc/third_party_integration_plan.md`（⏳ 未实施）为「拍照」预留的 `Capture = 6`；重启该篇时 `Capture` 改取 `7`。
+> ⚠ `ZMove = 6` 曾占用 `doc/third_party_integration_plan.md` 为「拍照」预留的 `Capture = 6`；该篇已于 **2026-10-26** 按 `Capture = 7` 落地（见下节），此历史冲突已消解。
+
+---
+
+## 拍照动作（`Capture = 7`，2026-10-26）
+
+**权威定义在 `doc/third_party_integration_plan.md` §三**（字段表 / 索引落点 / 重试语义）与 §七（元数据契约），此处只记 `process.json` 侧与执行侧落点。
+
+| 项 | 规则 |
+| :--- | :--- |
+| 存什么 | **只存动作定义**——8 个 `capture*` 字段（见上表）+ 通用字段。**不存图片路径、不存运行结果** |
+| 取帧 | `ICamera::TakeLatestFrame()`（**不得新增 `CaptureFrame()` 调用**，TR-123：管线只允许采集线程进） |
+| 落盘 | **同步**：编码 → `QSaveFile`（写临时文件 + `commit()` 原子 rename）→ sidecar → manifest。**不复用 `FrameSaver`**（异步队列超限丢最旧，「丢图不可接受」） |
+| 目录 | `<exe>/saves/autorun/rgb/<sessionId>/<cycleIndex>/`，与识别动作的运行存图（TR-138）**共用基准目录**、但多套一层会话/轮次 |
+| 文件名 | `RGB_<拍照标识>_<yyyyMMdd_HHmmss>_<序号>.png`；深度图 `DEPTH_<同标识>_<同时间戳>_<同序号>.png` |
+| 失败语义 | `captureRequired = true`（默认）→ 取帧 / 空帧 / 落盘失败**中止整个方案**；`false` → 记 WARN + `emit captureFailed` + 继续。**不复用 `errorOccurred`**（全库 7 处 emit 均伴随会话中止） |
+| 配置错误 | 标识为空 / 绑定的相机不是当前设备 → **一律中止**，**不受 `captureRequired` 豁免**（豁免面是运行时偶发故障，不是配置写错） |
+| 重试 | **不可重试**（未进 `ExecuteNodeWithRetry` 的可重试列表）；三类失败原因都不会因重试而自愈 |
+| 资源占用 | `{Camera}`——与「识别」**同一个键**（相机 = 「当前帧」这一逻辑资源，同组只允许一个消费者）⇒ 与识别动作同组**被拒**、两个拍照同组**被拒**；与四轴类动作同组**合法** |
+| 编号 | 走统一编号机制，与其它动作一致 |
+| 详情页索引 | `static_cast<int>(type) + 1` = **8**；`kGroupPageIndex` 同步 **8 → 9**（漏改不报错，会让分组节点显示拍照面板） |
 
 ---
 
@@ -234,7 +262,10 @@ SchemeData
     ├── extrudeAmount, extrudeSpeed, suckBackAmount, suckBackSpeed  (仅 Extrude)
     ├── delayMs  (仅 Delay)
     ├── isGripperOpen, gripperTarget  (仅 Gripper)
-    └── zMoveUp, zMoveDistance        (仅 ZMove：方向 + 距离 mm，恒正)
+    ├── zMoveUp, zMoveDistance        (仅 ZMove：方向 + 距离 mm，恒正)
+    └── captureCameraId, captureTag, captureContent, captureFormat,
+        captureDeliverEnabled, captureDeliverPath, captureDeliverStream,
+        captureRequired               (仅 Capture：8 个字段，见字段表)
 ```
 
 ### 依赖

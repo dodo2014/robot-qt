@@ -52,7 +52,7 @@
 | :- | :--- | :--- |
 | 谁做分析 | **本软件**（`IPuffAlgorithm` 实现） | **第三方**（其自带模型） |
 | 结论去向 | 本机界面 + CSV 导出 | **不出本机** |
-| 触发动作 | 现有「识别」动作（`ActionType::Vision`） | 新增「拍照」动作（`ActionType::Capture = 6`） |
+| 触发动作 | 现有「识别」动作（`ActionType::Vision`） | 新增「拍照」动作（`ActionType::Capture = 7`） |
 | 上行载荷 | `detectionReady`（增 `cycleIndex`） | `captureReady` / `captureData` / `captureFailed` |
 
 **结论：本期两者独立**——检测结论不出本机，`captureReady` 载荷**不变**。

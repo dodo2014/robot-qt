@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拍照动作 · 界面原型（设计审查 v2）</title>
+<style>
+  :root{
+    --bg:#262c34;
+    --panel:#1b222b;
+    --panel2:#121a22;
+    --field:#111a22;
+    --line:#3f4e5e;
+    --line-soft:#384550;
+    --text:#dbe6f0;
+    --label:#b8cce3;
+    --muted:#8da3bb;
+    --dim:#6a7a8a;
+    --blue:#2f6f9f;
+    --blue-h:#3a84b8;
+    --green:#2f7f5f;
+    --green-h:#3f9f7f;
+    --red:#b13a3a;
+    --red-h:#d14444;
+    --purple:#6f5f8f;
+    --amber:#8f7f3f;
+    --cyan:#2f7f9f;
+    --scroll-track:#1a2430;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#1a1f25;}
+  body{
+    font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    font-size:13px;color:var(--text);
+    padding:18px 18px 60px;
+  }
+  .stage{min-width:1320px;max-width:1560px;margin:0 auto;}
+
+  /* ---------- 原型说明条（不属于真实软件界面） ---------- */
+  .proto-bar{
+    display:flex;align-items:center;gap:12px;
+    border:1px dashed #4a5a6a;border-radius:8px;
+    padding:8px 14px;margin-bottom:14px;
+    color:#9fb3c8;font-size:12px;line-height:1.7;background:rgba(47,111,159,.07);
+  }
+  .proto-bar b{color:#cfe0f5;font-weight:600;}
+  .proto-bar .dot{width:6px;height:6px;border-radius:50%;background:#2f7f9f;flex:none;}
+  .proto-bar code{font-family:Consolas,monospace;color:#b9d3e6;}
+
+  /* ---------- 页面外壳 ---------- */
+  .app{
+    background:var(--bg);border-radius:14px;padding:14px;
+    border:1px solid #333d47;
+    box-shadow:0 18px 50px rgba(0,0,0,.45);
+  }
+  .page-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:0 4px 10px;
+  }
+  .page-head .title{font-size:16px;font-weight:600;color:#e8f1fa;letter-spacing:.5px;}
+  .page-head .crumb{font-size:12px;color:var(--dim);margin-left:10px;font-weight:400;}
+  .tools{display:flex;align-items:center;gap:10px;}
+  .ghost{
+    background:#232c36;border:1px solid #3d4b58;color:var(--label);
+    border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;
+    font-family:inherit;display:inline-flex;align-items:center;gap:6px;
+  }
+  .ghost:hover{background:#2b3642;border-color:#4f7faf;color:#e8f1fa;}
+  .ghost b{color:#e0b062;font-weight:600;}
+  .sw-wrap{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none;}
+  .sw{
+    width:34px;height:18px;border-radius:9px;background:#3a4652;position:relative;
+    transition:background .15s;flex:none;
+  }
+  .sw::after{
+    content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#c8d6e4;transition:transform .15s;
+  }
+  .sw.on{background:var(--cyan);}
+  .sw.on::after{transform:translateX(16px);background:#fff;}
+
+  /* ---------- 顶部两行（对应 topBar） ---------- */
+  .topbar{background:var(--panel);border-radius:12px;padding:8px 16px;margin-bottom:12px;}
+  .tb-row{display:flex;align-items:center;gap:14px;min-height:38px;}
+  .tb-row + .tb-row{border-top:1px solid #222b35;margin-top:2px;padding-top:2px;}
+  .tb-label{color:var(--label);font-size:13px;font-weight:500;flex:none;}
+  .btn{
+    border:none;border-radius:8px;padding:8px 16px;font-size:14px;font-weight:600;
+    color:#fff;cursor:pointer;font-family:inherit;white-space:nowrap;
+  }
+  .btn-sm{padding:7px 14px;font-size:13px;}
+  .b-blue{background:var(--blue);} .b-blue:hover{background:var(--blue-h);}
+  .b-red{background:var(--red);} .b-red:hover{background:var(--red-h);}
+  .b-amber{background:var(--amber);}
+  .b-green{background:var(--green);} .b-green:hover{background:var(--green-h);}
+  .b-ghost{background:#3a6f8f;} .b-ghost:hover{background:#4a7f9f;}
+  .field{
+    background:var(--field);border:1px solid var(--line);color:var(--text);
+    border-radius:6px;font-size:13px;padding:4px 8px;height:30px;
+    font-family:inherit;outline:none;
+  }
+  .field:focus{border-color:#4f7faf;}
+  .field::placeholder{color:#5c6b7a;}
+  .field:disabled{color:#5c6b7a;background:#0e151c;border-color:#2c3844;cursor:not-allowed;}
+  .field[readonly]{color:#8fa8bd;background:#0e151c;border-color:#2c3844;}
+  .field[readonly]:focus{border-color:#2c3844;}
+  select.field{
+    appearance:none;padding-right:26px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238da3bb'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  select.field:disabled{background-image:none;}
+  .scheme-id{
+    font-size:12px;color:var(--dim);font-family:Consolas,monospace;
+    background:#141c24;border:1px solid #2c3844;border-radius:5px;
+    padding:3px 8px;display:inline-flex;gap:8px;align-items:center;
+  }
+  .scheme-id .copy{color:#6f8ba8;cursor:pointer;}
+  .status{display:flex;align-items:center;gap:7px;color:#7fbf9f;font-size:13px;margin-left:4px;}
+  .status .led{width:8px;height:8px;border-radius:50%;background:#3f9f7f;box-shadow:0 0 6px #3f9f7f;}
+
+  /* ---------- 左右分栏 ---------- */
+  .split{display:flex;gap:16px;align-items:stretch;height:800px;}
+  .left{
+    flex:0 0 30%;background:var(--panel);border-radius:12px;border:1px solid var(--line-soft);
+    padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0;
+  }
+  .right{
+    flex:1;background:var(--panel);border-radius:12px;border:1px solid var(--line-soft);
+    padding:12px 14px 0;display:flex;flex-direction:column;min-height:0;
+  }
+  .p-title{color:var(--label);font-size:13px;font-weight:500;}
+
+  .tree{background:var(--panel2);border-radius:8px;padding:4px;flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;}
+  .node{
+    display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;
+    border-radius:4px;color:var(--label);font-size:13px;cursor:pointer;
+  }
+  .node:hover{background:#1e2a36;}
+  .node.sel{background:var(--blue);color:#fff;}
+  .node.child{padding-left:26px;}
+  .node .id{color:#7f96ad;font-family:Consolas,monospace;font-size:12px;flex:none;}
+  .node.sel .id{color:#cfe0f5;}
+  .node .t{color:#8da3bb;font-size:12px;flex:none;}
+  .node.sel .t{color:#dbe9f5;}
+  .node .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .node .badge{
+    margin-left:auto;font-size:11px;padding:1px 6px;border-radius:9px;
+    background:#2a3a48;color:#8fb8d8;flex:none;
+  }
+  .node.sel .badge{background:rgba(255,255,255,.18);color:#fff;}
+  .node .caret{width:10px;color:#6a7a8a;font-size:10px;flex:none;}
+  .node.sel .caret{color:#dbe9f5;}
+
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;}
+  .icobtn{
+    width:40px;height:32px;border:none;border-radius:8px;color:#fff;cursor:pointer;
+    font-size:14px;display:inline-flex;align-items:center;justify-content:center;
+  }
+  .icobtn:hover{filter:brightness(1.15);}
+  .tree-hint{font-size:11px;color:var(--dim);line-height:1.5;padding:2px 2px 0;}
+
+  /* ---------- 滚动条：与动作树完全一致（28px / 白色 handle / 圆角 8 / 左右各留 4px） ---------- */
+  .tree::-webkit-scrollbar,
+  .detail::-webkit-scrollbar{width:28px;background:var(--scroll-track);}
+  .tree::-webkit-scrollbar-track,
+  .detail::-webkit-scrollbar-track{background:var(--scroll-track);border-radius:0;}
+  .tree::-webkit-scrollbar-thumb,
+  .detail::-webkit-scrollbar-thumb{
+    background:#ffffff;border-radius:8px;min-height:50px;
+    border:4px solid var(--scroll-track);
+  }
+  .tree::-webkit-scrollbar-thumb:hover,
+  .detail::-webkit-scrollbar-thumb:hover{background:#e0e8f0;}
+  .tree::-webkit-scrollbar-button,
+  .detail::-webkit-scrollbar-button{display:none;height:0;}
+
+  /* ---------- 右栏 ---------- */
+  .node-label{color:#cfe0f5;font-size:14px;font-weight:600;padding:2px 2px 10px;flex:none;}
+  .node-label .ty{color:#8da3bb;font-weight:400;font-size:13px;}
+  .speedrow{
+    display:flex;align-items:center;gap:10px;height:40px;padding-left:8px;
+    color:var(--label);font-size:13px;flex:none;
+  }
+  .speedrow .ghosted{color:#5f6f7e;font-size:12px;}
+
+  /* 详情区：与现有 Page 1~7 一致的平铺 QFormLayout（行距 10 / 标签列 132 / 字段拉伸） */
+  .detail{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px 4px 20px 2px;}
+
+  .row{display:grid;grid-template-columns:132px 1fr;gap:18px;align-items:center;min-height:34px;}
+  .row + .row{margin-top:10px;}
+  .row .lab{color:var(--label);font-size:13px;display:flex;align-items:center;gap:6px;}
+  .req{
+    font-size:10px;padding:1px 5px;border-radius:3px;flex:none;
+    background:#3a3320;color:#d3b06a;border:1px solid #574a28;
+  }
+  .req.opt{background:#243038;color:#7fa8c4;border-color:#31424f;}
+  .req.new{background:#18251c;color:#93c69a;border-color:#3d5a3f;}
+  .req.must{background:#3a2222;color:#e0a0a0;border-color:#5a3636;}
+  .field.bad{border-color:#b13a3a;background:#1c1214;}
+  .err-tip{color:#e0a0a0;font-size:12px;white-space:nowrap;display:none;}
+  .err-tip.show{display:inline;}
+  .conn-chip{
+    font-family:Consolas,monospace;font-size:12px;color:#a9c4d8;
+    background:#0e151c;border:1px solid #2c3844;border-radius:6px;
+    padding:6px 12px;white-space:nowrap;
+  }
+  .ctl{display:flex;align-items:center;gap:10px;min-width:0;position:relative;}
+  .ctl .field{flex:none;}
+  .inline-hint{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .inline-hint.warn{color:#c69a6a;}
+
+  .mini-btn{
+    background:#3a6f8f;border:none;border-radius:6px;color:#fff;
+    padding:0 12px;height:30px;font-size:12px;cursor:pointer;font-family:inherit;flex:none;
+  }
+  .mini-btn:hover{background:#4a7f9f;}
+  .mini-btn:disabled{background:#2c3844;color:#5c6b7a;cursor:not-allowed;}
+
+  /* 勾选 / 开关 */
+  .cb{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;color:var(--text);font-size:13px;}
+  .cb input{display:none;}
+  .cb .box{
+    width:15px;height:15px;border-radius:3px;border:1px solid #4c5c6c;background:var(--field);
+    position:relative;flex:none;
+  }
+  .cb input:checked + .box{background:var(--cyan);border-color:var(--cyan);}
+  .cb input:checked + .box::after{
+    content:"";position:absolute;left:4.5px;top:1.5px;width:4px;height:8px;
+    border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg);
+  }
+  .cb.off{color:#6f8090;cursor:default;}
+  .cb.off .box{opacity:.6;border-color:#3a4652;}
+
+  .toggle{display:flex;align-items:center;gap:12px;}
+  .toggle .txt{color:var(--text);font-size:13px;}
+  .toggle .txt small{color:var(--dim);font-size:12px;display:block;margin-top:2px;}
+
+  /* 「?」气泡 */
+  .qb{
+    width:15px;height:15px;border-radius:50%;flex:none;cursor:pointer;
+    border:1px solid #4c5c6c;background:#1d2833;color:#8da3bb;
+    font-size:10px;line-height:13px;text-align:center;font-weight:700;
+    display:inline-flex;align-items:center;justify-content:center;position:relative;
+    user-select:none;
+  }
+  .qb:hover{border-color:#4f7faf;color:#cfe0f5;background:#243442;}
+  .pop{
+    display:none;position:absolute;left:0;top:24px;z-index:30;width:430px;
+    background:#151c24;border:1px solid #3a4753;border-radius:8px;
+    padding:11px 13px;font-size:12px;line-height:1.75;color:#a9bfd2;
+    box-shadow:0 14px 34px rgba(0,0,0,.55);text-align:left;font-weight:400;
+  }
+  .pop.show{display:block;}
+  .pop.pop-up{top:auto;bottom:26px;}
+  .pop b{color:#dbe9f5;}
+  .pop code{font-family:Consolas,monospace;color:#b9d3e6;background:#1a2530;padding:0 4px;border-radius:3px;}
+  .pop .ttl{color:#cfe0f5;font-weight:600;margin-bottom:6px;font-size:12px;}
+  .pop ol{margin:6px 0 0;padding-left:18px;}
+  .pop li{margin-bottom:5px;}
+
+  /* 警示条 */
+  .banner{
+    display:none;margin-top:10px;border-radius:6px;padding:9px 12px;font-size:12px;line-height:1.65;
+    border-left:3px solid #b9863f;background:rgba(143,127,63,.12);color:#dcc08a;
+    max-width:660px;
+  }
+  .banner.show{display:block;}
+  .banner.err{border-left-color:#b13a3a;background:rgba(177,58,58,.12);color:#e0a0a0;}
+  .banner b{color:#f0d9a8;}
+  .banner.err b{color:#f0b8b8;}
+
+  /* 落盘预览 */
+  .preview{
+    background:var(--field);border:1px solid var(--line);border-radius:6px;
+    padding:10px 12px;font-family:Consolas,"Microsoft YaHei",monospace;font-size:12px;
+    color:#a9c4d8;line-height:1.85;max-width:620px;width:100%;
+  }
+  .preview .k{color:#6f8ba8;}
+  .preview .v{color:#cfe0f5;}
+  .preview .dimline{color:#5c6b7a;}
+  .preview .hl{color:#8fd0a0;}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;max-width:620px;}
+  .chip{
+    font-size:11px;padding:2px 7px;border-radius:10px;
+    background:#1b2a34;border:1px solid #2c4250;color:#8fb8d8;font-family:Consolas,monospace;
+  }
+  .chip.must{border-color:#3d5a3f;color:#93c69a;background:#18251c;}
+
+  .foot{
+    display:flex;align-items:center;gap:14px;margin-top:20px;padding:14px 0 16px;
+    border-top:1px solid #232c36;flex:none;
+  }
+  .foot .left-tip{color:var(--dim);font-size:12px;line-height:1.6;max-width:520px;}
+  .foot .spacer{flex:1;}
+
+  /* ---------- 设计标注 ---------- */
+  .note{display:none;}
+  body.annot .note{
+    display:block;margin:6px 0 0 150px;padding:7px 10px;
+    border-left:2px dashed #3f5a70;background:rgba(47,111,159,.06);
+    color:#8fa8bd;font-size:11.5px;line-height:1.7;border-radius:0 4px 4px 0;
+  }
+  body.annot .note b{color:#a8c4da;font-weight:600;}
+  body.annot .note .q{color:#d3a86a;}
+  body.annot .note code{
+    font-family:Consolas,monospace;color:#b9d3e6;background:#16212b;
+    padding:0 4px;border-radius:3px;
+  }
+  .note .src{color:#6f8ba8;font-family:Consolas,monospace;font-size:11px;}
+  .resolved{
+    margin:5px 0 0 150px;color:#6f8ba8;font-size:11.5px;
+    font-family:Consolas,monospace;line-height:1.6;
+  }
+  .resolved b{color:#8fb8d8;font-weight:400;}
+  .resolved .fallback{color:#c69a6a;}
+
+  /* ---------- 对话框 ---------- */
+  .mask{
+    display:none;position:fixed;inset:0;background:rgba(8,12,16,.66);
+    z-index:50;align-items:center;justify-content:center;
+  }
+  .mask.show{display:flex;}
+  .dlg{
+    background:var(--panel);border:1px solid #3a4753;border-radius:10px;
+    padding:20px;min-width:440px;box-shadow:0 24px 60px rgba(0,0,0,.6);
+  }
+  .dlg h3{margin:0 0 16px;font-size:14px;font-weight:600;color:#e8f1fa;}
+  .dlg .drow{display:grid;grid-template-columns:64px 1fr;gap:12px;align-items:center;margin-bottom:12px;}
+  .dlg .drow .dlab{color:var(--label);font-size:13px;}
+  .dlg .dfield{
+    background:var(--field);border:1px solid var(--line);color:var(--text);
+    border-radius:6px;padding:6px 10px;font-size:13px;font-family:inherit;
+    height:32px;width:100%;outline:none;
+  }
+  .dlg select.dfield{
+    appearance:none;padding-right:26px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238da3bb'/></svg>");
+    background-repeat:no-repeat;background-position:right 9px center;
+  }
+  .dlg .dhint{color:var(--dim);font-size:11.5px;line-height:1.6;margin:2px 0 14px 76px;}
+  .dlg .dbtn{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+  .dlg .new-tag{
+    font-size:10px;color:#93c69a;background:#18251c;border:1px solid #3d5a3f;
+    border-radius:3px;padding:1px 5px;margin-left:8px;
+  }
+
+  /* ---------- 抽屉 ---------- */
+  .drawer{
+    position:fixed;top:0;right:0;height:100%;width:540px;max-width:92vw;
+    background:#151c24;border-left:1px solid #2f3d4a;z-index:60;
+    transform:translateX(100%);transition:transform .22s ease;
+    display:flex;flex-direction:column;
+  }
+  .drawer.show{transform:translateX(0);}
+  .drawer-hd{
+    padding:16px 20px;border-bottom:1px solid #232e38;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .drawer-hd h3{margin:0;font-size:14px;color:#e8f1fa;}
+  .drawer-hd .x{cursor:pointer;color:#7f96ad;font-size:18px;line-height:1;}
+  .drawer-bd{padding:16px 20px 40px;overflow:auto;font-size:12.5px;line-height:1.75;color:#b6c8d8;}
+  .gap{border:1px solid #2a3742;border-radius:8px;padding:11px 13px;margin-bottom:11px;background:#121a22;}
+  .gap .gh{display:flex;gap:9px;align-items:baseline;margin-bottom:5px;}
+  .gap .no{
+    font-family:Consolas,monospace;font-size:11px;color:#e0b062;
+    border:1px solid #4a3f26;background:#2a2318;border-radius:4px;padding:1px 6px;flex:none;
+  }
+  .gap .gt{color:#dbe9f5;font-weight:600;font-size:12.5px;}
+  .gap p{margin:0;color:#93a8bb;}
+  .gap p + p{margin-top:6px;}
+  .gap code{font-family:Consolas,monospace;color:#b9d3e6;background:#1a2530;padding:0 4px;border-radius:3px;}
+  .gap.sev-high{border-color:#5a3636;}
+  .gap.sev-high .no{color:#e0a0a0;border-color:#5a3636;background:#2a1c1c;}
+  .gap.done{border-color:#33473a;background:#111a15;}
+  .gap.done .no{color:#93c69a;border-color:#3d5a3f;background:#18251c;}
+  .drawer .sect{color:#8fa8bd;font-size:11.5px;letter-spacing:.5px;margin:18px 0 8px;font-weight:600;}
+  .drawer .sect:first-child{margin-top:0;}
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <div class="proto-bar">
+    <span class="dot"></span>
+    <span><b>静态原型 v7 · 仅供设计审查</b>　<b>「存储路径」已删除</b>：与识别动作 TR-138 共用 <code style="font-family:Consolas,monospace">&lt;exe&gt;/saves/autorun/rgb/</code>，界面上只读描述当前路径。「图片标识」已并入「拍照标识」，字段<b>净剩 8 个</b>。TCP 只做 server 端，动作级 IP/端口已删。</span>
+  </div>
+
+  <div class="app">
+
+    <div class="page-head">
+      <div class="title">工艺流程<span class="crumb">ProcessPage · 拍照动作详情页</span></div>
+      <div class="tools">
+        <label class="sw-wrap" id="annotToggle"><span>设计标注</span><span class="sw on" id="swAnnot"></span></label>
+        <button class="ghost" id="btnGaps">文档缺口 <b>3</b></button>
+        <button class="ghost" id="btnNew">新建动作…</button>
+      </div>
+    </div>
+
+    <!-- ================= topBar ================= -->
+    <div class="topbar">
+      <div class="tb-row">
+        <span class="tb-label">当前方案</span>
+        <input class="field" style="width:150px" value="泡芙取放_A线">
+        <select class="field" style="width:140px"><option>泡芙取放_A线</option><option>空跑验证</option></select>
+        <button class="btn btn-sm b-blue">新增方案</button>
+        <button class="btn btn-sm b-blue">切换方案</button>
+        <button class="btn btn-sm b-red">删除方案</button>
+        <span style="flex:1"></span>
+        <span class="scheme-id">schemeId 3f9a2c71 <span class="copy" title="复制">⧉</span></span>
+      </div>
+      <div class="tb-row">
+        <span class="tb-label">方案调试</span>
+        <button class="btn btn-sm b-amber">单步执行</button>
+        <button class="btn btn-sm b-red">停止</button>
+        <span class="status"><span class="led"></span>就绪 · 已使能 · 已回零</span>
+        <span style="flex:1"></span>
+        <span class="inline-hint">循环 1/1　节拍 2.8 s</span>
+      </div>
+    </div>
+
+    <!-- ================= 左右分栏 ================= -->
+    <div class="split">
+
+      <!-- 左：动作树 -->
+      <aside class="left">
+        <div class="p-title">动作列表</div>
+        <div class="tree" id="tree">
+          <div class="node" data-node="1"><span class="id">#1</span><span class="t">(移动)</span><span class="n">移动到：安全上方点</span></div>
+          <div class="node" data-node="2"><span class="id">#2</span><span class="t">(夹爪)</span><span class="n">打开夹爪</span></div>
+          <div class="node" data-node="3"><span class="caret">▾</span><span class="id">#3</span><span class="t">〔分组〕</span><span class="n">取料并发组</span><span class="badge">2 子</span></div>
+          <div class="node child" data-node="4"><span class="id">#4</span><span class="t">(识别)</span><span class="n">识别泡芙位置</span></div>
+          <div class="node child" data-node="5"><span class="id">#5</span><span class="t">(上下移动)</span><span class="n">Z 下探 8mm</span></div>
+          <div class="node" data-node="6"><span class="id">#6</span><span class="t">(移动)</span><span class="n">直线插补：插入灌装口</span></div>
+          <div class="node sel" data-node="7"><span class="id">#7</span><span class="t">(拍照)</span><span class="n">拍照_工位A</span><span class="badge">新增</span></div>
+          <div class="node" data-node="8"><span class="id">#8</span><span class="t">(挤压)</span><span class="n">挤出奶油</span></div>
+          <div class="node" data-node="9"><span class="id">#9</span><span class="t">(拍照)</span><span class="n">拍照_成品</span><span class="badge">新增</span></div>
+          <div class="node" data-node="10"><span class="id">#10</span><span class="t">(延时)</span><span class="n">等待物料稳定 800ms</span></div>
+          <div class="node" data-node="11"><span class="id">#11</span><span class="t">(视觉引导)</span><span class="n">引导对位（引用 #4）</span></div>
+        </div>
+        <div class="btnrow">
+          <button class="icobtn b-ghost" title="新建动作">＋</button>
+          <button class="icobtn" style="background:#6f5f8f" title="新建分组（组内子动作并发执行）">▤</button>
+          <button class="icobtn" style="background:#4f5f6f" title="编辑动作">✎</button>
+          <button class="icobtn" style="background:#8f4f4f" title="删除动作">－</button>
+          <button class="icobtn" style="background:#4f6f5f" title="上移">↑</button>
+          <button class="icobtn" style="background:#4f6f5f" title="下移">↓</button>
+          <button class="icobtn" style="background:#2f8f5f" title="执行选中动作">▶</button>
+        </div>
+        <div class="tree-hint">编号 <span style="font-family:Consolas,monospace">#id</span> 为持久化标识，插入/删除不重排。拍照占 <span style="font-family:Consolas,monospace">{Camera}</span>，与移动的四轴不交，故可放进分组并发。</div>
+      </aside>
+
+      <!-- 右：详情 -->
+      <section class="right">
+        <div class="node-label">当前节点: <span id="curLabel">#7 (拍照) 拍照_工位A</span></div>
+
+        <div class="speedrow" id="speedRow">
+          <span class="ghosted">本动作无「动作运行速度」（该行仅移动 / 挤压 / 夹爪动作显示）</span>
+        </div>
+
+        <!-- 平铺 QFormLayout，与 Page 1~7 一致；滚动条与动作树同宽 -->
+        <div class="detail" id="detailCapture">
+
+          <div class="row">
+            <div class="lab">相机 ID <span class="req new">新增</span></div>
+            <div class="ctl">
+              <select class="field" id="camId" style="width:270px">
+                <option value="">（空）回落当前活动相机</option>
+                <option value="CP9KB530005S" selected>CP9KB530005S · Gemini 336（在线）</option>
+              </select>
+              <span class="inline-hint">当前仅 1 台</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">2026-10-26 裁定 Q7 → 按 multi_camera_plan.md 实现</span>。字段复用通用 <code>ActionData::cameraId</code>（空 = 回落活动相机），不另起 <code>captureCameraId</code> —— 两套相机引用会让「识别」与「拍照」对同一台设备给出不同结论。
+            <br><b>两级校验，两者都做</b>：<b>编辑期</b>——非空时必须指向 <code>cameras.list</code> 中<b>存在且已启用</b>的设备，否则提示并拒绝保存；下拉对<b>悬垂引用</b>显式列出 <code>cam_x（已不存在）</code>，<b>不静默落到第一个合法项</b>。 <b>执行期</b>——非空但设备不存在 / 未启用 → 写 <code>r.failReason</code> 并 <code>return false</code>，<b>不产生任何运动</b>。
+            <br>⚠ 为什么编辑期拦了还要执行期再拦：<code>process.json</code> 可被手工编辑、设备可在保存后被拔掉。只拦一处必有一侧漏。
+          </div>
+
+          <div class="row">
+            <div class="lab">拍照标识 <span class="req must">必填</span></div>
+            <div class="ctl">
+              <input class="field" id="tag" style="width:220px" value="A02" placeholder="如 A02 / TOP / CRACK" maxlength="32">
+              <span class="err-tip" id="tagErr"></span>
+              <span class="inline-hint">同时用于文件名与通知 · 同方案唯一</span>
+              <span class="qb" data-pop="popTag">?</span>
+              <div class="pop" id="popTag">
+                <div class="ttl">拍照标识（captureTag）是什么</div>
+                动作级的<b>业务标签</b>，一处填写、三处使用：
+                <br>① <b>文件名</b> — <code>RGB_A02_20261026_103058_003.png</code>
+                <br>② <b>通知</b> — <code>captureReady</code> / <code>captureFailed</code> 载荷里的 <code>tag</code>
+                <br>③ <b>sidecar</b> — 同名字段
+                <br>用途是<b>分类归因</b>：第三方拿到一堆图后，靠它判断「这张拍的是哪个部位 / 哪类缺陷」，而不是靠文件名顺序或时间猜。
+                <br><b>校验</b>：必填；同方案内不允许重复（含分组内子动作，<b>全树扫描</b>）；字符集 <code>[A-Za-z0-9_-]</code>；上限 32 字符。
+                <br>⚠ 字符集为什么收紧：它要进文件名，中文 / 空格 / 冒号在 Windows 与 Linux 两端行为不一致。需要中文描述时，由第三方侧维护「编码 → 中文」映射表。
+                <br>⚠ 仍与检测项 <code>items[].key</code> 不是一回事（那个标识「测的是什么量」，见 <code>inspection_result_panel_plan.md:62</code>）。
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§1.2 裁定 3 + 2026-10-26 裁定（合并「图片标识」）</span>。
+            <br><b>已与「图片标识」合并为一个字段</b>：原设计里两者语义相同（都是「这张图是什么」），只是去向不同（一个进文件名、一个进通知），分开会导致两套唯一性校验、且值不一致时第三方归因断裂。合并后<b>一处填写、三处一致</b>。
+            <br><b>副产品</b>：唯一性约束只剩一条，同时满足「通知可归因」与「文件名不撞名」—— 原来靠「图片标识唯一」补的「新文件名丢了 nodeId」的洞，现在由 tag 唯一性天然覆盖（同轮同秒同 tag 只可能是同一动作触发两次，靠序号区分）。
+            <br><b>代价</b>：字符集必须收紧到 <code>[A-Za-z0-9_-]</code>（因为要进文件名），中文与空格不可用。
+            <br>⚠ 唯一性校验必须<b>全树扫描</b>（一级节点 + 分组子节点）—— 拍照可以放进分组，只扫一级会漏。
+          </div>
+
+          <div class="row">
+            <div class="lab">图像内容 <span class="req opt">可选</span></div>
+            <div class="ctl">
+              <select class="field" id="content" style="width:250px">
+                <option value="color">彩色</option>
+                <option value="color_depth">彩色 + 深度</option>
+                <option value="cloud" disabled>彩色 + 深度 + 点云（本期不做）</option>
+              </select>
+              <span class="inline-hint">深度 = 16-bit 原始 mm</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§1.2 裁定 5 / §1.4 裁定 7</span>。点云无数据源（<code>pointCloud</code> 全库仅 <code>ICamera.h:41</code> 声明、无实现填充），本期不上线。
+            <br><b>落盘约束</b>：深度按 <code>depthWidth × depthHeight</code> 索引（0 回落 <code>width/height</code>），落 16-bit PNG，<b>不可用 JPEG</b>。
+          </div>
+
+          <div class="row">
+            <div class="lab">失败中止流程</div>
+            <div class="ctl">
+              <div class="toggle">
+                <span class="sw on" id="swRequired"></span>
+                <span class="txt">拍照失败即中止整个方案
+                  <small>captureRequired = true（默认）</small>
+                </span>
+              </div>
+              <span class="qb" data-pop="popFail">?</span>
+              <div class="pop" id="popFail">
+                <div class="ttl">关闭后的行为（fail-open）</div>
+                失败时只记 <code>SPDLOG_WARN</code> + 发 <code>captureFailed{nodeId, cycleIndex, tag, reason}</code>，流程继续下一节点。
+                <ol>
+                  <li><b>必须发 <code>captureFailed</code></b>——否则第三方分不清「这一轮还没拍」与「拍了但失败被跳过」，图片数量对不上却无法归因。</li>
+                  <li><b>不得复用 <code>errorOccurred</code></b>——全库 7 处 <code>emit errorOccurred</code> 全部伴随会话中止，复用即误报。须守住「<code>errorOccurred</code> ⟺ 会话中止」不变量。</li>
+                  <li><b>必须有兜底</b>——连续失败 3 次或相机流本身掉线，仍判失败中止；否则相机被拔掉后整晚会空转。</li>
+                  <li>只豁免<b>拍照动作自身</b>，不影响其它动作类型的失败语义。</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§1.4 裁定 1 / §5.6</span>。默认 fail-closed。文案须与识别动作区分：识别失败是「视觉未检出目标」（业务语义，图是好的），拍照失败是「取帧失败 / 帧无效 / 落盘失败」（故障语义）。
+            <br><b>三条硬约束已移入「?」气泡</b>（2026-10-26 裁定 3），界面不再铺开。
+          </div>
+
+          <div class="row">
+            <div class="lab">节点级重试</div>
+            <div class="ctl">
+              <span class="inline-hint" style="color:#8fa8bd">不参与 · 当前 <span style="font-family:Consolas,monospace">retryCount = 0</span>（全局不重试）</span>
+              <span class="qb" data-pop="popRetry">?</span>
+              <div class="pop" id="popRetry">
+                <div class="ttl">当前重试几次</div>
+                <b>0 次。</b><code>config.json</code> 的 <code>production.loop</code> 里<b>没有</b> <code>retryCount</code> 这个键，<code>AutoRunPage.cpp:1051</code> 取默认值 <code>0</code> ⇒ 节点级重试整体关闭，与改造前行为逐字节一致。
+                <br>设 <code>retryCount = N</code>（N&gt;0）时：总尝试 <b>N+1</b> 次，每次间隔 <code>retryDelayMs = 500 ms</code>（<code>SequenceWorker.h:98-99</code>）。
+                <br><b>可重试白名单</b>只有三样：<code>Vision</code>（重新采图定位）、<code>Move</code>（重新下发目标）、<b>分组</b>（整组重跑）。
+                <br>拍照 <code>Capture</code> 天然不在白名单内 ⇒ <b>不重试，无需改代码</b>，只补注释与用例。
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">SequenceWorker.cpp:769-795 / :1051 / SequenceWorker.h:98</span>。⚠ 残留边界：分组重试会<b>连带重跑</b>组内拍照（组内移动失败 + <code>retryCount=1</code> ⇒ 拍照执行两次），已知行为，第三方按 <code>timestamp</code> 区分。
+          </div>
+
+          <div class="row">
+            <div class="lab">本地存储</div>
+            <div class="ctl" style="flex-direction:column;align-items:flex-start;gap:7px">
+              <label class="cb off"><input type="checkbox" id="storeLocal" checked disabled><span class="box"></span>存到本机磁盘（强制）</label>
+              <span class="inline-hint" style="white-space:normal">当前路径 <span style="font-family:Consolas,monospace;color:#a9c4d8">&lt;exe目录&gt;/saves/autorun/rgb/</span>（只读 · 与识别动作 TR-138 存图同目录）</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">2026-10-26 裁定（第二版）→ 强制项；Q8 → 与 TR-138 共用目录</span>。落盘是 §5 时序的<b>必经步骤 ⑤</b>，不是可选项，故按<b>常量</b>呈现（勾选框置灰常选），不占可配字段。
+            <br><b>路径固定、不再可配</b>：与识别动作的运行存图（TR-138）<b>共用同一目录</b> —— 基准 <code>QCoreApplication::applicationDirPath() + "/saves/autorun"</code>（<code>AutoRunPage.cpp:59-60</code>），彩色图落 <code>rgb/</code>、深度图落 <code>depth/</code>（<code>process.md:45-47</code>）。原「存储路径」输入框与 <code>config.interface.capture.outputDir</code> 一并作废。
+            <br>理由：同一台机器上两套配置指向两个目录，现场分不清哪张图是谁写的；共用后「自动运行写过哪些图」只有一处可查。
+            <br>⚠ <b>保留策略不共用</b>：<code>FrameSaver::EnforceDiskGuard</code> 的清理白名单正则是 <code>^(rgb|depth|overlay|snapshots|frame)_\d{14}_\d+\.png$</code>（<b>小写、大小写敏感</b>），拍照文件名是 <code>RGB_&lt;标识&gt;_…</code>（大写）⇒ 磁盘守卫<b>不会误删</b>拍照图，但也<b>不会</b>替它清理，长期运行会单调累积，须另配保留策略。
+          </div>
+
+          <div class="row">
+            <div class="lab">TCP 传输</div>
+            <div class="ctl">
+              <label class="cb"><input type="checkbox" id="tcpOn"><span class="box"></span>启用远程交付（默认不选）</label>
+              <span class="inline-hint">总开关：关闭时不建连、不发任何事件</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">2026-10-26 裁定（第二版）</span>。它是<b>通道总开关</b>，其下再选「交付什么」（路径引用 / 直接推送）。关闭时本动作只落盘，第三方收不到任何事件。
+            <br>⚠ 与 <code>config.interface.enabled</code> 的区别：那是<b>全局服务开关</b>，这是<b>单个动作</b>是否参与远程交付。两者都开才真正发事件。
+          </div>
+
+          <div class="row">
+            <div class="lab">连接（只读）</div>
+            <div class="ctl">
+              <span class="conn-chip">server · 监听 0.0.0.0:9527 · 放行 192.168.0.50</span>
+              <span class="qb" data-pop="popPort">?</span>
+              <div class="pop pop-up" id="popPort">
+                <div class="ttl">TCP 只做 server 端，连接参数不在本页</div>
+                TCP <b>只做 server 端</b>：本软件在<b>启动时</b> <code>listen()</code>，第三方作为 client 连进来。
+                <br>端口 = <code>config.interface.listenPort</code>（默认 9527）；放行来源 = <code>allowedClients</code>（留空 = 不启用白名单，仅靠 token）。
+                <br>⚠ 动作<b>不发起任何连接</b>，只往<b>已建立</b>的会话里发事件。所以本页没有可填的 IP / 端口 —— 那两项只在「动作主动外连」模式下才成立，已裁定不做。
+                <br>⚠ 同机部署时第三方连 <code>127.0.0.1:9527</code>。
+                <br>⚠ 端口须避开运动卡网段：<code>192.168.0.1</code>（卡）/ <code>192.168.0.100</code>（本机）。
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">2026-10-26 裁定 Q11 → 仅 server 端</span>。原方案就是<b>单连接、本软件作 server</b>（§1.2 裁定 1 / §4.6），第三方作 client 连进来。
+            <br><b>监听时机：软件启动时就 <code>listen()</code></b>，不能延迟到首次 <code>run</code> —— 第三方必须先连上才能发 <code>run</code>，延迟监听会死锁。按 <code>interface.enabled</code> 在 <code>MainWindow</code> 装配时决定是否监听。
+            <br>⚠ 文档 §4.2 的「延迟」只针对 <b>AcquireCamera</b>（首个合法 <code>run</code> 才登记相机持有），<b>不是</b>延迟监听 —— 两件事容易混。
+            <br>⚠ 上一版的「远程地址 / 远程端口」两个可编辑字段已删除：它们是「动作主动外连」才需要的，与本裁定冲突。此处只保留一行只读信息，方便现场确认事件发到哪个端口。
+          </div>
+
+          <div class="row">
+            <div class="lab">交付方式</div>
+            <div class="ctl">
+              <label class="cb"><input type="checkbox" id="deliverPath" checked><span class="box"></span>路径引用
+                <span style="font-family:Consolas,monospace;font-size:12px;color:#a9c4d8">captureReady</span></label>
+              <label class="cb" style="margin-left:8px"><input type="checkbox" id="deliverStream"><span class="box"></span>直接推送
+                <span style="font-family:Consolas,monospace;font-size:12px;color:#a9c4d8">captureData</span></label>
+              <span class="qb" data-pop="popDeliver">?</span>
+              <div class="pop" id="popDeliver">
+                <div class="ttl">两条通道，可单选、可同选</div>
+                <b>路径引用 <code>captureReady</code></b>：只发<b>路径 + 元信息</b>（<code>fileName</code> / <code>filePath</code> / <code>depthFile</code> / <code>width</code> / <code>height</code> / <code>timestamp</code>），第三方自己去读文件。
+                <br><b>直接推送 <code>captureData</code></b>：一帧 JSON 描述 + 紧接一帧<b>二进制图</b>，第三方不用碰磁盘。
+                <br><b>怎么选</b>：同机部署（第三方服务与本软件在同一台机器）→ 路径引用足够，省掉一次完整图像传输；跨机且第三方读不到本机磁盘（无共享盘 / 无权限）→ 必须直接推送。两者同开 = 既能立刻用内存图，又能事后回查原文件。
+                <br>⚠ 两条通道都<b>只等本地落盘完成</b>，不等网络 ACK（§5 约束 1）；顺序固定：写图 → <code>rename</code> → 写 sidecar → 发通知（§5 约束 2）。
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§1.2 裁定 2 / §4.4 / §7.3 → captureDeliverPath、captureDeliverStream</span>。裁定原文：「路径引用与直接推送两者可单选、可同选」，做成<b>两个独立开关</b>，不是三选一的枚举。
+            <br>⚠ 这两个字段名在文档里<b>只出现在 §5 时序图的第 ⑥⑦ 步</b>，字段定义本应在缺失的 §3.5 —— 类型与默认值需在补写 §三 时确定。
+            <br>⚠ 本开关<b>不是</b>「是否落盘」：落盘是强制项（见上）。它只决定「落完盘发什么」。
+          </div>
+
+          <div class="row">
+            <div class="lab">推送格式</div>
+            <div class="ctl">
+              <select class="field" id="format" style="width:250px" disabled>
+                <option value="png">PNG（无损，可复现）</option>
+                <option value="jpeg">JPEG（省流，有损）</option>
+              </select>
+              <span class="inline-hint" id="formatHint">未开「直接推送」，格式不生效</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§1.4 裁定 3 / §6.2 / §6.4</span>。默认 <code>"png"</code>；JPEG 质量写死为常量，不进 <code>process.json</code> 也不进 <code>config.json</code>。
+            <br><b>只作用于推送通道</b>：<code>jpeg</code> 时本地仍存 PNG、推送是 JPEG，同一张图两种编码——预期行为，须写入对接说明。深度图只能 PNG。
+          </div>
+
+          <div class="row">
+            <div class="lab">节拍影响</div>
+            <div class="ctl">
+              <span class="inline-hint" style="color:#8fa8bd">同步 PNG 落盘 · 约 +30~80 ms / 张</span>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">2026-10-26 裁定 Q4 → §6.3 选项 a</span>。同步编码 + 同步落盘，耗时直接进节拍。另两个选项为什么没取、这笔时间为什么不受「动作运行速度」影响、深度图怎么叠加 —— 详见 <code>doc/third_party_integration_plan.md</code> §6.3 / §6.4。
+            <br>⚠ 这是<b>只读派生信息</b>，不是可配字段 —— 但它必须在界面上露出来：现场看到 30~80 ms 才知道节拍预算够不够，否则只能事后从日志里猜。
+          </div>
+
+          <div class="banner err" id="deliverWarn">
+            <b>已启用远程交付，但两个交付方式都没选</b> —— 连接建立后本动作什么都不发，第三方既收不到 <code>captureReady</code> 也收不到 <code>captureData</code>。<br>
+            <span style="color:#c69a6a">建议：至少勾选一项，或直接关掉「启用远程交付」（只落盘）。</span>
+          </div>
+
+          <div class="row" style="margin-top:18px;align-items:start">
+            <div class="lab" style="padding-top:8px">落盘预览</div>
+            <div class="ctl" style="flex-direction:column;align-items:flex-start;gap:8px">
+              <div class="preview" id="preview"></div>
+              <div class="chips">
+                <span class="chip must">pose</span>
+                <span class="chip must">joints</span>
+                <span class="chip must">intrinsics</span>
+                <span class="chip must">handEyeMatrix</span>
+                <span class="chip">cameraId</span>
+                <span class="chip">timestamp</span>
+                <span class="chip">sessionId</span>
+                <span class="chip">cycleIndex</span>
+              </div>
+            </div>
+          </div>
+          <div class="note">
+            <b>来源</b> <span class="src">§7.1 / §7.2 + 2026-10-26 文件名裁定；Q8 → 基准目录固定</span>。目录 = <code>&lt;exe&gt;/saves/autorun/rgb/&lt;sessionId&gt;/&lt;cycleIndex&gt;/</code>（基准与 TR-138 共用，不再读 <code>outputDir</code>）；文件名 = <b><code>RGB_&lt;拍照标识&gt;_&lt;时间戳&gt;_&lt;序号&gt;.后缀</code></b>（原 <code>nodeId_时刻_毫秒.png</code> 已废弃）。
+            <br><b>位姿与关节角是「图 → 工件实际位置」的前提，缺了模型只能看图说话</b>，故 sidecar 是核心契约。⚠ <code>joints.z</code> 是 Z 电机坐标（回零后 = 0、向下为负），与 <code>pose.z</code> 不是同一个量。
+            <br>⚠ 文件名<b>不含 nodeId</b>（旧格式靠 nodeId 前缀区分不同拍照动作）。这一缺口已由「拍照标识同方案唯一」补上：同轮同秒同标识只可能是同一动作触发两次，靠序号区分即可。
+            <br>⚠ <b>布局与 TR-138 不同</b>：识别动作的存图直接平铺在 <code>rgb/</code> 下（<code>rgb_&lt;时间戳&gt;_&lt;编号&gt;.png</code>），拍照图再套一层 <code>&lt;sessionId&gt;/&lt;cycleIndex&gt;/</code>。两者<b>共用基准目录但不共用子结构</b> —— 若要完全平铺，须先裁定 <code>manifest.json</code> 与 sidecar 的归属（当前按「每轮一份」设计）。
+          </div>
+
+          <div class="foot">
+            <div class="left-tip">
+              新增动作类型须同步五处：<span style="font-family:Consolas,monospace">ActionType</span> 枚举 · <span style="font-family:Consolas,monospace">actionTypeName</span> · <span style="font-family:Consolas,monospace">resourceKeysOf</span> · 本详情页 · 新建/编辑对话框下拉项（索引即枚举值，只能追加末尾）。
+            </div>
+            <div class="spacer"></div>
+            <button class="btn b-green" id="saveBtn">保存动作</button>
+          </div>
+        </div>
+
+        <!-- 其它节点的占位 -->
+        <div class="detail" id="detailOther" style="display:none">
+          <div class="row" style="align-items:start">
+            <div class="lab" style="padding-top:2px" id="otherTitle">该节点沿用现有实现</div>
+            <div class="ctl" style="align-items:flex-start">
+              <div style="color:#93a8bb;font-size:13px;line-height:1.9;max-width:640px" id="otherBody"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 新建动作对话框 ================= -->
+<div class="mask" id="dlgMask">
+  <div class="dlg">
+    <h3>新建动作</h3>
+    <div class="drow"><span class="dlab">名称:</span><input class="dfield" value="拍照_工位B" placeholder="输入动作名称"></div>
+    <div class="drow"><span class="dlab">类型:</span>
+      <select class="dfield">
+        <option>移动</option><option>识别</option><option>挤压</option><option>延时</option>
+        <option>夹爪</option><option>视觉引导</option><option>上下移动</option>
+        <option selected>拍照（新增）</option>
+      </select>
+    </div>
+    <div class="dhint">本列表的索引<b>直接就是 ActionType 枚举值</b>，顺序必须与枚举严格一致，新增类型只能追加在末尾 —— 拍照 = <b>7</b>（ZMove 已占 6，见 process.md）。</div>
+    <div class="dbtn">
+      <button class="btn btn-sm b-blue">确定</button>
+      <button class="btn btn-sm" style="background:#3d4b58" id="dlgCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 文档缺口抽屉 ================= -->
+<div class="drawer" id="drawer">
+  <div class="drawer-hd">
+    <h3>文档缺口与设计待裁定项</h3>
+    <span class="x" id="drawerClose">✕</span>
+  </div>
+  <div class="drawer-bd">
+
+    <div class="sect">一、硬伤（均已裁定处理方式）</div>
+
+    <div class="gap done">
+      <div class="gh"><span class="no">Q2</span><span class="gt">详情页索引会撞号（文档自相矛盾）→ 按新落点实施</span></div>
+      <p><b>改写前</b> <code>third_party_integration_plan.md</code> §十 与 §685 写的是「<code>Capture = 6</code>、新增 Page 8 拍照页、<code>kGroupPageIndex</code> 7→8」；但 <code>ZMove = 6</code> 已于 2026-10-22 落地占用 6，<code>process.md:115</code> 明确「重启本篇时 <code>Capture</code> 改取 7」。</p>
+      <p>照 §十 实施：Capture=7 → stack index = 8，而分组页也被设为 8 → <b>正好是 §二 事实 7 警告的那个故障</b>（<code>setCurrentIndex</code> 越界被 Qt 静默忽略 → 界面停在上一节点面板）。</p>
+      <p><b>正确落点</b>：Capture = 7、拍照详情页 index = 8、<code>kGroupPageIndex</code> 8 → <b>9</b>。本原型按此绘制。</p>
+      <p><b>裁定（本版）</b>：按上述落点实施 —— 改 <code>ProcessPage.cpp:96</code> 常量、<code>:1647</code> 下拉项追加「拍照」、新增 Page 8，并同步改写 §十 与 §685 两处错误表述。</p>
+    </div>
+
+    <div class="gap done">
+      <div class="gh"><span class="no">Q1</span><span class="gt">§三 整章缺失，字段数已对不上 → 整章重写</span></div>
+      <p>文档目录从 §二 直接跳到 §四，但 §3.3 / §3.4 / §3.5 被 §1.4、§二、§九、§十 反复引用；§9.2 说「<code>ActionData</code> 增 §3.5 的 <b>8 个</b> capture* 字段」。</p>
+      <p>原文可确认 6 个（<code>captureTag</code> / <code>captureContent</code> / <code>captureFormat</code> / <code>captureDeliverPath</code> / <code>captureDeliverStream</code> / <code>captureRequired</code>）。</p>
+      <p><b>裁定（本版）</b>：整章重写 §3.3（详情页与索引）/ §3.4（重试）/ §3.5（字段表）。净增 2 个（相机 ID、远程交付总开关），共 <b>8 个</b> —— 与 §9.2 声称的 8 个<b>正好吻合</b>，字段数矛盾自行消失。「本地存储」按<b>常量</b>处理、「存储路径」已删除（Q8）、「图片标识」已并入 <code>captureTag</code>、动作级远程 IP / 端口已删除（Q11）。</p>
+    </div>
+
+    <div class="sect">二、待确认（0 项）</div>
+
+    <div class="gap done">
+      <div class="gh"><span class="no">Q8</span><span class="gt">与识别动作 TR-138 存图开关并存 → 共用同一目录</span></div>
+      <p>识别动作已有三路存图（RGB / 深度 / 叠加图，落 <code>&lt;exe&gt;/saves/autorun/{rgb,depth,overlay}/</code>）。拍照动作本身就在落盘，二者并存时一次执行会产生两套图。</p>
+      <p><b>裁定（本版）</b>：<b>使用相同的存储路径</b> —— 拍照图落 <code>&lt;exe&gt;/saves/autorun/rgb/</code>，与 TR-138 同基准、同子目录约定；界面<b>删除「存储路径」可编辑字段</b>，改为「本地存储」下一行<b>只读描述当前路径</b>。</p>
+      <p>⚠ 连带作废：<code>config.interface.capture.outputDir</code>、§9.1 配置块里对应项、以及原 Q9「动作级非空即覆盖」整套优先级规则。</p>
+      <p>⚠ 两个未随之消失的差异，须写进对接说明：<b>①</b> 拍照图仍套 <code>&lt;sessionId&gt;/&lt;cycleIndex&gt;/</code> 一层，识别动作的存图是平铺的；<b>②</b> <code>FrameSaver::EnforceDiskGuard</code> 的清理白名单正则为小写 <code>^(rgb|depth|overlay|snapshots|frame)_\d{14}_\d+\.png$</code>，拍照文件名是大写 <code>RGB_…</code> ⇒ 守卫<b>不会误删</b>，但也<b>不会</b>替拍照图清理，长期运行会单调累积。</p>
+    </div>
+
+    <div class="sect">三、已裁定（第二版 7 项 + 第三版 2 项 + 第四版 3 项）</div>
+
+    <div class="gap done">
+      <div class="gh"><span class="no">已定</span><span class="gt">裁定与界面落点</span></div>
+      <p><b>Q7 相机 ID</b> —— 按 <code>multi_camera_plan.md</code> 实现，<b>编辑期拒绝保存 + 执行期报错</b>两者都做；下拉对悬垂引用显式列出「已不存在」，不静默回落第一个合法项。</p>
+      <p><b>Q5 拍照标识</b> —— 必填、同方案内唯一（<b>全树扫描</b>，含分组子动作）、上限暂按 32 字符。</p>
+      <p><s><b>Q9 存储路径</b> —— 动作级非空覆盖、留空回落全局；界面下方常显回落后的实际绝对路径。</s> <b>已作废</b>：Q8 把路径固定为 <code>&lt;exe&gt;/saves/autorun/rgb/</code>，不再有「动作级 / 全局」两级优先级，字段与回落提示一并删除。</p>
+      <p><b>Q10 / Q6' 字符集与唯一性</b> —— 限 <code>[A-Za-z0-9_-]</code>、同方案内不允许重复（<b>全树扫描</b>）。这两条现已<b>并入「拍照标识」</b>，不再有独立字段。</p>
+      <p><b>Q4 节拍</b> —— 取 a. 同步 PNG 落盘，编码耗时进节拍；界面新增只读「节拍影响」行。</p>
+      <p><b>Q11 连接方向</b> —— <b>TCP 只做 server 端</b>：启动时 <code>listen()</code>，动作不发起任何连接。动作级「远程地址 / 远程端口」两个字段<b>已删除</b>，改为一行只读连接信息。</p>
+      <p><b>Q2 索引落点（本版）</b> —— <code>Capture = 7</code>、拍照页 index = 8、<code>kGroupPageIndex</code> <b>8 → 9</b>；§十 与 §685 的错误表述同步改写。</p>
+      <p><b>Q1 §三 重写（本版）</b> —— 补 §3.3 / §3.4 / §3.5 三节，字段表定为 <b>8 个</b> <code>capture*</code>，与 §9.2 声称的数量吻合。</p>
+      <p><b>Q8 共用存图目录（本版）</b> —— 与识别动作 TR-138 用同一基准目录，删除界面上「存储路径」可编辑字段，改为只读描述当前路径；<code>config.interface.capture.outputDir</code> 作废。</p>
+      <p><b>合并「图片标识」→「拍照标识」（第三版）</b> —— 两者语义相同（都是「这张图是什么」），只是去向不同（文件名 / 通知），分开要维护两套唯一性，且值不一致时第三方归因断裂。合并后<b>一处填写、三处一致</b>（文件名 / 通知 / sidecar）；副产品是「同方案唯一」这一个约束同时保证「可归因」与「文件名不撞」。<b>代价</b>：字符集收紧到 <code>[A-Za-z0-9_-]</code>（要进文件名），中文与空格不可用，需要中文描述时由第三方维护映射表。</p>
+      <p><b>标识默认留空、强制手填（第三版）</b> —— 不用相机 ID 做默认值：相机 ID 是<b>硬件维度</b>（哪台设备），标识是<b>业务维度</b>（拍哪个部位），同一台相机拍三个部位就该有三个标识。界面已取消两者联动。</p>
+    </div>
+
+    <div class="gap done">
+      <div class="gh"><span class="no">已定</span><span class="gt">第一版裁定（同日）</span></div>
+      <p>① 不引入分组视觉，沿用平铺 QFormLayout，右栏加与动作树同宽（28px）的滚动条；② 文件名改 <code>RGB_&lt;拍照标识&gt;_时间戳_序号.后缀</code>；③ fail-closed 的三条硬约束移入「?」气泡；④ 本地存储改为<b>强制项</b>；⑤ 交付方式<b>保留 <code>captureDeliverPath</code> / <code>captureDeliverStream</code> 两个独立开关</b>。</p>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var body = document.body;
+  var swAnnot = document.getElementById('swAnnot');
+  document.getElementById('annotToggle').addEventListener('click', function(e){
+    e.preventDefault();
+    body.classList.toggle('annot');
+    swAnnot.classList.toggle('on');
+  });
+
+  // ---- 「?」气泡 ----
+  var pops = document.querySelectorAll('.pop');
+  document.querySelectorAll('.qb').forEach(function(b){
+    b.addEventListener('click', function(e){
+      e.stopPropagation();
+      var target = document.getElementById(b.getAttribute('data-pop'));
+      var wasOpen = target.classList.contains('show');
+      pops.forEach(function(p){ p.classList.remove('show'); });
+      if (!wasOpen) target.classList.add('show');
+    });
+  });
+  document.addEventListener('click', function(){
+    pops.forEach(function(p){ p.classList.remove('show'); });
+  });
+  pops.forEach(function(p){ p.addEventListener('click', function(e){ e.stopPropagation(); }); });
+
+  // ---- 失败中止开关 ----
+  var swReq = document.getElementById('swRequired');
+  swReq.addEventListener('click', function(){ swReq.classList.toggle('on'); });
+
+  // ---- 相机 ID ----
+  var camId = document.getElementById('camId');
+
+  // 同方案内其它拍照动作的 tag（唯一性校验的数据源；真实实现须全树扫描）
+  var CAPTURE_NODES = {
+    '7': { tag: 'A02' },
+    '9': { tag: 'FINISH' }
+  };
+  var currentId = '7';
+  var tagErr = document.getElementById('tagErr');
+  var saveBtn = document.getElementById('saveBtn');
+
+  function whichNode(value) {
+    for (var k in CAPTURE_NODES) {
+      if (k === currentId) continue;
+      if (CAPTURE_NODES[k].tag === value) return '#' + k;
+    }
+    return null;
+  }
+
+  function validate() {
+    var ok = true;
+    var tv = tagEl.value.trim();
+
+    // 拍照标识（已与「图片标识」合并）：必填 + 字符集 + 同方案唯一
+    tagEl.classList.remove('bad');
+    tagErr.classList.remove('show');
+    if (!tv) {
+      tagEl.classList.add('bad'); tagErr.textContent = '必填'; tagErr.classList.add('show'); ok = false;
+    } else if (!/^[A-Za-z0-9_-]+$/.test(tv)) {
+      tagEl.classList.add('bad');
+      tagErr.textContent = '只允许 A-Z a-z 0-9 _ -（要进文件名）';
+      tagErr.classList.add('show'); ok = false;
+    } else if (whichNode(tv)) {
+      tagEl.classList.add('bad');
+      tagErr.textContent = '与 ' + whichNode(tv) + ' 重复';
+      tagErr.classList.add('show'); ok = false;
+    }
+
+    saveBtn.disabled = !ok;
+    saveBtn.style.opacity = ok ? '1' : '.45';
+    saveBtn.style.cursor = ok ? 'pointer' : 'not-allowed';
+    return ok;
+  }
+
+  // ⚠ 相机 ID 与拍照标识**不做联动**：前者是硬件维度（哪台设备），后者是业务维度（拍哪个部位）。
+  //    同一台相机拍三个部位 → 三个不同标识；联动会让所有图挤在同一个标识下。
+  camId.addEventListener('change', function(){ render(); });
+
+  // ---- 本地存储 / TCP 联动 ----
+  var storeLocal = document.getElementById('storeLocal');
+  var tcpOn      = document.getElementById('tcpOn');
+  var fmt        = document.getElementById('format');
+  var fmtHint    = document.getElementById('formatHint');
+  var deliverPath   = document.getElementById('deliverPath');
+  var deliverStream = document.getElementById('deliverStream');
+  var deliverWarn   = document.getElementById('deliverWarn');
+
+  function sync(){
+    var tcp = tcpOn.checked;
+    var pathOn   = deliverPath.checked;
+    var streamOn = deliverStream.checked;
+
+    deliverPath.disabled = !tcp;
+    deliverStream.disabled = !tcp;
+
+    // 推送格式只作用于「直接推送」（路径引用不带图）
+    var fmtActive = tcp && streamOn;
+    fmt.disabled = !fmtActive;
+    fmtHint.textContent = !tcp
+      ? '未启用远程交付，两项均不生效'
+      : (!streamOn
+          ? '路径引用不带图，格式不生效'
+          : (fmt.value === 'jpeg' ? '仅推送用 JPEG；本地恒 PNG' : '默认 PNG；本地留存恒为 PNG'));
+
+    deliverWarn.classList.toggle('show', tcp && !pathOn && !streamOn);
+    render();
+  }
+  storeLocal.addEventListener('change', sync);
+  tcpOn.addEventListener('change', sync);
+  fmt.addEventListener('change', sync);
+  deliverPath.addEventListener('change', sync);
+  deliverStream.addEventListener('change', sync);
+
+  // ---- 落盘预览（新文件名格式） ----
+  var tagEl = document.getElementById('tag');
+  var content = document.getElementById('content');
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+  function render(){
+    var withDepth = content.value === 'color_depth';
+    // 拍照标识即文件名标识（已合并为一个字段）；留空时预览直接标出未填
+    var ident = tagEl.value.trim() || '(未填标识)';
+    var stamp = '20261026_103058';
+    var seq = '003';
+    var base = 'RGB_' + ident + '_' + stamp + '_' + seq;
+    // Q8：路径固定，与识别动作 TR-138 存图共用同一目录
+    var dir = 'saves/autorun/rgb';
+
+    var html = '';
+    html += '<div><span class="k">dir</span> <span class="v">&lt;exe&gt;/' + esc(dir) + '/</span> <span class="dimline">（固定，与 TR-138 共用）</span></div>';
+    html += '<div><span class="k">sessionId</span> <span class="v">20261026-103058-7c1e</span> <span class="dimline">（执行期生成，此处示例）</span></div>';
+    html += '<div><span class="k">cycleIndex</span> <span class="v">3</span></div>';
+    html += '<div style="margin-top:6px">├─ <span class="hl">' + esc(base) + '.png</span> <span class="dimline">彩色 1280×720</span></div>';
+    if (withDepth)
+      html += '<div>├─ <span class="hl">DEPTH_' + esc(ident) + '_' + stamp + '_' + seq + '.png</span> <span class="dimline">深度 848×480 · 16-bit</span></div>';
+    html += '<div>├─ <span class="v">' + esc(base) + '.json</span> <span class="dimline">sidecar 元数据</span></div>';
+    html += '<div>└─ <span class="v">manifest.json</span> <span class="dimline">本轮汇总</span></div>';
+
+    if (tcpOn.checked) {
+      var ep = 'server · 0.0.0.0:9527';
+      html += '<div style="margin-top:6px"><span class="k">TCP</span> <span class="v">' + ep + '</span></div>';
+      if (deliverPath.checked)
+        html += '<div style="padding-left:14px"><span class="k">→</span> <span class="v">captureReady</span> <span class="dimline">路径引用 · 不传字节</span></div>';
+      if (deliverStream.checked)
+        html += '<div style="padding-left:14px"><span class="k">→</span> <span class="v">captureData</span> <span class="dimline">二进制 ' + (fmt.value === 'jpeg' ? 'JPEG' : 'PNG') + '</span></div>';
+      if (!deliverPath.checked && !deliverStream.checked)
+        html += '<div style="padding-left:14px" class="dimline">→ 两个交付方式都没选，连接建立但不发送</div>';
+    }
+    if (tagEl.value.trim())
+      html += '<div><span class="k">tag</span> <span class="v">' + esc(tagEl.value.trim()) + '</span> <span class="dimline">文件名与通知共用</span></div>';
+
+    document.getElementById('preview').innerHTML = html;
+  }
+  tagEl.addEventListener('input', function(){
+    if (currentId && CAPTURE_NODES[currentId]) CAPTURE_NODES[currentId].tag = tagEl.value.trim();
+    validate(); render();
+  });
+  content.addEventListener('change', render);
+
+  // ---- 树选择 ----
+  var OTHER = {
+    '1': ['移动动作详情（Page 1，未改动）', '点位表 + 示教读取 + 保存动作。本方案不动此页，仅确认「拍照」与移动的<b>资源集合不相交</b>（<code>{Camera}</code> vs <code>{Axis_J1, Axis_J2, Axis_Z, Axis_R}</code>），因此放进分组可并发。'],
+    '2': ['夹爪动作详情（Page 5，未改动）', '张开 / 闭合 + 行程（轴 5 绝对目标坐标，0 = 夹紧、负值 = 松开）。'],
+    '3': ['分组详情（Page 9，索引因新增拍照页而 8 → 9）', '分组页必须排在<b>所有动作页之后</b>：新增动作类型会顺延 <code>ActionType+1</code>，分组页索引须同步 +1。这是本次改动最容易漏的一处。'],
+    '4': ['识别动作详情（Page 2，未改动）', '识别类型 / 曝光时间 / 匹配模板 / 置信度阈值 + 运行存图三勾选（TR-138）。拍照动作与它<b>共用</b> <code>&lt;exe&gt;/saves/autorun/</code> 基准目录（Q8 已裁定），但拍照图另套 <code>&lt;sessionId&gt;/&lt;cycleIndex&gt;/</code> 一层。'],
+    '5': ['上下移动详情（Page 7，未改动）', '方向 + 距离（相对位移，失败不重试）。'],
+    '6': ['移动动作详情（Page 1，未改动）', '同 #1。'],
+    '8': ['挤压动作详情（Page 3，未改动）', '挤出量 / 挤出速度 / 回抽量 / 回抽速度。'],
+    '10': ['延时动作详情（Page 4，未改动）', '延时时间（ms）。不占硬件资源，同组多个等价于取最大值。'],
+    '11': ['视觉引导详情（Page 6，未改动）', '引用某个识别动作的编号 + 目标点。与移动占同一组四轴资源，故与移动互斥。'],
+    '9': ['拍照_成品（Page 8）', '同一页，只是参数不同：tag = <code>FINISH</code>、内容含深度、只存本地不推送、失败不中止。切换看同一套控件的另一组取值。']
+  };
+  var nodes = document.querySelectorAll('.node');
+  var dCap = document.getElementById('detailCapture');
+  var dOther = document.getElementById('detailOther');
+  var speedRow = document.getElementById('speedRow');
+  var curLabel = document.getElementById('curLabel');
+
+  function setCapturePreset(which){
+    currentId = which;
+    if (which === '9') {
+      // 成品工位：只落盘，不参与远程交付
+      tagEl.value = 'FINISH';
+      content.value = 'color_depth';
+      storeLocal.checked = true;
+      tcpOn.checked = false;
+      deliverPath.checked = true;
+      deliverStream.checked = false;
+      swReq.classList.remove('on');
+    } else {
+      // 工位A：同机部署，只发路径引用（captureReady），不传字节
+      tagEl.value = 'A02';
+      content.value = 'color';
+      storeLocal.checked = true;
+      tcpOn.checked = true;
+      deliverPath.checked = true;
+      deliverStream.checked = false;
+      swReq.classList.add('on');
+    }
+    if (CAPTURE_NODES[which]) {
+      CAPTURE_NODES[which].tag = tagEl.value.trim();
+    }
+    sync();
+    validate();
+  }
+
+  nodes.forEach(function(n){
+    n.addEventListener('click', function(){
+      nodes.forEach(function(x){ x.classList.remove('sel'); });
+      n.classList.add('sel');
+      var id = n.getAttribute('data-node');
+      var name = n.querySelector('.n').textContent;
+      var ty = n.querySelector('.t').textContent;
+      if (id === '7' || id === '9') {
+        curLabel.textContent = '#' + id + ' (拍照) ' + name;
+        dCap.style.display = ''; dOther.style.display = 'none'; speedRow.style.display = '';
+        setCapturePreset(id);
+      } else {
+        curLabel.textContent = '#' + id + ' ' + ty + ' ' + name;
+        dCap.style.display = 'none'; dOther.style.display = ''; speedRow.style.display = 'none';
+        var o = OTHER[id] || ['（未实现）',''];
+        document.getElementById('otherTitle').textContent = o[0];
+        document.getElementById('otherBody').innerHTML = o[1];
+      }
+    });
+  });
+
+  // ---- 抽屉 / 对话框 ----
+  var drawer = document.getElementById('drawer');
+  document.getElementById('btnGaps').addEventListener('click', function(){ drawer.classList.add('show'); });
+  document.getElementById('drawerClose').addEventListener('click', function(){ drawer.classList.remove('show'); });
+  var mask = document.getElementById('dlgMask');
+  document.getElementById('btnNew').addEventListener('click', function(){ mask.classList.add('show'); });
+  document.getElementById('dlgCancel').addEventListener('click', function(){ mask.classList.remove('show'); });
+  mask.addEventListener('click', function(e){ if (e.target === mask) mask.classList.remove('show'); });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') { mask.classList.remove('show'); drawer.classList.remove('show'); }
+  });
+
+  body.classList.add('annot');
+  sync();
+  validate();
+})();
+</script>
+</body>
+</html>

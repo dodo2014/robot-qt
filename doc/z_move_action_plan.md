@@ -50,9 +50,9 @@ double zMoveDistance = 10.0;  // mm，恒正
 - 与「移动 / 视觉引导」同组 → **被拒绝**（后两者也下发 `Axis_Z` 的绝对目标，两个绝对目标同时下发会让轴按后到者走）；
 - 与「夹爪 / 挤压 / 延时 / 识别」同组 → **合法**（不同资源）。
 
-### ⚠ 与 `Capture = 6` 预留号的冲突
+### ✅ 与 `Capture` 预留号的冲突（已消解，2026-10-26）
 
-`doc/third_party_integration_plan.md`（⏳ 未实施，非本交付范围）曾为「拍照」动作预留 `ActionType::Capture = 6`。本次 `ZMove` 占用了 6，**重启该篇时 `Capture` 改取 7**，其余改动点（`actionTypeName` / 类型下拉 / 资源表 / `process.json` 读写）不变。该篇是计划而非事实，此处不构成回归。
+`doc/third_party_integration_plan.md` 曾为「拍照」动作预留 `ActionType::Capture = 6`。`ZMove` 占用了 6，**该篇已于 2026-10-26 按 `Capture = 7` 落地（TR-157）**——枚举末尾追加、`kGroupPageIndex` 8→9、其余改动点（`actionTypeName` / 类型下拉 / 资源表 / `process.json` 读写）与本节描述一致。**本节保留作历史记录，冲突已不存在。**
 
 ---
 

@@ -82,9 +82,38 @@ public:
         bool                saveOverlay = false;
     };
 
+    // 拍照结果载荷（Capture = 7，2026-10-26）。
+    //
+    // **存在的理由**：引擎只负责「取帧 → 落盘 → 把事实与交付意图交出去」，**不碰传输**。
+    // 路径引用 / 直接推送是**接口层**的职责——引擎发一个信号，把 `deliverPath` /
+    // `deliverStream` / `format` 一并带上，接口层据此决定发 JSON 还是 JSON + 二进制帧。
+    // 这样 `src/Interface/` 落地时**不需要改引擎**，帧协议知识也不会漏进 Logic 层。
+    struct CaptureResult
+    {
+        int     nodeId = 0;
+        int     cycleIndex = 0;
+        QString sessionId;
+        QString tag;
+        QString fileName;        // 彩色图文件名（不含目录）
+        QString filePath;        // 彩色图**绝对**路径
+        QString depthFile;       // 深度图文件名；未存深度时为空
+        int     width = 0;
+        int     height = 0;
+        int     depthWidth = 0;
+        int     depthHeight = 0;
+        QString cameraId;
+        QString timestamp;       // ISO 8601 带时区偏移
+        // 交付意图（取自动作定义；引擎不解释、只透传）
+        bool    deliverEnabled = false;
+        bool    deliverPath = false;
+        bool    deliverStream = false;
+        QString format;          // "png" | "jpeg"
+        // 供「直接推送」使用的帧源。`deliverStream == false` 时为空——不白占 6 MB 引用。
+        CameraFramePtr frame;
+    };
+
     explicit SequenceWorker(QObject* parent = nullptr);
     ~SequenceWorker() override;
-
     // 循环生产配置（值语义，2026-09-14 新增）。
     // 主线程组装 → 随 RunSequence 进 worker 线程；worker 线程只读副本，
     // 绝不跨线程读 ConfigManager（json 读写非线程安全）。
@@ -186,6 +215,14 @@ signals:
     // 消费方 = `AutoRunPage`（画「识别结果叠加图」）；**它不再订阅 `frameReady`**。
     // 跨线程 Queued 传递，故需 `qRegisterMetaType`（见 `SequenceWorker.cpp` 文件级静态初始化）。
     void detectionReady(const SequenceWorker::DetectionResult& result);
+    // 拍照落盘成功（Capture = 7）。**每次成功落盘发一次**，与 `captureDeliverEnabled` 无关——
+    // 那是「是否往外发」的开关，不是「是否通知内部」的开关（自动运行页也要据此刷新预览）。
+    void captureReady(const SequenceWorker::CaptureResult& result);
+    // 拍照失败且 `captureRequired == false`（已跳过、继续下一节点）。
+    // ⚠ **不要复用 `errorOccurred`**：全库 7 处 `emit errorOccurred` **全部**伴随会话中止，
+    // 复用会破坏「`errorOccurred` ⟺ 会话中止」这个不变量，第三方会把「跳过一次拍照」
+    // 误判成「流程挂了」（`doc/third_party_integration_plan.md` §5.6 约束 2）。
+    void captureFailed(int nodeId, int cycleIndex, const QString& tag, const QString& reason);
     // 状态迁移（带挂起原因快照）。Queued 连接下带参比"查询当前值"更准，不会错位。
     void stateChanged(SequenceWorker::WorkerState state, SequenceWorker::PauseReason reason);
 
@@ -251,6 +288,13 @@ private:
     // **本函数不阻塞、不处理暂停/停止**——那些由调度器统一处理（整组减速停）。
     bool StepRunner(RunnerState& r);
 
+    // 拍照动作执行体（Capture = 7）：取当前帧 → 帧有效性校验 → 同步落盘（彩色 + 可选深度）
+    // → 原子 commit → 写 sidecar → 更新 manifest → emit captureReady。
+    // 一次性同步完成（无等待段，`SegmentCountOf` 恒 0），由 `StepRunner` 顶部直接分派。
+    // **本函数不 emit errorOccurred**（D17 方案 A）：失败原因写 `r.failReason`；
+    // `captureRequired == false` 时改发 `captureFailed` 并置 PhaseDone（继续下一节点）。
+    bool ExecuteCapture(RunnerState& r);
+
     // 段级三小步（StepRunner 的组成部分，拆开只为可读）：
     //   Prepare  = Begin：解析当前段目标（IK / 软限位 / 日志），失败即写 failReason
     //   Dispatch = 下发当前段（非阻塞：MoveAbs 立即返回，到位靠 IsAxisBusy 轮询）
@@ -304,3 +348,6 @@ private:
 // "Cannot queue arguments of type 'SequenceWorker::DetectionResult'"。
 // 注册动作在 `SequenceWorker.cpp` 的文件级静态初始化里（与 `CameraCaptureWorker.cpp` 同款做法）。
 Q_DECLARE_METATYPE(SequenceWorker::DetectionResult)
+// 同上：`captureReady` 也是跨线程 Queued 连接，实参含 `QString` 容器与 `CameraFramePtr`，
+// 不注册会在运行时报 "Cannot queue arguments of type 'SequenceWorker::CaptureResult'"。
+Q_DECLARE_METATYPE(SequenceWorker::CaptureResult)

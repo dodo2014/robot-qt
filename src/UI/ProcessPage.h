@@ -90,6 +90,15 @@ private:
     // 按当前引用 + offsetZ + guideR + 识别结果缓存，刷新只读坐标预览与「保存会被拒绝」提示。
     void UpdateGuidePreview();
 
+    // 拍照（Capture = 7）：
+    // 重建「相机 ID」下拉——列 `communication.camera.sn` 对应的当前设备；
+    // 动作里存的值若已不存在于设备列表，**显式追加一条「#SN（已不存在）」**（同视觉引导的悬垂引用处理）。
+    void RefreshCaptureCameraCombo(const QString& selectedSn);
+    // 全树收集已占用的拍照标识（排除 excludeId 自己），供「同方案内唯一」校验与实时提示。
+    QStringList OccupiedCaptureTags(int excludeId) const;
+    // 交付方式联动：远程交付总开关关闭时，两个通道与推送格式一并置灰。
+    void SyncCaptureDeliverEnabled();
+
     int m_currentSchemeIdx = -1;
     // 当前选中节点的**持久化编号**（0 = 未选中）。P6 前这里是扁平行号 `m_currentActionIdx`——
     // 行号会随插入/删除/移动漂移，而编号不重排不回收，是引用（P5 `sourceActionId`）与 UI 之间
@@ -155,6 +164,21 @@ private:
     // 不用「带符号距离」——那样改方向会覆盖用户已填的数值，反之亦然。
     QComboBox* m_zMoveDirCombo = nullptr;
     QDoubleSpinBox* m_zMoveDistanceSpin = nullptr;
+
+    // ---- 拍照（Capture = 7，2026-10-26）----
+    // 界面与 `doc/third_party_integration_plan.md` §3.5 的 8 个 capture* 字段一一对应。
+    // 「本地存储」（强制项，常量）与「节拍影响」（只读派生信息）不是可配字段，故无输入控件：
+    // 前者只给一行只读路径（m_capturePathLabel），后者不设控件。
+    QComboBox* m_captureCameraCombo = nullptr;       // 相机 ID（userData = SN；空 = 当前唯一相机）
+    QLineEdit* m_captureTagEdit = nullptr;           // 拍照标识（必填 / 唯一 / [A-Za-z0-9_-] / ≤32）
+    QComboBox* m_captureContentCombo = nullptr;      // 图像内容（彩色 / 彩色+深度）
+    QCheckBox* m_captureRequiredCheck = nullptr;     // 失败中止流程（fail-closed）
+    QCheckBox* m_captureDeliverCheck = nullptr;      // 远程交付总开关
+    QCheckBox* m_captureDeliverPathCheck = nullptr;  // 通道① 路径引用
+    QCheckBox* m_captureDeliverStreamCheck = nullptr;// 通道② 直接推送
+    QComboBox* m_captureFormatCombo = nullptr;       // 推送格式（只对「直接推送」生效）
+    QLabel* m_capturePathLabel = nullptr;            // 只读：当前落盘路径
+    QLabel* m_captureFormatHint = nullptr;           // 格式行的联动提示
 
     QPointer<SequenceWorker> m_worker;   // TR-084：观察者持弱引用，防 worker 析构后悬垂
     QPushButton* m_runSelectedBtn = nullptr;

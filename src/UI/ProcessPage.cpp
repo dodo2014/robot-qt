@@ -88,12 +88,13 @@ QString NodeLabel(const ActionData& n)
         .arg(n.id).arg(ProcessManager::actionTypeName(n.type)).arg(n.name);
 }
 
-// 详情页索引：0=占位，1..7 = ActionType + 1，8 = 分组页。
+// 详情页索引：0=占位，1..8 = ActionType + 1，9 = 分组页。
 // ⚠ 分组页**必须存在**：RefreshNodeDetail 用 `static_cast<int>(type) + 1` 当 stack 索引，
 // 缺页时 setCurrentIndex 越界会被 Qt 静默忽略 → 界面停留在上一个节点的面板上（错显）。
 // ⚠ 分组页**必须排在所有动作页之后**：新增动作类型会顺延 ActionType+1，分组页索引须同步 +1
-// （`ZMove = 6` 落地时由 7 改为 8，见 doc/z_move_action_plan.md）。
-constexpr int kGroupPageIndex = 8;
+// （`ZMove = 6` 落地时由 7 改为 8；`Capture = 7` 落地时由 8 改为 **9**）。
+// ⚠ 漏改**不报错**：拍照页存在时 `setCurrentIndex(8)` 会"恰好"指向拍照页 → 选中分组显示拍照面板。
+constexpr int kGroupPageIndex = 9;
 
 // 节点在给定列表里的下标（-1 = 不在其中）
 int IndexInList(const QVector<ActionData>& list, int id)
@@ -753,8 +754,130 @@ void ProcessPage::SetupUI()
     zmf->addRow(zmSaveLayout);
     m_detailStack->addWidget(zMovePage);
 
-    // Page 8: Group（P6 §八 第 8 项）——分组没有动作参数，只有编号 / 名称 / 子动作清单
-    // 与组内并发校验结果。索引由 kGroupPageIndex 固定（= 8）。
+    // Page 8: Capture（拍照，ActionType::Capture = 7，2026-10-26）
+    // 语义：取**当前帧** → 同步落盘 → 发通知。**不产生任何运动**，不读点位表，不参与运动学。
+    // 字段与 `doc/third_party_integration_plan.md` §3.5 的 8 个 capture* 一一对应；
+    // 「本地存储」（强制项）与「节拍影响」（只读派生）不是可配字段，只以只读文案呈现。
+    // ⚠ 这一页**必须存在**且**排在分组页之前**：`RefreshNodeDetail` 用 `static_cast<int>(type)+1`
+    //   当 stack 索引，缺页时 `setCurrentIndex(8)` 越界被 Qt 静默忽略 → 界面停在**上一个节点
+    //   的面板**上；若误放在分组页之后，索引 8 会落到分组页，显示成「分组详情」。
+    auto* capturePage = new QWidget();
+    auto* cf = makeFormPage(capturePage);
+
+    auto makeCaptureCheck = [](const QString& text) -> QCheckBox* {
+        auto* cb = new QCheckBox(text);
+        cb->setStyleSheet(
+            "QCheckBox { color: #dbe6f0; font-size: 13px; spacing: 6px; }"
+            "QCheckBox::indicator { width: 14px; height: 14px; }");
+        return cb;
+    };
+
+    // 相机 ID：**空 = 用当前唯一相机**（多相机方案落地后才需要显式选）。
+    // 悬垂引用（存的设备已拔掉）在 `RefreshCaptureCameraCombo` 里显式列出「已不存在」，
+    // 不静默回落第一个合法项——否则保存下去会把动作悄悄绑到另一台相机上。
+    m_captureCameraCombo = new QComboBox();
+    m_captureCameraCombo->setFixedHeight(30);
+    m_captureCameraCombo->setFixedWidth(300);
+    m_captureCameraCombo->setStyleSheet(comboStyle);
+    cf->addRow(makeLabel(QStringLiteral("相机 ID")), m_captureCameraCombo);
+
+    // 拍照标识：必填、同方案内唯一（全树扫描）、字符集 [A-Za-z0-9_-]、≤ 32。
+    // 一个值三处共用（文件名 / 通知载荷 / sidecar），故字符集被**文件名**约束收紧：
+    // 中文与空格不可用，需要中文描述时由第三方维护「标识 → 中文」映射表。
+    m_captureTagEdit = makeFieldEdit();
+    m_captureTagEdit->setFixedWidth(300);
+    m_captureTagEdit->setMaxLength(32);
+    m_captureTagEdit->setPlaceholderText(QStringLiteral("如 A02 / TOP / CRACK"));
+    cf->addRow(makeLabel(QStringLiteral("拍照标识")), m_captureTagEdit);
+
+    m_captureContentCombo = new QComboBox();
+    m_captureContentCombo->addItems({ QStringLiteral("彩色"), QStringLiteral("彩色 + 深度") });
+    m_captureContentCombo->setFixedHeight(30);
+    m_captureContentCombo->setFixedWidth(300);
+    m_captureContentCombo->setStyleSheet(comboStyle);
+    cf->addRow(makeLabel(QStringLiteral("图像内容")), m_captureContentCombo);
+
+    // fail-closed 开关（`captureRequired`，默认开）：取帧 / 空帧 / 落盘失败 → 中止整个方案。
+    // 关掉后改为「记 WARN + 发 captureFailed + 继续」，但**连续失败兜底仍中止**（相机被拔掉
+    // 时整晚空转是更坏的结果）。
+    m_captureRequiredCheck =
+        makeCaptureCheck(QStringLiteral("开启：取帧或落盘失败即中止整个方案"));
+    cf->addRow(makeLabel(QStringLiteral("失败中止流程")), m_captureRequiredCheck);
+
+    // 「本地存储」不是开关而是**常量**：落盘是执行时序的必经步骤（通知前图必须已就绪），
+    // 取消落盘会让 captureReady 无路径可给。故只显示一行只读路径，不做成可取消的勾选。
+    // 路径与识别动作的运行存图（TR-138）**共用同一基准目录**，不再可配。
+    m_capturePathLabel = makeLabel(QStringLiteral(
+        "强制落盘，不可取消 · 当前路径 <exe目录>/saves/autorun/rgb/<sessionId>/<cycleIndex>/"));
+    m_capturePathLabel->setMinimumWidth(560);
+    m_capturePathLabel->setStyleSheet(
+        "color: #8fa8bd; background: transparent; border: none; font-size: 12px;");
+    cf->addRow(makeLabel(QStringLiteral("本地存储")), m_capturePathLabel);
+
+    // 远程交付总开关（`captureDeliverEnabled`，默认关）。与 `config.interface.enabled`
+    // （全局服务开关）**两个都开**才真正发事件；关掉时本动作只落盘。
+    m_captureDeliverCheck = makeCaptureCheck(QStringLiteral("启用远程交付（默认不选）"));
+    cf->addRow(makeLabel(QStringLiteral("TCP 传输")), m_captureDeliverCheck);
+
+    // 两条通道是**独立开关**，可单选可同选（不是三选一枚举）：
+    // 路径引用只发路径 + 元信息；直接推送发 JSON 描述帧 + 二进制图像帧。
+    auto* deliverBox = new QWidget();
+    auto* deliverLayout = new QHBoxLayout(deliverBox);
+    deliverLayout->setContentsMargins(0, 0, 0, 0);
+    deliverLayout->setSpacing(18);
+    m_captureDeliverPathCheck =
+        makeCaptureCheck(QStringLiteral("路径引用（captureReady）"));
+    m_captureDeliverStreamCheck =
+        makeCaptureCheck(QStringLiteral("直接推送（captureData）"));
+    deliverLayout->addWidget(m_captureDeliverPathCheck);
+    deliverLayout->addWidget(m_captureDeliverStreamCheck);
+    deliverLayout->addStretch();
+    cf->addRow(makeLabel(QStringLiteral("交付方式")), deliverBox);
+
+    m_captureFormatCombo = new QComboBox();
+    m_captureFormatCombo->addItems({ QStringLiteral("PNG（无损，可复现）"),
+                                     QStringLiteral("JPEG（省流，有损）") });
+    m_captureFormatCombo->setFixedHeight(30);
+    m_captureFormatCombo->setFixedWidth(240);
+    m_captureFormatCombo->setStyleSheet(comboStyle);
+    m_captureFormatHint = makeLabel(QString());
+    m_captureFormatHint->setMinimumWidth(280);
+    m_captureFormatHint->setStyleSheet(
+        "color: #8fa8bd; background: transparent; border: none; font-size: 12px;");
+    auto* fmtBox = new QWidget();
+    auto* fmtLayout = new QHBoxLayout(fmtBox);
+    fmtLayout->setContentsMargins(0, 0, 0, 0);
+    fmtLayout->setSpacing(12);
+    fmtLayout->addWidget(m_captureFormatCombo);
+    fmtLayout->addWidget(m_captureFormatHint);
+    fmtLayout->addStretch();
+    cf->addRow(makeLabel(QStringLiteral("推送格式")), fmtBox);
+
+    auto* captureHint = makeLabel(QStringLiteral(
+        "取执行到本动作时的**最新一帧**落盘，节拍增加约 30~80 ms/张（同步 PNG 编码，未实测）。\n"
+        "拍照不参与节点级重试：取帧无效 / 空帧 / 落盘失败都不会因重试而自愈。\n"
+        "与「识别」动作争用同一台相机，故不能与识别动作放在同一分组；与四轴类动作不冲突。"));
+    captureHint->setWordWrap(true);
+    cf->addRow(captureHint);
+
+    auto* captureSaveLayout = new QHBoxLayout();
+    captureSaveLayout->addStretch();
+    auto* captureSaveBtn = new QPushButton(QStringLiteral("保存动作"));
+    captureSaveBtn->setStyleSheet(saveBtnStyle);
+    captureSaveBtn->setCursor(Qt::PointingHandCursor);
+    connect(captureSaveBtn, &QPushButton::clicked, this, &ProcessPage::OnSaveAction);
+    captureSaveLayout->addWidget(captureSaveBtn);
+    cf->addRow(captureSaveLayout);
+    m_detailStack->addWidget(capturePage);
+
+    // 交付方式联动：总开关关闭 → 两个通道与推送格式一并置灰（不允许"选了但不生效"的假象）
+    connect(m_captureDeliverCheck, &QCheckBox::toggled,
+            this, [this] { SyncCaptureDeliverEnabled(); });
+    connect(m_captureDeliverStreamCheck, &QCheckBox::toggled,
+            this, [this] { SyncCaptureDeliverEnabled(); });
+
+    // Page 9: Group（P6 §八 第 8 项）——分组没有动作参数，只有编号 / 名称 / 子动作清单
+    // 与组内并发校验结果。索引由 kGroupPageIndex 固定（= 9）。
     auto* groupPage = new QWidget();
     auto* gpf = makeFormPage(groupPage);
     m_groupInfoLabel = new QLabel();
@@ -1081,6 +1204,22 @@ void ProcessPage::RefreshNodeDetail(int nodeId)
         m_zMoveDirCombo->setCurrentIndex(node->zMoveUp ? 0 : 1);
         m_zMoveDistanceSpin->setValue(node->zMoveDistance > 0.0 ? node->zMoveDistance : 0.01);
         break;
+    case ActionType::Capture:
+        // 按**存盘值**回填，不做任何推断。⚠ 标识为空时**不回落相机 ID**——相机 ID 是硬件维度
+        // （哪台设备），标识是业务维度（拍哪个部位），一台相机拍三个部位就该有三个标识；
+        // 回落会让所有图挤在同一个标识下、文件名分不开、第三方无法按部位归因（2026-10-26 裁定）。
+        RefreshCaptureCameraCombo(node->captureCameraId);
+        m_captureTagEdit->setText(node->captureTag);
+        m_captureContentCombo->setCurrentIndex(
+            node->captureContent == QStringLiteral("color_depth") ? 1 : 0);
+        m_captureRequiredCheck->setChecked(node->captureRequired);
+        m_captureDeliverCheck->setChecked(node->captureDeliverEnabled);
+        m_captureDeliverPathCheck->setChecked(node->captureDeliverPath);
+        m_captureDeliverStreamCheck->setChecked(node->captureDeliverStream);
+        m_captureFormatCombo->setCurrentIndex(
+            node->captureFormat == QStringLiteral("jpeg") ? 1 : 0);
+        SyncCaptureDeliverEnabled();
+        break;
     }
 }
 
@@ -1179,6 +1318,73 @@ void ProcessPage::UpdateGuidePreview()
         QStringLiteral("color: %1; background: #111a22; border: 1px solid #3f4e5e; "
                        "border-radius: 6px; padding: 8px; font-size: 13px;").arg(color));
     m_guidePreviewLabel->setText(text);
+}
+
+// ---- 拍照（Capture = 7）辅助 ----
+
+void ProcessPage::RefreshCaptureCameraCombo(const QString& selectedSn)
+{
+    if (!m_captureCameraCombo) return;
+    m_captureCameraCombo->blockSignals(true);
+    m_captureCameraCombo->clear();
+
+    // 首项 = 不绑定具体设备（userData 为空串）。当前只有一台相机，这一项就是正常选择；
+    // 多相机方案（doc/multi_camera_plan.md）落地后改为用 `EnumerateCameras()` 填充设备列表。
+    // ⚠ 刻意**不在这里调 `EnumerateCameras()`**：本函数每次选中树节点都会跑，枚举要开 SDK
+    //   设备列表，挂在 UI 线程的详情刷新路径上会拖慢点击响应（视觉页是手动点「刷新设备」才枚举）。
+    m_captureCameraCombo->addItem(QStringLiteral("（当前唯一相机）"), QVariant(QString()));
+
+    if (!selectedSn.isEmpty()) {
+        // 动作绑定了具体 SN：**无论设备在不在都列出来**，不静默回落到「当前唯一相机」——
+        // 回落等于把动作悄悄绑到另一台设备上，保存下去引用就断了（与视觉引导的悬垂引用同款处理）。
+        // 设备是否真的存在由执行期判定（`captureCameraId` 与实机 SN 不符 → 报错，不静默换相机）。
+        m_captureCameraCombo->addItem(
+            QStringLiteral("%1（动作绑定的设备）").arg(selectedSn), QVariant(selectedSn));
+        m_captureCameraCombo->setCurrentIndex(1);
+    } else {
+        m_captureCameraCombo->setCurrentIndex(0);
+    }
+    m_captureCameraCombo->blockSignals(false);
+}
+
+QStringList ProcessPage::OccupiedCaptureTags(int excludeId) const
+{
+    QStringList tags;
+    const auto& schemes = ProcessManager::instance().schemes();
+    if (m_currentSchemeIdx < 0 || m_currentSchemeIdx >= schemes.size()) return tags;
+
+    // **全树扫描**：动作可以位于分组内，只扫一级节点会漏掉组内的拍照动作，
+    // 「同方案唯一」就在组内被绕过（用例须覆盖「两个分组各放一个同标识拍照」）。
+    const auto& nodes = schemes[m_currentSchemeIdx].nodes;
+    for (const auto& n : nodes) {
+        if (!n.isGroup() && n.id != excludeId && n.type == ActionType::Capture &&
+            !n.captureTag.isEmpty())
+            tags.push_back(n.captureTag);
+        if (n.isGroup())
+            for (const auto& c : n.children)
+                if (c.id != excludeId && c.type == ActionType::Capture && !c.captureTag.isEmpty())
+                    tags.push_back(c.captureTag);
+    }
+    return tags;
+}
+
+void ProcessPage::SyncCaptureDeliverEnabled()
+{
+    if (!m_captureDeliverCheck) return;
+    const bool on = m_captureDeliverCheck->isChecked();
+    const bool streamOn = on && m_captureDeliverStreamCheck->isChecked();
+
+    m_captureDeliverPathCheck->setEnabled(on);
+    m_captureDeliverStreamCheck->setEnabled(on);
+    // 推送格式只作用于「直接推送」：路径引用不带图，格式没有作用对象。
+    m_captureFormatCombo->setEnabled(streamOn);
+
+    // 提示要说清「为什么灰」，否则用户只看到两个灰框、不知道是总开关没开还是自己选错了。
+    m_captureFormatHint->setText(
+        !on ? QStringLiteral("未启用远程交付，两项均不生效")
+            : (!m_captureDeliverStreamCheck->isChecked()
+                   ? QStringLiteral("路径引用不带图，格式不生效")
+                   : QStringLiteral("仅推送用此格式；本地恒 PNG")));
 }
 
 void ProcessPage::OnVisionResultReady(int actionId, double x, double y, double z)
@@ -1644,7 +1850,7 @@ void ProcessPage::OnNewAction()
     auto* typeCombo = new QComboBox();
     // ⚠ 本列表的**索引直接就是 ActionType 枚举值**（见下方 static_cast<ActionType>(currentIndex())），
     // 故顺序必须与 ProcessManager.h 的枚举严格一致，新增类型只能**追加在末尾**。
-    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动") });
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动"), QStringLiteral("拍照") });
     typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
     // ---- 防呆（§八 第 5 项，落点就在这一处 typeCombo）----
     // 按**父分组已占用的资源集合**对冲突类型置灰（§六：按资源互斥，不按类型）。
@@ -1854,7 +2060,7 @@ void ProcessPage::OnEditAction()
     auto* typeCombo = new QComboBox();
     // ⚠ 本列表的**索引直接就是 ActionType 枚举值**（见下方 static_cast<ActionType>(currentIndex())），
     // 故顺序必须与 ProcessManager.h 的枚举严格一致，新增类型只能**追加在末尾**。
-    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动") });
+    typeCombo->addItems({ QStringLiteral("移动"), QStringLiteral("识别"), QStringLiteral("挤压"), QStringLiteral("延时"), QStringLiteral("夹爪"), QStringLiteral("视觉引导"), QStringLiteral("上下移动"), QStringLiteral("拍照") });
     typeCombo->setCurrentIndex(static_cast<int>(node->type));
     typeCombo->setStyleSheet("QComboBox { background: #111a22; border: 1px solid #3f4e5e; color: #dbe6f0; border-radius: 6px; padding: 6px 10px; font-size: 13px; } QComboBox::drop-down { width: 20px; border: none; } QAbstractItemView { background: #1a222b; outline: none; selection-background-color: #2f6f9f; selection-color: white; color: #dbe6f0; }");
     // 防呆（§八 第 5 项）：在分组内编辑时，按**排除自身后**的已占用资源对冲突类型置灰
@@ -2254,6 +2460,55 @@ void ProcessPage::OnSaveAction()
         }
         node->zMoveUp = (m_zMoveDirCombo->currentIndex() == 0);
         node->zMoveDistance = dist;
+        break;
+    }
+    case ActionType::Capture: {
+        // §3.5 编辑期校验：标识**必填**、字符集 `[A-Za-z0-9_-]`、**同方案内唯一**（全树扫描）。
+        // 三条都拦在落盘前——标识同时进文件名 / 通知 / sidecar，一个非法值会让三处一起坏。
+        const QString tag = m_captureTagEdit->text().trimmed();
+        QString tagErr;
+        if (tag.isEmpty()) {
+            tagErr = QStringLiteral("拍照标识必填。\n\n"
+                                    "它是「这张图是什么」的业务标签，同时用于文件名、通知载荷与 sidecar；"
+                                    "不能留空，也不会自动取相机 ID（一台相机可能拍多个部位）。");
+        } else if (tag.size() > 32) {
+            tagErr = QStringLiteral("拍照标识最多 32 个字符（当前 %1 个）。").arg(tag.size());
+        } else {
+            // 逐字符判，不用正则：这里要给出**具体是哪个字符**不合法，正则只能给一句"不匹配"。
+            for (const QChar ch : tag) {
+                const bool ok = (ch >= QLatin1Char('A') && ch <= QLatin1Char('Z')) ||
+                                (ch >= QLatin1Char('a') && ch <= QLatin1Char('z')) ||
+                                (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+                                ch == QLatin1Char('_') || ch == QLatin1Char('-');
+                if (!ok) {
+                    tagErr = QStringLiteral("拍照标识只允许 A-Z a-z 0-9 _ -，发现非法字符「%1」。\n\n"
+                                            "限制来自**文件名**：该标识会进文件名，中文、空格与路径分隔符都不可用。"
+                                            "需要中文描述时请由第三方维护「标识 → 中文」映射表。").arg(ch);
+                    break;
+                }
+            }
+        }
+        if (tagErr.isEmpty() && OccupiedCaptureTags(node->id).contains(tag)) {
+            tagErr = QStringLiteral("拍照标识「%1」在本方案内已被其他拍照动作占用。\n\n"
+                                    "同一方案内不允许重复：文件名与通知都靠它归因，重复会让第三方无法区分是哪个工位拍的。")
+                         .arg(tag);
+        }
+        if (!tagErr.isEmpty()) {
+            *node = backup;
+            QMessageBox::warning(this, QStringLiteral("提示"), tagErr);
+            return;                       // 拒绝保存：不落盘，界面保持原样
+        }
+        node->captureTag = tag;
+        // 相机 ID：下拉 userData 存裸 SN；首项「（当前唯一相机）」的 userData 为空串 = 不绑定。
+        node->captureCameraId = m_captureCameraCombo->currentData().toString();
+        node->captureContent = (m_captureContentCombo->currentIndex() == 1)
+                                   ? QStringLiteral("color_depth") : QStringLiteral("color");
+        node->captureRequired = m_captureRequiredCheck->isChecked();
+        node->captureDeliverEnabled = m_captureDeliverCheck->isChecked();
+        node->captureDeliverPath = m_captureDeliverPathCheck->isChecked();
+        node->captureDeliverStream = m_captureDeliverStreamCheck->isChecked();
+        node->captureFormat = (m_captureFormatCombo->currentIndex() == 1)
+                                  ? QStringLiteral("jpeg") : QStringLiteral("png");
         break;
     }
     }

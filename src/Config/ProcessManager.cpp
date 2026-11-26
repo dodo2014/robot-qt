@@ -85,6 +85,16 @@ ActionData readNode(const nlohmann::json& nj)
     // （0 会让执行期直接报「距离必须大于 0」，用户还得再进一次面板）。
     a.zMoveUp = nj.value("zMoveUp", true);
     a.zMoveDistance = nj.value("zMoveDistance", 10.0);
+    // 拍照（Capture = 7，2026-10-26）：8 个 capture* 字段，全部**缺键取默认值**。
+    // ⚠ 默认值必须与 `ActionData` 的成员初始值逐字一致，否则「加载后立刻保存」会改写配置。
+    a.captureCameraId = QString::fromStdString(nj.value("captureCameraId", std::string()));
+    a.captureTag = QString::fromStdString(nj.value("captureTag", std::string()));
+    a.captureContent = QString::fromStdString(nj.value("captureContent", std::string("color")));
+    a.captureFormat = QString::fromStdString(nj.value("captureFormat", std::string("png")));
+    a.captureDeliverEnabled = nj.value("captureDeliverEnabled", false);
+    a.captureDeliverPath = nj.value("captureDeliverPath", true);
+    a.captureDeliverStream = nj.value("captureDeliverStream", false);
+    a.captureRequired = nj.value("captureRequired", true);
 
     if (nj.contains("points") && nj["points"].is_array()) {
         for (const auto& pj : nj["points"]) {
@@ -160,6 +170,16 @@ nlohmann::json writeNode(const ActionData& a)
     // 否则 UI 的下拉框与数值会互相覆盖（改方向就改符号，改数值又把符号写回方向）。
     aj["zMoveUp"] = a.zMoveUp;
     aj["zMoveDistance"] = a.zMoveDistance;
+    // 拍照（Capture = 7）：8 个 capture* 字段。**一个都不能漏**——`process.json` 无 schema 校验，
+    // 少写一个键就是静默丢配置（用例 14.9 的判据即"存盘 → 重载 → 逐字段比对"）。
+    aj["captureCameraId"] = a.captureCameraId.toStdString();
+    aj["captureTag"] = a.captureTag.toStdString();
+    aj["captureContent"] = a.captureContent.toStdString();
+    aj["captureFormat"] = a.captureFormat.toStdString();
+    aj["captureDeliverEnabled"] = a.captureDeliverEnabled;
+    aj["captureDeliverPath"] = a.captureDeliverPath;
+    aj["captureDeliverStream"] = a.captureDeliverStream;
+    aj["captureRequired"] = a.captureRequired;
     aj["points"] = nlohmann::json::array();
 
     for (const auto& pt : a.points) {
@@ -203,6 +223,7 @@ QString ProcessManager::actionTypeName(ActionType t)
     case ActionType::Gripper:     return QStringLiteral("夹爪");
     case ActionType::VisionGuide: return QStringLiteral("视觉引导");
     case ActionType::ZMove:       return QStringLiteral("上下移动");
+    case ActionType::Capture:     return QStringLiteral("拍照");
     }
     return QStringLiteral("未知");
 }
@@ -333,6 +354,13 @@ QStringList ProcessManager::resourceKeysOf(ActionType t)
     case ActionType::Extrude: return { QStringLiteral("Axis_Extruder") };
     case ActionType::Vision:  return { QStringLiteral("Camera") };
     case ActionType::Delay:   return {};   // §6.3：不占硬件资源，同组多个等价于取最大值
+    case ActionType::Capture:
+        // 与「识别」**同一个资源键**：相机在这里是「**当前帧**」这一逻辑资源，同组只允许
+        // 一个消费者。故「拍照 + 识别」与「拍照 + 拍照」都被拦（后者会在同一瞬间取同一帧，
+        // 只是 tag 不同，语义上是重复采集）；与四轴类动作（Move / VisionGuide / ZMove /
+        // Gripper / Extrude）资源不相交，可同组。
+        // ⚠ 不要图省事返回空集：那样上面两种重复消费都会被放行。
+        return { QStringLiteral("Camera") };
     case ActionType::ZMove:
         // 只占 Z 轴：与「移动 / 视觉引导」同组时**必须**互斥（它们也下发 Axis_Z 的绝对目标，
         // 两个绝对目标同时下发会让轴按后到者走）；与夹爪 / 挤出同组**合法**（不同轴）。
@@ -504,17 +532,23 @@ void ProcessManager::save()
     const QString target = ConfigPaths::processJsonPath();
     QSaveFile file(target);
     if (!file.open(QIODevice::WriteOnly)) {
-        SPDLOG_WARN("[Process] Cannot write: {}", target.toStdString());
+        SPDLOG_WARN("[Process] Cannot write: {} ({})", target.toStdString(),
+                    file.errorString().toStdString());
         return;
     }
     const std::string dumped = j.dump(4);
     if (file.write(dumped.data(), static_cast<qint64>(dumped.size())) != static_cast<qint64>(dumped.size())) {
-        SPDLOG_WARN("[Process] Short write, aborting: {}", target.toStdString());
+        SPDLOG_WARN("[Process] Short write, aborting: {} ({})", target.toStdString(),
+                    file.errorString().toStdString());
         file.cancelWriting();
         return;
     }
     if (!file.commit()) {
-        SPDLOG_WARN("[Process] Commit failed, original kept: {}", target.toStdString());
+        // ⚠ commit() 走的是「写临时文件 → 原子 rename 覆盖目标」，在 Windows 上**可能被外部短暂占用**
+        // （杀软实时扫描 / 索引服务 / 另一个进程正在读）而间歇失败——原方案保留、本次修改丢弃。
+        // 必须带上 errorString()，否则只看到 "Commit failed" 无法区分是权限、占用还是磁盘满。
+        SPDLOG_WARN("[Process] Commit failed, original kept: {} ({})", target.toStdString(),
+                    file.errorString().toStdString());
         return;
     }
     SPDLOG_INFO("[Process] Saved schemes to {}", target.toStdString());

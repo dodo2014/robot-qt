@@ -155,7 +155,7 @@
             "depthFps": 15.0,
             "depthHeight": 480,
             "depthWidth": 848,
-            "sn": "CP9KB530005S"
+            "sn": "CPCD7530008N (Orbbec Gemini 336L)"
         },
         "motionCard": {
             "ip": "192.168.0.1",
@@ -229,31 +229,31 @@
         "algorithmType": "DepthPuffAlgo",
         "cameraType": "OrbbecCamera",
         "enabled": true,
-        "motionCardType": "Bopai",
-        "servoType": "XRServo"
+        "motionCardType": "SimCard",
+        "servoType": "SimServo"
     },
     "storage": {
         "autorunMinFreePercent": 5.0
     },
     "tcpCalibration": {
-      "handEyeMatrix": [
-        0.0,
-        -1.0,
-        0.0,
-        215.95,
-        -1.0,
-        0.0,
-        0.0,
-        173.41,
-        0.0,
-        0.0,
-        -1.0,
-        623.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+        "handEyeMatrix": [
+            0.0,
+            -1.0,
+            0.0,
+            215.95,
+            -1.0,
+            0.0,
+            0.0,
+            173.41,
+            0.0,
+            0.0,
+            -1.0,
+            623.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+        ],
         "toolOffsetX": 53.0,
         "toolOffsetY": 0.0,
         "toolOffsetZ": -130.0
